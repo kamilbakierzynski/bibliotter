@@ -9,7 +9,9 @@ import {
   shell,
   WebContentsView
 } from 'electron'
+import type { OverlayEvent, OverlayItem, OverlayMode } from '../shared/annotations'
 import type { ViewerBounds, ViewerState } from '../shared/types'
+import { parseAnchor } from './annotationStore'
 import {
   assetContentType,
   DOC_SCHEME,
@@ -38,6 +40,35 @@ interface DocViewerOptions {
   /** Plik do wyświetlenia: oryginał albo zachowana kopia. */
   lookupDocPath: (docId: string) => string | undefined
   onState: (state: ViewerState) => void
+  onOverlayEvent: (event: OverlayEvent) => void
+  /** Warstwa w dokumencie jest gotowa na przyjęcie uwag. */
+  onOverlayReady: () => void
+}
+
+/** Zdarzenie przychodzi z procesu dokumentu, więc sprawdzamy jego kształt. */
+function parseOverlayEvent(value: unknown): OverlayEvent | null {
+  if (typeof value !== 'object' || value === null) return null
+  const event = value as Record<string, unknown>
+  switch (event.type) {
+    case 'place': {
+      const anchor = parseAnchor(event.anchor)
+      const kind = event.kind
+      if (!anchor || (kind !== 'comment' && kind !== 'sticky')) return null
+      return { type: 'place', kind, anchor }
+    }
+    case 'select':
+      return typeof event.id === 'string' ? { type: 'select', id: event.id } : null
+    case 'orphans':
+      return Array.isArray(event.ids)
+        ? { type: 'orphans', ids: event.ids.filter((id): id is string => typeof id === 'string') }
+        : null
+    case 'shortcut':
+      return event.key === 'comment' || event.key === 'sticky' || event.key === 'cancel'
+        ? { type: 'shortcut', key: event.key }
+        : null
+    default:
+      return null
+  }
 }
 
 /**
@@ -60,6 +91,31 @@ export class DocViewer {
         void shell.openExternal(url)
       }
     })
+    ipcMain.on('overlay:event', (event, payload: unknown) => {
+      if (event.sender !== this.view?.webContents) return
+      const parsed = parseOverlayEvent(payload)
+      if (parsed) this.options.onOverlayEvent(parsed)
+    })
+    ipcMain.on('overlay:ready', (event) => {
+      if (event.sender === this.view?.webContents) this.options.onOverlayReady()
+    })
+  }
+
+  setOverlayMode(mode: OverlayMode): void {
+    this.view?.webContents.send('overlay:mode', mode)
+  }
+
+  setOverlayItems(items: OverlayItem[]): void {
+    this.view?.webContents.send('overlay:items', items)
+  }
+
+  focusOverlayItem(id: string | null): void {
+    this.view?.webContents.send('overlay:focus', id)
+  }
+
+  /** Przekazuje fokus do dokumentu, żeby skróty klawiszowe i Escape działały od razu. */
+  focusDocument(): void {
+    this.view?.webContents.focus()
   }
 
   open(docId: string): void {

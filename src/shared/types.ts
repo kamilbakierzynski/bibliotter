@@ -1,3 +1,12 @@
+import type {
+  Annotation,
+  AnnotationStatus,
+  Audience,
+  NewAnnotation,
+  OverlayEvent,
+  OverlayMode
+} from './annotations'
+
 export const DOC_STATUSES = ['to-read', 'read', 'to-decide', 'decided', 'archived'] as const
 export type DocStatus = (typeof DOC_STATUSES)[number]
 
@@ -23,6 +32,8 @@ export interface DocEntry {
   missing: boolean
   /** Inne ścieżki z identyczną treścią, np. kopie w worktree. */
   otherPaths: string[]
+  /** Skrót bieżącej treści. Pozwala oznaczyć uwagi do starszej wersji. */
+  sha: string | null
 }
 
 export interface PullRequest {
@@ -98,8 +109,18 @@ export interface ShellApi {
   reloadDoc(): Promise<void>
   revealDoc(docId: string): Promise<void>
   openExternal(url: string): Promise<void>
+  listAnnotations(): Promise<Annotation[]>
+  createAnnotation(docId: string, input: NewAnnotation): Promise<void>
+  replyAnnotation(id: string, text: string): Promise<void>
+  setAnnotationStatus(id: string, status: AnnotationStatus): Promise<void>
+  setAnnotationAudience(id: string, audience: Audience): Promise<void>
+  deleteAnnotation(id: string): Promise<void>
+  setOverlayMode(mode: OverlayMode): void
+  focusAnnotation(id: string | null): void
   onViewerState(listener: (state: ViewerState) => void): () => void
   onLibraryChanged(listener: (snapshot: LibrarySnapshot) => void): () => void
+  onAnnotationsChanged(listener: (annotations: Annotation[]) => void): () => void
+  onOverlayEvent(listener: (event: OverlayEvent) => void): () => void
 }
 
 declare global {

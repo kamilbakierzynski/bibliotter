@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   app,
@@ -12,6 +13,9 @@ import {
   shell
 } from 'electron'
 import { DOC_STATUSES, type DocEntry, type DocStatus, type LibrarySnapshot, type ViewerBounds } from '../shared/types'
+import type { Audience, NewAnnotation, OverlayEvent, OverlayMode } from '../shared/annotations'
+import { currentDocumentPath, writeCurrentDocument } from './agentApi'
+import { AnnotationStore, parseAnchor, parseStickyColor, toOverlayItems, watchAnnotations } from './annotationStore'
 import { type AppConfig, dataDir, loadConfig, saveConfig } from './config'
 import { isExternalUrl } from './docPolicy'
 import { DocViewer, registerDocScheme } from './docViewer'
@@ -31,8 +35,62 @@ let viewer: DocViewer | null = null
 let library: Library | null = null
 let config: AppConfig = { roots: [], allowedHosts: [], folderLinks: [] }
 let lastScanAt = 0
+let openDocId: string | null = null
+let stopWatchingAnnotations: (() => void) | null = null
 
+const annotations = new AnnotationStore(join(dataDir(), 'library'))
 const watcher = new FolderWatcher(() => void scanLibrary())
+
+/** Wysyła uwagi do panelu i do warstwy otwartego dokumentu. Działa też po zmianach agenta. */
+async function pushAnnotations(): Promise<void> {
+  const all = await annotations.listAll()
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('annotations:changed', all)
+  if (openDocId) viewer?.setOverlayItems(toOverlayItems(all.filter((item) => item.docId === openDocId)))
+}
+
+function forwardOverlayEvent(event: OverlayEvent): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('viewer:overlay-event', event)
+  // Klawiatura została w dokumencie, a tekst uwagi pisze się w panelu apki.
+  if (event.type === 'place') mainWindow.webContents.focus()
+}
+
+async function openDocument(doc: DocEntry): Promise<void> {
+  openDocId = doc.id
+  viewer?.open(doc.id)
+  await writeCurrentDocument(dataDir(), {
+    docId: doc.id,
+    title: doc.title,
+    path: doc.path,
+    project: doc.projectName,
+    branch: doc.branch,
+    openedAt: new Date().toISOString()
+  })
+  await requireLibrary().markOpened(doc.id)
+}
+
+async function closeDocument(): Promise<void> {
+  openDocId = null
+  viewer?.close()
+  await writeCurrentDocument(dataDir(), null)
+}
+
+function parseNewAnnotation(value: unknown): NewAnnotation {
+  const { kind, audience, color, anchor, text } = (value ?? {}) as Record<string, unknown>
+  if (kind !== 'comment' && kind !== 'sticky') throw new Error('Nieznany rodzaj uwagi')
+  return {
+    kind,
+    audience: parseAudience(audience),
+    color: parseStickyColor(color),
+    anchor: parseAnchor(anchor),
+    text: typeof text === 'string' ? text : ''
+  }
+}
+
+function parseAudience(value: unknown): Audience {
+  if (value !== 'agent' && value !== 'me') throw new Error('Nieznany odbiorca uwagi')
+  return value
+}
 
 function requireLibrary(): Library {
   if (!library) throw new Error('Biblioteka nie jest gotowa')
@@ -143,17 +201,49 @@ function registerIpc(): void {
   handle('app:open-external', (url: unknown) => {
     if (typeof url === 'string' && isExternalUrl(url)) void shell.openExternal(url)
   })
-  handle('viewer:open', (docId: unknown) => {
-    const doc = requireDoc(docId)
-    viewer?.open(doc.id)
-    void requireLibrary().markOpened(doc.id)
-  })
-  handle('viewer:close', () => viewer?.close())
+  handle('viewer:open', (docId: unknown) => openDocument(requireDoc(docId)))
+  handle('viewer:close', () => closeDocument())
   handle('viewer:reload', () => viewer?.reload())
+
+  handle('annotations:list', () => annotations.listAll())
+  handle('annotations:create', async (docId: unknown, input: unknown) => {
+    const doc = requireDoc(docId)
+    const sha = requireLibrary().getDocSha(doc.id)
+    if (!sha) throw new Error('Uwagi można dodawać tylko do dokumentów z biblioteki')
+    await annotations.create(doc.id, sha, parseNewAnnotation(input))
+    await pushAnnotations()
+  })
+  handle('annotations:reply', async (id: unknown, text: unknown) => {
+    await annotations.addMessage(String(id), 'user', String(text))
+    await pushAnnotations()
+  })
+  handle('annotations:set-status', async (id: unknown, status: unknown) => {
+    if (status !== 'open' && status !== 'resolved') throw new Error('Nieznany status uwagi')
+    await annotations.setStatus(String(id), status)
+    await pushAnnotations()
+  })
+  handle('annotations:set-audience', async (id: unknown, audience: unknown) => {
+    await annotations.setAudience(String(id), parseAudience(audience))
+    await pushAnnotations()
+  })
+  handle('annotations:delete', async (id: unknown) => {
+    await annotations.delete(String(id))
+    await pushAnnotations()
+  })
 
   ipcMain.on('viewer:set-bounds', (event, bounds: unknown) => {
     assertShell(event)
     viewer?.setBounds(isValidBounds(bounds) ? bounds : null)
+  })
+  ipcMain.on('viewer:set-mode', (event, mode: unknown) => {
+    assertShell(event)
+    const next: OverlayMode = mode === 'comment' || mode === 'sticky' ? mode : null
+    viewer?.setOverlayMode(next)
+    if (next) viewer?.focusDocument()
+  })
+  ipcMain.on('viewer:focus-annotation', (event, id: unknown) => {
+    assertShell(event)
+    viewer?.focusOverlayItem(typeof id === 'string' ? id : null)
   })
 }
 
@@ -187,7 +277,9 @@ function createWindow(): BrowserWindow {
     lookupDocPath: (docId) => library?.getServedPath(docId),
     onState: (state) => {
       if (!window.isDestroyed()) window.webContents.send('viewer:state', state)
-    }
+    },
+    onOverlayEvent: forwardOverlayEvent,
+    onOverlayReady: () => void pushAnnotations()
   })
 
   const devServer = process.env.ELECTRON_RENDERER_URL
@@ -223,6 +315,7 @@ async function start(): Promise<void> {
   })
   registerIpc()
   watcher.watch(config.roots)
+  stopWatchingAnnotations = watchAnnotations(join(dataDir(), 'library'), () => void pushAnnotations())
   mainWindow = createWindow()
 
   app.on('activate', () => {
@@ -240,7 +333,10 @@ if (app.requestSingleInstanceLock()) {
   })
   app.on('will-quit', () => {
     watcher.close()
+    stopWatchingAnnotations?.()
     library?.close()
+    // Po zamknięciu apki żaden dokument nie jest już otwarty, więc agent nie powinien go wskazywać.
+    rmSync(currentDocumentPath(dataDir()), { force: true })
   })
   void start()
 } else {

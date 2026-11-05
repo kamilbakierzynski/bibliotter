@@ -4,6 +4,9 @@
   "private": true,
   "description": "Lokalna biblioteka i viewer dokumentów HTML generowanych przez agentów",
   "main": "out/main/index.js",
+  "bin": {
+    "htmldocs": "out/main/cli.js"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -17,6 +20,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

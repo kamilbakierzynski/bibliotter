@@ -111,10 +111,21 @@ export class Library {
   static async open(options: LibraryOptions): Promise<Library> {
     await mkdir(join(options.dataDir, 'cache'), { recursive: true })
     // Indeks jest odtwarzalny, więc nie powinien trafiać do prywatnego gita z danymi.
-    await writeFile(join(options.dataDir, '.gitignore'), 'cache/\n', { flag: 'wx' }).catch(() => {})
+    await Library.ensureGitignore(options.dataDir)
     const library = new Library(options)
     await library.metas.load()
     return library
+  }
+
+  /** Indeks i stan okna są odtwarzalne, więc nie powinny trafiać do prywatnego gita z danymi. */
+  private static async ensureGitignore(directory: string): Promise<void> {
+    const path = join(directory, '.gitignore')
+    const existing = await readFile(path, 'utf8').catch(() => '')
+    const lines = new Set(existing.split('\n').map((line) => line.trim()).filter(Boolean))
+    const missing = ['cache/', 'state/'].filter((line) => !lines.has(line))
+    if (missing.length === 0) return
+    const prefix = existing && !existing.endsWith('\n') ? `${existing}\n` : existing
+    await writeFile(path, `${prefix}${missing.join('\n')}\n`, 'utf8')
   }
 
   close(): void {
@@ -131,6 +142,11 @@ export class Library {
 
   getEntry(docId: string): DocEntry | undefined {
     return this.entries.get(docId)
+  }
+
+  /** Skrót treści dokumentu. Uwagi zapamiętują go jako swoją wersję. */
+  getDocSha(docId: string): string | undefined {
+    return this.metas.get(docId)?.sha
   }
 
   /** Plik do wyświetlenia: oryginał albo ostatnia kopia, gdy oryginał zniknął. */
@@ -370,7 +386,8 @@ export class Library {
       branch: meta?.branch ?? position?.branch ?? null,
       commit: meta?.commit ?? position?.commit ?? null,
       missing: false,
-      otherPaths: otherPaths.get(file.path) ?? []
+      otherPaths: otherPaths.get(file.path) ?? [],
+      sha: file.sha
     }
   }
 
@@ -481,7 +498,8 @@ export class Library {
           branch: meta.branch,
           commit: meta.commit,
           missing: true,
-          otherPaths: []
+          otherPaths: [],
+          sha: meta.sha
         }
       })
     }

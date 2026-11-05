@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { Annotation, Audience } from '../../shared/annotations'
 import type { DocEntry, LibrarySnapshot, SearchHit } from '../../shared/types'
 import { buildTree, displayName, inboxDocs, relativeTime, type TreeNode } from './tree'
 
-export type SidebarView = 'library' | 'inbox' | 'review'
+export type SidebarView = 'library' | 'inbox' | 'notes' | 'review'
 
 const SEARCH_DELAY_MS = 150
 
@@ -167,8 +168,55 @@ function SearchResults({
   )
 }
 
+function NotesList({
+  annotations,
+  docs,
+  onOpen
+}: {
+  annotations: Annotation[]
+  docs: DocEntry[]
+  onOpen: (annotation: Annotation) => void
+}): React.JSX.Element {
+  const [audience, setAudience] = useState<Audience>('me')
+  const titles = useMemo(() => new Map(docs.map((doc) => [doc.id, displayName(doc)])), [docs])
+  const visible = annotations
+    .filter((item) => item.status === 'open' && item.audience === audience)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+
+  return (
+    <>
+      <div className="switch wide" role="radiogroup" aria-label="Filtr uwag">
+        {(['me', 'agent'] as const).map((option) => (
+          <button
+            key={option}
+            role="radio"
+            aria-checked={audience === option}
+            className={audience === option ? 'active' : ''}
+            onClick={() => setAudience(option)}
+          >
+            {option === 'me' ? 'Dla mnie' : 'Dla agenta'}
+          </button>
+        ))}
+      </div>
+      {visible.length === 0 && <p className="muted tree-empty">Brak otwartych uwag.</p>}
+      {visible.map((annotation) => (
+        <button key={annotation.id} className="row doc two-line" onClick={() => onOpen(annotation)}>
+          <span className="line">
+            {annotation.kind === 'sticky' && (
+              <span className={`swatch small ${annotation.color ?? 'yellow'}`} aria-hidden="true" />
+            )}
+            <span className="label">{annotation.messages[0]?.text}</span>
+          </span>
+          <span className="sub">{titles.get(annotation.docId) ?? 'Dokument poza biblioteką'}</span>
+        </button>
+      ))}
+    </>
+  )
+}
+
 interface SidebarProps {
   library: LibrarySnapshot | null
+  annotations: Annotation[]
   view: SidebarView
   selectedId: string | null
   collapsed: Set<string>
@@ -176,23 +224,27 @@ interface SidebarProps {
   onView: (view: SidebarView) => void
   onToggle: (key: string) => void
   onSelect: (doc: DocEntry) => void
+  onOpenNote: (annotation: Annotation) => void
   onShowFolders: () => void
   onRescan: () => void
 }
 
 export function Sidebar(props: SidebarProps): React.JSX.Element {
-  const { library, view, selectedId, collapsed, scanning } = props
-  const { onView, onToggle, onSelect, onShowFolders, onRescan } = props
+  const { library, annotations, view, selectedId, collapsed, scanning } = props
+  const { onView, onToggle, onSelect, onOpenNote, onShowFolders, onRescan } = props
   const [query, setQuery] = useState('')
 
   const projects = library?.projects
   const inbox = useMemo(() => inboxDocs(projects ?? []), [projects])
   const review = library?.review ?? []
+  const allDocs = useMemo(() => projects?.flatMap((project) => project.docs) ?? [], [projects])
+  const openNotes = annotations.filter((item) => item.status === 'open').length
   const searching = query.trim().length > 0
 
   const tabs: { id: SidebarView; label: string; count: number | null }[] = [
     { id: 'library', label: 'Biblioteka', count: null },
     { id: 'inbox', label: 'Skrzynka', count: inbox.length },
+    { id: 'notes', label: 'Uwagi', count: openNotes },
     { id: 'review', label: 'Niepewne', count: review.length }
   ]
 
@@ -235,6 +287,8 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
             detail={(doc) => `${doc.projectName} · ${relativeTime(doc.mtimeMs)}`}
             onSelect={onSelect}
           />
+        ) : view === 'notes' ? (
+          <NotesList annotations={annotations} docs={allDocs} onOpen={onOpenNote} />
         ) : view === 'review' ? (
           <DocList
             docs={review}

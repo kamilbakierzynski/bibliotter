@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type {
+  Anchor,
+  Annotation,
+  AnnotationKind,
+  Audience,
+  OverlayEvent,
+  OverlayMode,
+  StickyColor
+} from '../../shared/annotations'
 import type { DocEntry, DocStatus, LibrarySnapshot, ViewerState } from '../../shared/types'
+import { AnnotationsPanel } from './AnnotationsPanel'
 import { DocViewport } from './DocViewport'
 import { FoldersPanel } from './FoldersPanel'
 import { Sidebar, type SidebarView } from './Sidebar'
@@ -7,6 +17,11 @@ import { Sidebar, type SidebarView } from './Sidebar'
 const LAST_DOC_KEY = 'lastDocId'
 const COLLAPSED_KEY = 'collapsedNodes'
 const IDLE_STATE: ViewerState = { docId: null, status: 'idle', blockedRequests: 0, blockedHosts: [] }
+
+export interface Draft {
+  kind: AnnotationKind
+  anchor: Anchor | null
+}
 
 function readStored(key: string): string | null {
   try {
@@ -40,6 +55,7 @@ function allEntries(library: LibrarySnapshot | null): Map<string, DocEntry> {
 
 export function App(): React.JSX.Element {
   const [library, setLibrary] = useState<LibrarySnapshot | null>(null)
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [viewerState, setViewerState] = useState<ViewerState>(IDLE_STATE)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [openedMtime, setOpenedMtime] = useState<number | null>(null)
@@ -47,18 +63,45 @@ export function App(): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const [showFolders, setShowFolders] = useState(false)
   const [scanning, setScanning] = useState(true)
+  const [mode, setMode] = useState<OverlayMode>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null)
+  const [orphans, setOrphans] = useState<Set<string>>(new Set())
   const restored = useRef(false)
+  const focusAfterLoad = useRef<string | null>(null)
 
   const entries = useMemo(() => allEntries(library), [library])
   const selected = selectedId ? (entries.get(selectedId) ?? null) : null
+  const docNotes = useMemo(
+    () => annotations.filter((item) => item.docId === selectedId),
+    [annotations, selectedId]
+  )
 
-  const selectDoc = useCallback((doc: DocEntry) => {
-    setSelectedId(doc.id)
-    setOpenedMtime(doc.mtimeMs)
-    setShowFolders(false)
-    writeStored(LAST_DOC_KEY, doc.id)
-    void window.api.openDoc(doc.id)
+  const changeMode = useCallback((next: OverlayMode) => {
+    setMode(next)
+    window.api.setOverlayMode(next)
   }, [])
+
+  const resetAnnotating = useCallback(() => {
+    setMode(null)
+    setDraft(null)
+    setActiveNoteId(null)
+    setOrphans(new Set())
+  }, [])
+
+  const selectDoc = useCallback(
+    (doc: DocEntry, noteId: string | null = null) => {
+      resetAnnotating()
+      setActiveNoteId(noteId)
+      focusAfterLoad.current = noteId
+      setSelectedId(doc.id)
+      setOpenedMtime(doc.mtimeMs)
+      setShowFolders(false)
+      writeStored(LAST_DOC_KEY, doc.id)
+      void window.api.openDoc(doc.id)
+    },
+    [resetAnnotating]
+  )
 
   const load = useCallback((request: () => Promise<LibrarySnapshot>) => {
     setScanning(true)
@@ -70,7 +113,72 @@ export function App(): React.JSX.Element {
 
   useEffect(() => window.api.onViewerState(setViewerState), [])
   useEffect(() => window.api.onLibraryChanged(setLibrary), [])
+  useEffect(() => window.api.onAnnotationsChanged(setAnnotations), [])
   useEffect(() => load(window.api.getLibrary), [load])
+  useEffect(() => {
+    void window.api.listAnnotations().then(setAnnotations)
+  }, [])
+  useEffect(() => {
+    if (viewerState.status !== 'ready' || viewerState.docId !== selectedId || !focusAfterLoad.current) return
+    window.api.focusAnnotation(focusAfterLoad.current)
+    focusAfterLoad.current = null
+  }, [viewerState, selectedId])
+
+  const toggleMode = useCallback(
+    (kind: AnnotationKind) => {
+      setDraft(null)
+      changeMode(mode === kind ? null : kind)
+    },
+    [mode, changeMode]
+  )
+
+  useEffect(
+    () =>
+      window.api.onOverlayEvent((event: OverlayEvent) => {
+        switch (event.type) {
+          case 'place':
+            setMode(null)
+            setActiveNoteId(null)
+            setDraft({ kind: event.kind, anchor: event.anchor })
+            break
+          case 'select':
+            setActiveNoteId(event.id)
+            break
+          case 'orphans':
+            setOrphans(new Set(event.ids))
+            break
+          case 'shortcut':
+            if (event.key === 'cancel') {
+              setDraft(null)
+              changeMode(null)
+            } else {
+              toggleMode(event.key)
+            }
+            break
+        }
+      }),
+    [changeMode, toggleMode]
+  )
+
+  const canAnnotate = selected?.classification === 'document' && !showFolders
+
+  // Dokument obsługuje te skróty sam, gdy ma fokus. Ten nasłuch działa, gdy fokus jest w apce.
+  useEffect(() => {
+    if (!canAnnotate) return
+    const onKey = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return
+      if (event.key === 'c') toggleMode('comment')
+      if (event.key === 'n') toggleMode('sticky')
+      if (event.key === 'Escape') {
+        setDraft(null)
+        changeMode(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [canAnnotate, toggleMode, changeMode])
 
   useEffect(() => {
     if (!library) return
@@ -83,9 +191,10 @@ export function App(): React.JSX.Element {
     }
     if (selectedId && !entries.has(selectedId)) {
       setSelectedId(null)
+      resetAnnotating()
       void window.api.closeDoc()
     }
-  }, [library, entries, selectedId, selectDoc])
+  }, [library, entries, selectedId, selectDoc, resetAnnotating])
 
   const toggle = useCallback((key: string) => {
     setCollapsed((current) => {
@@ -98,8 +207,9 @@ export function App(): React.JSX.Element {
 
   const reload = useCallback(() => {
     setOpenedMtime(selected?.mtimeMs ?? null)
+    resetAnnotating()
     void window.api.reloadDoc()
-  }, [selected])
+  }, [selected, resetAnnotating])
 
   const setStatus = useCallback(
     (status: DocStatus) => {
@@ -115,12 +225,43 @@ export function App(): React.JSX.Element {
     [selectedId, load]
   )
 
+  const selectNote = useCallback((id: string | null) => {
+    setActiveNoteId(id)
+    window.api.focusAnnotation(id)
+  }, [])
+
+  const cancelDraft = useCallback(() => {
+    setDraft(null)
+    changeMode(null)
+  }, [changeMode])
+
+  const submitDraft = useCallback(
+    (text: string, audience: Audience, color: StickyColor | null) => {
+      if (!draft || !selectedId) return
+      void window.api
+        .createAnnotation(selectedId, { kind: draft.kind, anchor: draft.anchor, audience, color, text })
+        .then(cancelDraft)
+    },
+    [draft, selectedId, cancelDraft]
+  )
+
+  const openNote = useCallback(
+    (annotation: Annotation) => {
+      const doc = entries.get(annotation.docId)
+      if (!doc) return
+      if (doc.id === selectedId) selectNote(annotation.id)
+      else selectDoc(doc, annotation.id)
+    },
+    [entries, selectedId, selectDoc, selectNote]
+  )
+
   const outdated = selected !== null && openedMtime !== null && selected.mtimeMs !== openedMtime
 
   return (
-    <div className="app">
+    <div className={canAnnotate ? 'app with-notes' : 'app'}>
       <Sidebar
         library={library}
+        annotations={annotations}
         view={view}
         selectedId={selectedId}
         collapsed={collapsed}
@@ -128,6 +269,7 @@ export function App(): React.JSX.Element {
         onView={setView}
         onToggle={toggle}
         onSelect={selectDoc}
+        onOpenNote={openNote}
         onShowFolders={() => setShowFolders(true)}
         onRescan={() => load(window.api.rescan)}
       />
@@ -147,12 +289,29 @@ export function App(): React.JSX.Element {
             library={library}
             state={viewerState}
             outdated={outdated}
+            mode={mode}
+            canAnnotate={canAnnotate}
             onReload={reload}
             onStatus={setStatus}
             onClassify={classify}
+            onMode={toggleMode}
           />
         )}
       </main>
+      {canAnnotate && selected && (
+        <AnnotationsPanel
+          doc={selected}
+          annotations={docNotes}
+          docSha={selected.sha}
+          draft={draft}
+          selectedId={activeNoteId}
+          orphans={orphans}
+          onSelect={selectNote}
+          onSubmitDraft={submitDraft}
+          onCancelDraft={cancelDraft}
+          onDocumentNote={() => setDraft({ kind: 'comment', anchor: null })}
+        />
+      )}
     </div>
   )
 }

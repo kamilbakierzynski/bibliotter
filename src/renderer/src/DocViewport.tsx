@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
+import type { AnnotationKind, OverlayMode } from '../../shared/annotations'
 import { DOC_STATUSES, type DocEntry, type DocStatus, type LibrarySnapshot, type ViewerState } from '../../shared/types'
 import { blockedLabel, displayName, STATUS_LABELS } from './tree'
 
@@ -8,9 +9,12 @@ interface DocViewportProps {
   state: ViewerState
   /** Plik zmienił się na dysku po otwarciu. */
   outdated: boolean
+  mode: OverlayMode
+  canAnnotate: boolean
   onReload: () => void
   onStatus: (status: DocStatus) => void
   onClassify: (classification: 'document' | 'ignored') => void
+  onMode: (kind: AnnotationKind) => void
 }
 
 function DocMeta({ doc, library }: { doc: DocEntry; library: LibrarySnapshot | null }): React.JSX.Element {
@@ -36,7 +40,7 @@ function DocMeta({ doc, library }: { doc: DocEntry; library: LibrarySnapshot | n
 }
 
 export function DocViewport(props: DocViewportProps): React.JSX.Element {
-  const { doc, library, state, outdated, onReload, onStatus, onClassify } = props
+  const { doc, library, state, outdated, mode, canAnnotate, onReload, onStatus, onClassify, onMode } = props
   const viewport = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -77,6 +81,26 @@ export function DocViewport(props: DocViewportProps): React.JSX.Element {
                 {blockedLabel(state.blockedRequests)}
               </span>
             )}
+            {canAnnotate && (
+              <div className="tools" role="group" aria-label="Dodawanie uwag">
+                <button
+                  className={mode === 'comment' ? 'tool active' : 'tool'}
+                  aria-pressed={mode === 'comment'}
+                  title="Dodaj komentarz (C)"
+                  onClick={() => onMode('comment')}
+                >
+                  Komentarz
+                </button>
+                <button
+                  className={mode === 'sticky' ? 'tool active' : 'tool'}
+                  aria-pressed={mode === 'sticky'}
+                  title="Dodaj karteczkę (N)"
+                  onClick={() => onMode('sticky')}
+                >
+                  Karteczka
+                </button>
+              </div>
+            )}
             {doc.classification === 'review' ? (
               <>
                 <button className="primary" onClick={() => onClassify('document')}>
@@ -103,11 +127,11 @@ export function DocViewport(props: DocViewportProps): React.JSX.Element {
               {outdated ? 'Pokaż nową wersję' : 'Odśwież'}
             </button>
             {!doc.missing && (
-              <button className="ghost" onClick={() => void window.api.revealDoc(doc.id)}>
-                Pokaż w folderze
+              <button className="ghost" title="Pokaż w folderze" onClick={() => void window.api.revealDoc(doc.id)}>
+                Folder
               </button>
             )}
-            {doc.classification === 'document' && (
+            {canAnnotate && (
               <button className="ghost" title="Usuń z biblioteki" onClick={() => onClassify('ignored')}>
                 Pomiń
               </button>

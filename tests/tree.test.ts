@@ -19,6 +19,7 @@ function doc(relPath: string, overrides: Partial<DocEntry> = {}): DocEntry {
     commit: null,
     missing: false,
     otherPaths: [],
+    sha: null,
     ...overrides
   }
 }

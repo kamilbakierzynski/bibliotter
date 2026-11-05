@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { Annotation, OverlayEvent } from '../shared/annotations'
 import type { LibrarySnapshot, ShellApi, ViewerState } from '../shared/types'
 
 function subscribe<Payload>(channel: string, listener: (payload: Payload) => void): () => void {
@@ -24,8 +25,18 @@ const api: ShellApi = {
   revealDoc: (docId) => ipcRenderer.invoke('doc:reveal', docId),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   setViewerBounds: (bounds) => ipcRenderer.send('viewer:set-bounds', bounds),
+  listAnnotations: () => ipcRenderer.invoke('annotations:list'),
+  createAnnotation: (docId, input) => ipcRenderer.invoke('annotations:create', docId, input),
+  replyAnnotation: (id, text) => ipcRenderer.invoke('annotations:reply', id, text),
+  setAnnotationStatus: (id, status) => ipcRenderer.invoke('annotations:set-status', id, status),
+  setAnnotationAudience: (id, audience) => ipcRenderer.invoke('annotations:set-audience', id, audience),
+  deleteAnnotation: (id) => ipcRenderer.invoke('annotations:delete', id),
+  setOverlayMode: (mode) => ipcRenderer.send('viewer:set-mode', mode),
+  focusAnnotation: (id) => ipcRenderer.send('viewer:focus-annotation', id),
   onViewerState: (listener) => subscribe<ViewerState>('viewer:state', listener),
-  onLibraryChanged: (listener) => subscribe<LibrarySnapshot>('library:changed', listener)
+  onLibraryChanged: (listener) => subscribe<LibrarySnapshot>('library:changed', listener),
+  onAnnotationsChanged: (listener) => subscribe<Annotation[]>('annotations:changed', listener),
+  onOverlayEvent: (listener) => subscribe<OverlayEvent>('viewer:overlay-event', listener)
 }
 
 contextBridge.exposeInMainWorld('api', api)

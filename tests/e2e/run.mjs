@@ -1,5 +1,6 @@
 // Test końcowy na prawdziwym Electronie: izolacja dokumentu oraz działanie JS.
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { createSocket } from 'node:dgram'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -7,6 +8,9 @@ import { createServer } from 'node:http'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { _electron as electron } from 'playwright-core'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -18,8 +22,10 @@ async function check(name, run) {
   try {
     await run()
     results.push(['OK', name])
+    if (process.env.E2E_TRACE) console.log('OK   ', name)
   } catch (error) {
     results.push(['BŁĄD', `${name}: ${error.message.split('\n')[0]}`])
+    if (process.env.E2E_TRACE) console.log('BLAD ', name, error.message)
   }
 }
 
@@ -231,8 +237,249 @@ async function libraryFlow(workspace) {
     assert.ok(metaFolders.length >= 3, metaFolders.join())
     const meta = JSON.parse(await readFile(join(home, 'library', metaFolders[0], 'meta.json'), 'utf8'))
     assert.ok(meta.versions.length >= 1)
-    assert.equal(await readFile(join(home, '.gitignore'), 'utf8'), 'cache/\n')
+    assert.equal(await readFile(join(home, '.gitignore'), 'utf8'), 'cache/\nstate/\n')
   })
+}
+
+const annotatedDoc = (extra) => `<!doctype html><title>Dokument z uwagami</title><body>${DOCUMENT_BODY}
+${extra}
+<h2>Dalszy ciąg</h2><p id="cel">Tu ma trafić karteczka na spotkanie.</p>
+<script>for (const type of ['mousedown', 'click']) {
+  window.addEventListener(type, () => { window.klikniecia = (window.klikniecia ?? 0) + 1 }, true)
+}</script>
+</body>`
+
+/** Środek elementu w dokumencie. Pinezki są w zamkniętym Shadow DOM, więc trafiamy w nie myszą. */
+const centerOf = (page, selector) =>
+  page.locator(selector).evaluate((element) => {
+    const { x, y, width, height } = element.getBoundingClientRect()
+    return { x: x + width / 2, y: y + height / 2 }
+  })
+
+const overlayCovers = (page, point) =>
+  page.waitForFunction(
+    ({ x, y }) => document.elementFromPoint(x, y)?.tagName === 'HTML-DOCS-OVERLAY',
+    point,
+    { timeout: 5000 }
+  )
+
+async function annotationFlow(workspace) {
+  const home = join(workspace, 'notes-home')
+  const docs = join(workspace, 'notes-docs')
+  const profile = join(workspace, 'notes-profile')
+  await mkdir(home, { recursive: true })
+  await mkdir(docs, { recursive: true })
+  await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
+  const docPath = join(docs, 'uwagi.html')
+  await writeFile(docPath, annotatedDoc('<button id="akcja">Zatwierdź wariant</button>'))
+
+  const env = { ...process.env, HTMLDOCS_HOME: home }
+  const run = promisify(execFile)
+  // Celowo systemowy Node, a nie ten z Electrona: agent uruchamia CLI i MCP bez apki.
+  const cli = async (...args) => (await run(process.execPath, [join(projectRoot, 'out/main/cli.js'), ...args], { env })).stdout
+  const launch = () => electron.launch({ args: [projectRoot, `--user-data-dir=${profile}`], env })
+
+  const mcp = new Client({ name: 'test', version: '1.0.0' })
+  await mcp.connect(
+    new StdioClientTransport({ command: process.execPath, args: [join(projectRoot, 'out/main/mcp.js')], env })
+  )
+  const tool = async (name, args = {}) => {
+    const result = await mcp.callTool({ name, arguments: args })
+    return JSON.parse(result.content[0].text)
+  }
+
+  let app = await launch()
+  let commentId
+  try {
+    const shell = await app.firstWindow()
+    shell.setDefaultTimeout(6000)
+    const findDocument = attachDocument(app)
+    const errors = []
+    shell.on('pageerror', (error) => errors.push(String(error)))
+    await shell.locator('.row.doc', { hasText: 'Dokument z uwagami' }).click()
+    const page = await findDocument('Dokument z uwagami')
+    await page.waitForLoadState('load')
+    const target = await centerOf(page, '#akcja')
+
+    await check('kliknięcie w trybie komentarza stawia pinezkę, a nie uruchamia dokumentu', async () => {
+      await shell.getByRole('button', { name: 'Komentarz' }).click()
+      await overlayCovers(page, target)
+      await page.mouse.click(target.x, target.y)
+      await shell.locator('.composer').waitFor()
+      assert.equal(await page.evaluate(() => window.klikniecia), undefined)
+    })
+
+    await check('po wskazaniu miejsca klawiatura przechodzi do panelu', async () => {
+      const focused = await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].webContents.isFocused()
+      )
+      assert.equal(focused, true)
+      assert.equal(await shell.evaluate(() => document.activeElement?.tagName), 'TEXTAREA')
+    })
+
+    await check('komentarz zapisuje się w panelu i w pliku', async () => {
+      await shell.getByLabel('Treść uwagi').fill('Zmień nazwę tego przycisku')
+      await shell.getByRole('button', { name: 'Zapisz' }).click()
+      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).waitFor()
+      await shell.locator('.composer').waitFor({ state: 'detached' })
+    })
+
+    const pin = { x: target.x + 13, y: target.y - 13 }
+
+    await check('kliknięcie pinezki wybiera wątek i nie trafia w dokument', async () => {
+      await overlayCovers(page, pin)
+      await page.mouse.click(pin.x, pin.y)
+      await shell.locator('.thread.selected', { hasText: 'Zmień nazwę' }).waitFor()
+      assert.equal(await page.evaluate(() => window.klikniecia), undefined)
+    })
+
+    await check('agent widzi otwarty dokument i uwagę bez apki w tle (CLI)', async () => {
+      const current = JSON.parse(await cli('current', '--json'))
+      assert.equal(current.title, 'Dokument z uwagami')
+      assert.match(await cli('read', 'current'), /Zatwierdź wariant/)
+      const [comment] = JSON.parse(await cli('comments', 'current', '--json'))
+      commentId = comment.id
+      assert.equal(comment.heading, 'Ryzyka')
+      assert.equal(comment.quote, 'Zatwierdź wariant')
+      assert.equal(comment.messages[0].text, 'Zmień nazwę tego przycisku')
+    })
+
+    await check('prawdziwy klient MCP czyta dokument i odpowiada w wątku', async () => {
+      const { tools } = await mcp.listTools()
+      assert.equal(tools.length, 7)
+      assert.equal((await tool('current_document')).title, 'Dokument z uwagami')
+      const read = await tool('read_document', { document: 'current', limit: 20 })
+      assert.equal(read.content.length, 20)
+      assert.ok(read.nextOffset === 20 && read.totalLength > 20)
+      assert.equal((await tool('list_comments', { document: 'current' }))[0].id, commentId)
+      await tool('reply_comment', { id: commentId, text: 'Czy nazwa „Wybierz” będzie dobra?' })
+    })
+
+    await check('odpowiedź agenta pojawia się w otwartym panelu', async () => {
+      await shell.locator('.message.agent', { hasText: 'Czy nazwa' }).waitFor({ timeout: 5000 })
+      await shell.locator('.flag', { hasText: 'Agent odpisał' }).waitFor()
+    })
+
+    await check('karteczka dla mnie jest ukryta przed agentem', async () => {
+      await page.locator('#cel').scrollIntoViewIfNeeded()
+      const visible = await centerOf(page, '#cel')
+      await page.keyboard.press('Escape')
+      await shell.getByRole('button', { name: 'Karteczka' }).click()
+      await overlayCovers(page, visible)
+      await page.mouse.click(visible.x, visible.y)
+      await shell.getByLabel('Treść uwagi').fill('Poruszyć na spotkaniu')
+      await shell.getByRole('radio', { name: 'Niebieska' }).click()
+      await shell.getByRole('button', { name: 'Zapisz' }).click()
+      await shell.locator('.thread', { hasText: 'Poruszyć' }).waitFor()
+
+      assert.doesNotMatch(await cli('comments'), /Poruszyć/)
+      assert.match(await cli('comments', '--personal'), /Poruszyć/)
+      assert.equal((await tool('list_comments')).length, 1)
+    })
+
+    await check('zbiorcza lista pokazuje tematy na spotkanie', async () => {
+      await shell.getByRole('tab', { name: /Uwagi/ }).click()
+      await shell.locator('.two-line', { hasText: 'Poruszyć' }).click()
+      await shell.locator('.thread.selected', { hasText: 'Poruszyć' }).waitFor()
+      await shell.getByRole('tab', { name: 'Biblioteka' }).click()
+    })
+
+    await check('kod dokumentu nie widzi uwag ani mostu do apki', async () => {
+      const probe = await page.evaluate(() => ({
+        html: document.documentElement.outerHTML.includes('Poruszyć'),
+        text: document.documentElement.textContent.includes('Zmień nazwę'),
+        shadow: document.querySelector('html-docs-overlay')?.shadowRoot ?? null,
+        bridge: typeof window.api + typeof window.require + typeof window.ipcRenderer
+      }))
+      assert.deepEqual(probe, {
+        html: false,
+        text: false,
+        shadow: null,
+        bridge: 'undefinedundefinedundefined'
+      })
+    })
+
+    await check('zaznaczony tekst od razu tworzy komentarz z cytatem', async () => {
+      await page.evaluate(() => {
+        const range = document.createRange()
+        range.selectNodeContents(document.getElementById('cel'))
+        getSelection().addRange(range)
+      })
+      await shell.getByRole('button', { name: 'Komentarz' }).click()
+      await shell.locator('.composer blockquote', { hasText: 'karteczka na spotkanie' }).waitFor()
+      await shell.getByRole('button', { name: 'Anuluj' }).click()
+      await shell.locator('.composer').waitFor({ state: 'detached' })
+    })
+
+    await check('skrót C w dokumencie włącza tryb komentarza, a Escape go wyłącza', async () => {
+      await page.mouse.click(5, 5)
+      await page.keyboard.press('c')
+      await shell.locator('.tool.active', { hasText: 'Komentarz' }).waitFor()
+      await page.keyboard.press('Escape')
+      await shell.locator('.tool.active').waitFor({ state: 'detached' })
+    })
+
+    await check('uwaga do całego dokumentu nie ma kotwicy', async () => {
+      await shell.getByRole('button', { name: 'Uwaga do całego dokumentu' }).click()
+      await shell.getByLabel('Treść uwagi').fill('Skróć całość')
+      await shell.getByRole('button', { name: 'Zapisz' }).click()
+      await shell.locator('.thread', { hasText: 'Skróć całość' }).waitFor()
+      const comment = (await tool('list_comments')).find((item) => item.messages[0].text === 'Skróć całość')
+      assert.equal(comment.heading, null)
+    })
+
+    await check('panel nie zgłasza błędów', async () => assert.deepEqual(errors, []))
+    await shell.screenshot({ path: join(artifacts, 'notes.png') })
+  } finally {
+    await app.close()
+  }
+
+  await check('po zamknięciu apki żaden dokument nie jest bieżący', async () => {
+    assert.equal(JSON.parse(await cli('current', '--json')), null)
+    assert.equal(await tool('current_document'), null)
+    await assert.rejects(cli('read', 'current'), /nie jest otwarty/)
+  })
+
+  await check('agent odpowiada także przy zamkniętej apce', async () => {
+    await cli('reply', commentId, 'Zmienię po Twojej decyzji')
+  })
+
+  await writeFile(docPath, annotatedDoc('<p>Sekcja bez przycisku.</p>'))
+
+  app = await launch()
+  try {
+    const shell = await app.firstWindow()
+    await check('uwagi i odpowiedź agenta przetrwają ponowne uruchomienie', async () => {
+      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).waitFor()
+      await shell.locator('.thread', { hasText: 'Poruszyć' }).waitFor()
+      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).locator('.thread-head').click()
+      await shell.locator('.message.agent', { hasText: 'Zmienię po Twojej decyzji' }).waitFor()
+    })
+
+    await check('uwaga z usuniętego miejsca jest oznaczona, a nie gubiona', async () => {
+      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).locator('.flag', { hasText: 'Nie ma tego miejsca' }).waitFor()
+      const [comment] = await tool('list_comments', { document: 'current' })
+      assert.equal(comment.outdated, true)
+    })
+
+    await check('uwaga zamknięta przez agenta znika z listy', async () => {
+      await tool('resolve_comment', { id: commentId, text: 'Przycisk usunięty' })
+      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).waitFor({ state: 'detached', timeout: 5000 })
+      await shell.getByRole('button', { name: 'Zamknięte: 1' }).click()
+      await shell.locator('.thread.resolved', { hasText: 'Zmień nazwę' }).waitFor()
+    })
+
+    await check('usunięcie uwagi wymaga potwierdzenia', async () => {
+      const thread = shell.locator('.thread', { hasText: 'Skróć całość' })
+      await thread.locator('.thread-head').click()
+      await thread.getByRole('button', { name: 'Usuń' }).click()
+      await thread.getByRole('button', { name: 'Na pewno?' }).click()
+      await thread.waitFor({ state: 'detached' })
+    })
+  } finally {
+    await app.close()
+    await mcp.close()
+  }
 }
 
 async function firstRun(workspace, docs) {
@@ -289,6 +536,7 @@ async function main() {
 
   await firstRun(workspace, docs)
   await libraryFlow(workspace)
+  await check('scenariusz uwag dobiega końca', () => annotationFlow(workspace))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
 
   const app = await electron.launch({
