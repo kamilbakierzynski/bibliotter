@@ -27,6 +27,7 @@ export function App(): React.JSX.Element {
           <i />
         </div>
       </div>
+      <div className="titlebar" aria-hidden="true" />
       <Stage />
       <Nav />
       <Insp />

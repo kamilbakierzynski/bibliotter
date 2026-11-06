@@ -186,7 +186,7 @@ Widać go po uruchomieniu i po zamknięciu ostatniego arkusza. `H` przechodzi na
 
 ### Okno
 
-Docelowo Windows: `Ctrl` zamiast `⌘`, przyciski okna po prawej, „Pokaż w Eksploratorze”. Ostatni arkusz odsuwa swoje przyciski spod przycisków okna.
+Docelowo Windows: `Ctrl` zamiast `⌘`, przyciski okna po prawej, „Pokaż w Eksploratorze”. Ostatni arkusz odsuwa swoje przyciski spod przycisków okna. Okno chwyta się za cały górny pasek wysokości przycisków okna (32 px), a także za wolne miejsce w nagłówkach poniżej. Przyciski i tekst na pasku zostają klikalne.
 
 ## Czego unikamy
 

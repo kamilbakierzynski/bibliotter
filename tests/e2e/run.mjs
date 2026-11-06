@@ -184,6 +184,22 @@ async function libraryFlow(workspace) {
     const row = (name) => docRow(shell, name)
     await row('stary').waitFor()
 
+    await check('górną krawędź okna da się chwycić na całej szerokości', async () => {
+      const bar = await shell.evaluate(() => {
+        const element = document.querySelector('.titlebar')
+        const { top, width } = element.getBoundingClientRect()
+        return {
+          top,
+          missing: width < innerWidth,
+          region: getComputedStyle(element).webkitAppRegion,
+          closedFlyout: getComputedStyle(document.getElementById('flyout')).webkitAppRegion,
+          // Wycięcia działają po kolei, więc pasek stoi w DOM przed tym, co na nim leży.
+          beforeControls: Boolean(element.compareDocumentPosition(document.getElementById('homeBtn')) & Node.DOCUMENT_POSITION_FOLLOWING)
+        }
+      })
+      assert.deepEqual(bar, { top: 0, missing: false, region: 'drag', closedFlyout: 'none', beforeControls: true })
+    })
+
     await check('nowy plik pojawia się bez ręcznego skanowania', async () => {
       await writeFile(join(docs, 'nowy.html'), documentNamed('Nowy dokument', 'pierwsza'))
       await row('nowy').waitFor({ timeout: 8000 })
