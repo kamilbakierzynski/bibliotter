@@ -545,6 +545,8 @@ html.theming *:not(.stage):not(.rail):not(.panel):not(.pane) {
 /* Miniatura to ten sam dokument w szerokości arkusza, tylko pomniejszony */
 .hs-sheet { position: relative; height: var(--th, 300px); overflow: hidden; background: #fff; border-radius: 8px; box-shadow: var(--sh-thumb); transform-origin: 50% 0; transition: transform .5s var(--spring-pop), box-shadow .3s ease; }
 .hs-sheet img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+/* Arkusz Markdownu idzie za motywem, a HTML zostaje białą kartką, dopóki sam się nie narysuje. */
+.sheet[data-format="markdown"], .hs-sheet[data-format="markdown"], .thumb[data-format="markdown"] { background: var(--surface); }
 .hs-cap { padding: 10px 2px 0; }
 .hs-cap b { display: flex; align-items: center; gap: 7px; font-weight: 500; }
 .hs-cap b span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

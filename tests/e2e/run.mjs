@@ -548,6 +548,105 @@ async function annotationFlow(workspace) {
   }
 }
 
+const markdownDoc = `# Plan prac
+
+Pierwszy akapit z [linkiem](https://example.com), \`kodem\` oraz klawiszem <kbd>T</kbd>.
+
+## Cel
+
+${'Zdanie opisujące decyzję w dokumencie. '.repeat(30)}
+
+> Cytat, który ma zostać czytelny w obu motywach.
+
+- [x] gotowe
+- [ ] do zrobienia
+
+| Motyw | Tło |
+|-------|-----|
+| jasny | białe |
+
+\`\`\`ts
+const motyw = 'ciemny'
+\`\`\`
+
+## Ryzyka
+
+${'Zdanie opisujące decyzję w dokumencie. '.repeat(30)}
+`
+
+const SHEET_COLORS = {
+  light: { paper: 'rgb(255, 255, 255)', ink: 'rgb(23, 24, 26)', tint: 'rgb(245, 245, 246)' },
+  dark: { paper: 'rgb(21, 21, 23)', ink: 'rgb(244, 244, 245)', tint: 'rgb(32, 32, 35)' }
+}
+
+async function markdownTheme(workspace) {
+  const home = join(workspace, 'markdown-theme')
+  const docs = join(workspace, 'markdown-theme-docs')
+  await mkdir(home, { recursive: true })
+  await mkdir(docs, { recursive: true })
+  await writeFile(join(docs, 'plan.md'), markdownDoc)
+  await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
+
+  const app = await electron.launch({
+    args: [projectRoot, `--user-data-dir=${join(workspace, 'markdown-theme-profile')}`],
+    env: { ...process.env, HTMLDOCS_HOME: home },
+    // Playwright domyślnie udaje jasny motyw, a tu liczy się ten z `nativeTheme`.
+    colorScheme: null
+  })
+  try {
+    const shell = await app.firstWindow()
+    await docRow(shell, 'Plan prac').click()
+    const page = await attachDocument(app)('Plan prac')
+    await documentIsLive(shell)
+
+    const paint = () =>
+      page.evaluate(() => {
+        const color = (selector, property) => getComputedStyle(document.querySelector(selector))[property]
+        return { paper: color('body', 'backgroundColor'), ink: color('p', 'color'), tint: color('pre', 'backgroundColor') }
+      })
+    const toMode = async (mode) => {
+      const current = await shell.evaluate(() => document.documentElement.dataset.mode)
+      if (current !== mode) await page.keyboard.press('t')
+      await page.waitForFunction((paper) => getComputedStyle(document.body).backgroundColor === paper, SHEET_COLORS[mode].paper)
+      await delay(500)
+    }
+    const thumbs = async () => readdir(join(home, 'cache', 'thumbs')).catch(() => [])
+
+    for (const mode of ['dark', 'light', 'dark']) {
+      await check(`arkusz Markdownu idzie za motywem: ${mode}`, async () => {
+        await toMode(mode)
+        assert.deepEqual(await paint(), SHEET_COLORS[mode])
+        await shell.waitForFunction(
+          (paper) => getComputedStyle(document.querySelector('.hs-sheet[data-format="markdown"]')).backgroundColor === paper,
+          SHEET_COLORS[mode].paper
+        )
+      })
+    }
+    await page.screenshot({ path: join(artifacts, 'markdown-dark.png') })
+
+    await check('ciemna i jasna miniatura Markdownu leżą obok siebie', async () => {
+      const deadline = Date.now() + 10000
+      while (Date.now() < deadline && (await thumbs()).length < 2) await delay(100)
+      const names = await thumbs()
+      assert.equal(names.filter((name) => name.endsWith('-dark.jpg')).length, 1, names.join())
+      assert.equal(names.length, 2, names.join())
+      const brightness = (name) =>
+        app.evaluate(({ nativeImage }, file) => nativeImage.createFromPath(file).toBitmap()[0], join(home, 'cache', 'thumbs', name))
+      for (const name of names) {
+        const bright = (await brightness(name)) > 128
+        assert.equal(bright, !name.endsWith('-dark.jpg'), name)
+      }
+    })
+
+    await check('przeładowany arkusz zostaje w motywie', async () => {
+      await page.reload()
+      assert.deepEqual(await paint(), SHEET_COLORS.dark)
+    })
+  } finally {
+    await app.close()
+  }
+}
+
 async function firstRun(workspace, docs) {
   const home = join(workspace, 'first-run')
   const app = await electron.launch({
@@ -606,6 +705,7 @@ async function main() {
   await firstRun(workspace, docs)
   await libraryFlow(workspace)
   await check('scenariusz uwag dobiega końca', () => annotationFlow(workspace))
+  await check('scenariusz motywu Markdownu dobiega końca', () => markdownTheme(workspace))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
 
   const app = await electron.launch({

@@ -101,9 +101,11 @@ function titleBarFor(mode: ThemeMode): Electron.TitleBarOverlay {
   return { color: '#00000000', symbolColor: CAPTION_SYMBOLS[mode], height: TITLE_BAR_HEIGHT }
 }
 
-/** Motyw obejmuje też dokumenty, które reagują na `prefers-color-scheme`. */
+/** Motyw obejmuje też dokumenty, które reagują na `prefers-color-scheme`, w tym arkusze Markdownu. */
 function applyTheme(mode: ThemeMode): void {
   nativeTheme.themeSource = mode
+  viewer?.syncTheme()
+  thumbnails?.syncTheme()
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.setTitleBarOverlay(titleBarFor(mode))
   mainWindow.setBackgroundColor(WALL_COLORS[mode])
@@ -393,6 +395,7 @@ function createWindow(): BrowserWindow {
     dir: join(dataDir(), 'cache', 'thumbs'),
     viewer: () => viewer,
     shaOf: (docId) => library?.getEntry(docId)?.sha ?? null,
+    themed: (docId) => library?.getEntry(docId)?.format === 'markdown',
     send: (thumb) => sendToShell('thumbs:ready', thumb)
   })
 

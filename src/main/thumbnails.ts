@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { BrowserWindow, type NativeImage, nativeImage } from 'electron'
+import { BrowserWindow, type NativeImage, nativeImage, nativeTheme } from 'electron'
 import type { DocThumb } from '../shared/types'
 import { docUrl } from './docPolicy'
 import type { DocViewer } from './docViewer'
@@ -74,6 +74,8 @@ interface ThumbnailerOptions {
   viewer: () => DocViewer | null
   /** Skrót bieżącej treści. Dokument bez skrótu nie ma jeszcze miniatury. */
   shaOf: (docId: string) => string | null
+  /** Dokument wygląda inaczej w każdym motywie, więc ma osobne miniatury. */
+  themed: (docId: string) => boolean
   send: (thumb: DocThumb) => void
 }
 
@@ -92,11 +94,23 @@ export class Thumbnailer {
 
   request(docIds: string[]): void {
     for (const docId of docIds) {
-      const sha = this.options.shaOf(docId)
-      if (!sha || this.sent.get(docId) === sha || this.queue.includes(docId)) continue
+      const stamp = this.stampOf(docId)
+      if (!stamp || this.sent.get(docId) === stamp || this.queue.includes(docId)) continue
       this.queue.push(docId)
     }
     void this.pump()
+  }
+
+  /** Dosyła miniatury tym dokumentom, które wyglądają inaczej w nowym motywie. */
+  syncTheme(): void {
+    this.request([...this.sent.keys()])
+  }
+
+  /** Jasna miniatura nosi sam skrót treści, a ciemna leży obok niej. */
+  private stampOf(docId: string): string | null {
+    const sha = this.options.shaOf(docId)
+    if (!sha) return null
+    return this.options.themed(docId) && nativeTheme.shouldUseDarkColors ? `${sha}-dark` : sha
   }
 
   /** Ukryte okno nie może zatrzymać zamknięcia apki. */
@@ -122,13 +136,13 @@ export class Thumbnailer {
   }
 
   private async deliver(docId: string): Promise<void> {
-    const sha = this.options.shaOf(docId)
-    if (!sha) return
-    const file = join(this.options.dir, `${docId}-${sha}.jpg`)
+    const stamp = this.stampOf(docId)
+    if (!stamp) return
+    const file = join(this.options.dir, `${docId}-${stamp}.jpg`)
     const stored = await readFile(file).catch(() => null)
-    const jpeg = stored ?? (await this.freshJpeg(docId, file))
+    const jpeg = stored ?? (await this.freshJpeg(docId, stamp, file))
     if (!jpeg || this.closed) return
-    this.sent.set(docId, sha)
+    this.sent.set(docId, stamp)
     this.options.send({
       docId,
       url: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
@@ -136,9 +150,14 @@ export class Thumbnailer {
     })
   }
 
-  private async freshJpeg(docId: string, file: string): Promise<Buffer | null> {
+  private async freshJpeg(docId: string, stamp: string, file: string): Promise<Buffer | null> {
     const page = await this.render(docId)
     if (!page) return null
+    if (this.stampOf(docId) !== stamp) {
+      // Motyw zmienił się w trakcie, więc zrzut nie pasuje już do pliku.
+      this.request([docId])
+      return null
+    }
     const jpeg = page.toJPEG(JPEG_QUALITY)
     await this.store(docId, file, jpeg)
     return jpeg
@@ -148,7 +167,8 @@ export class Thumbnailer {
     const { dir } = this.options
     await mkdir(dir, { recursive: true })
     await writeFile(file, jpeg)
-    const stale = (await readdir(dir)).filter((name) => name.startsWith(`${docId}-`) && join(dir, name) !== file)
+    const current = `${docId}-${this.options.shaOf(docId)}`
+    const stale = (await readdir(dir)).filter((name) => name.startsWith(`${docId}-`) && !name.startsWith(current))
     await Promise.all(stale.map((name) => unlink(join(dir, name)).catch(() => {})))
   }
 

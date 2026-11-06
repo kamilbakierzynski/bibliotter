@@ -162,7 +162,7 @@ function Preview({ item }: { item: Item | undefined }): React.JSX.Element | null
     const thumb = data.thumbs.get(doc.id)
     return (
       <>
-        <div className="thumb">{thumb && <img src={thumb.url} alt="" draggable={false} />}</div>
+        <div className="thumb" data-format={doc.format}>{thumb && <img src={thumb.url} alt="" draggable={false} />}</div>
         <dl className="meta">
           <dt>Projekt</dt>
           <dd>{doc.projectName}</dd>

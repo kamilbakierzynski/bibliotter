@@ -2,6 +2,7 @@ import geistLatinExt from '../../node_modules/@fontsource-variable/geist/files/g
 import geistLatin from '../../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?inline'
 import monoLatinExt from '../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-ext-wght-normal.woff2?inline'
 import monoLatin from '../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?inline'
+import type { ThemeMode } from '../shared/types'
 import { renderMarkdown } from './markdown'
 
 const LATIN = 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD'
@@ -18,12 +19,18 @@ const FONTS = [
   fontFace('Geist Mono', monoLatinExt, LATIN_EXT)
 ].join('\n')
 
-/* Arkusz w języku apki: czarno-biały, bez Sygnału, z Geist Mono przy kodzie. */
+/** Tło arkusza. Widok maluje je już przed załadowaniem strony. */
+export const MARKDOWN_BACKGROUND: Record<ThemeMode, string> = { light: '#ffffff', dark: '#151517' }
+
+/* Arkusz w języku apki: czarno-biały, bez Sygnału, z Geist Mono przy kodzie. Motyw przychodzi przez `nativeTheme`. */
 const SHEET = `
-:root { color-scheme: light; --ink: #17181a; --ink-2: #55585e; --hair: #e4e5e8; --tint: #f5f5f6; }
+:root { color-scheme: light dark; --paper: ${MARKDOWN_BACKGROUND.light}; --ink: #17181a; --ink-2: #55585e; --hair: #e4e5e8; --hair-2: #c9cbd0; --link: #b4b6bb; --tint: #f5f5f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --paper: ${MARKDOWN_BACKGROUND.dark}; --ink: #f4f4f5; --ink-2: #a4a4ac; --hair: #2b2b2f; --hair-2: #414147; --link: #6e6e76; --tint: #202023; }
+}
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; color: var(--ink); background: #fff; font: 400 15.5px/1.68 Geist, 'Segoe UI', system-ui, sans-serif; overflow-wrap: break-word; }
+body { margin: 0; color: var(--ink); background: var(--paper); font: 400 15.5px/1.68 Geist, 'Segoe UI', system-ui, sans-serif; overflow-wrap: break-word; transition: background-color .42s ease, color .42s ease; }
 main { max-width: 760px; margin: 0 auto; padding: 64px clamp(24px, 7vw, 72px) 96px; }
 main > :first-child { margin-top: 0; }
 main > :last-child { margin-bottom: 0; }
@@ -39,20 +46,20 @@ li { margin: .25em 0; }
 li > ul, li > ol, li > p { margin-bottom: .25em; }
 li:has(> input[type='checkbox']) { list-style: none; margin-left: -1.4em; }
 input[type='checkbox'] { margin: 0 .55em 0 0; accent-color: var(--ink); vertical-align: -1px; }
-a { color: inherit; text-decoration: underline; text-decoration-color: #b4b6bb; text-underline-offset: .18em; }
+a { color: inherit; text-decoration: underline; text-decoration-color: var(--link); text-underline-offset: .18em; }
 a:hover { text-decoration-color: currentColor; }
 strong { font-weight: 600; }
 hr { height: 1px; margin: 2.4em 0; border: 0; background: var(--hair); }
 img, video { display: block; max-width: 100%; height: auto; border-radius: 8px; }
 blockquote { padding-left: 1.1em; color: var(--ink-2); border-left: 2px solid var(--hair); }
-code, kbd, samp, pre { font-family: 'Geist Mono', Consolas, monospace; font-size: .875em; }
+code, kbd, samp, pre { font-family: 'Geist Mono', Consolas, monospace; font-size: .875em; transition: background-color .42s ease; }
 :not(pre) > code { padding: .14em .36em; background: var(--tint); border-radius: 5px; }
 kbd { padding: .1em .4em; background: var(--tint); border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair); }
 pre { padding: 16px 18px; overflow-x: auto; line-height: 1.55; background: var(--tint); border-radius: 10px; }
 pre code { font-size: 13px; }
 table { display: block; width: fit-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 14px; }
 th, td { padding: 8px 14px 8px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--hair); }
-th { font-weight: 600; border-bottom-color: #c9cbd0; }
+th { font-weight: 600; border-bottom-color: var(--hair-2); }
 th:last-child, td:last-child { padding-right: 0; }
 `
 

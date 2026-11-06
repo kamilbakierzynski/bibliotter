@@ -146,6 +146,7 @@ function Pane({ sheet }: { sheet: Sheet }): React.JSX.Element {
           sheet.box = element
         }}
         className="sheet"
+        data-format={doc?.format}
         onClick={clickSheet}
       >
         {thumb && <img className="sheet-thumb" src={thumb.url} alt="" draggable={false} />}

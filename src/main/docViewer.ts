@@ -3,6 +3,7 @@ import { basename, join } from 'node:path'
 import {
   type BaseWindow,
   ipcMain,
+  nativeTheme,
   protocol,
   type Session,
   session,
@@ -30,7 +31,7 @@ import {
   MARKDOWN_CSP,
   resolveAssetPath
 } from './docPolicy'
-import { markdownPage } from './markdownPage'
+import { MARKDOWN_BACKGROUND, markdownPage } from './markdownPage'
 import { formatOf } from './scanner'
 
 const DOC_PARTITION = 'persist:documents'
@@ -39,6 +40,8 @@ const ERR_ABORTED = -3
 const SHEET_RADIUS = 16
 /** Dokument dostaje cichy pasek przewijania, a własny styl dokumentu i tak wygrywa. */
 const QUIET_SCROLLBAR = 'html { scrollbar-width: thin; scrollbar-color: rgb(128 128 128 / .4) transparent; }'
+/** Dokument HTML to biała kartka, póki sam nie ustawi tła. */
+const HTML_BACKGROUND = '#ffffff'
 
 /** Musi zostać wywołane przed `app.ready`. */
 export function registerDocScheme(): void {
@@ -258,7 +261,7 @@ export class DocViewer {
         backgroundThrottling: false
       }
     })
-    view.setBackgroundColor('#ffffff')
+    view.setBackgroundColor(this.backgroundOf(docId))
     view.setBorderRadius(SHEET_RADIUS)
     view.setBounds(parked({ x: 0, y: 0, width: 800, height: 600 }))
     this.options.window.contentView.addChildView(view)
@@ -313,6 +316,17 @@ export class DocViewer {
     void contents.loadURL(docUrl(docId)).catch(() => {
       // Błąd ładowania zgłasza `did-fail-load`.
     })
+  }
+
+  private backgroundOf(docId: string): string {
+    const docPath = this.options.lookupDocPath(docId)
+    if (!docPath || formatOf(docPath) !== 'markdown') return HTML_BACKGROUND
+    return MARKDOWN_BACKGROUND[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
+  }
+
+  /** Arkusz Markdownu zmienia tło razem z motywem, żeby przeładowanie nie błysnęło starym kolorem. */
+  syncTheme(): void {
+    for (const { docId, view } of this.views.values()) view.setBackgroundColor(this.backgroundOf(docId))
   }
 
   close(docId: string): void {

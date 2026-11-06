@@ -45,7 +45,7 @@ function Wall({ docs }: { docs: DocEntry[] }): React.JSX.Element {
             data-doc={doc.id}
             style={{ '--i': i, '--sway': `${i % 2 ? 1.4 : -1.4}deg` } as React.CSSProperties}
           >
-            <div className="hs-sheet">{thumb && <img src={thumb.url} alt="" draggable={false} />}</div>
+            <div className="hs-sheet" data-format={doc.format}>{thumb && <img src={thumb.url} alt="" draggable={false} />}</div>
             <div className="hs-cap">
               <b>
                 {tone !== 'none' && <i className={`dot ${tone}`} />}
