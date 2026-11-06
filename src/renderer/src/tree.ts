@@ -1,5 +1,8 @@
 import type { DocEntry, DocStatus, ProjectGroup, PullRequest } from '../../shared/types'
 
+export type SortMode = 'recent' | 'name'
+export type Tone = 'decide' | 'read' | 'none'
+
 export interface FolderNode {
   kind: 'folder'
   key: string
@@ -7,6 +10,12 @@ export interface FolderNode {
   children: TreeNode[]
   /** Ustawione, gdy węzeł to branch, a nie folder. */
   branch?: { pullRequest: PullRequest | undefined; latestMtime: number }
+  /** Grupa zarchiwizowanych dokumentów na końcu projektu. */
+  archive?: boolean
+  /** Dane całego poddrzewa: zwinięty folder dalej mówi, co w nim czeka. */
+  count: number
+  latest: number
+  tone: Tone
 }
 
 export interface DocNode {
@@ -25,19 +34,46 @@ export const STATUS_LABELS: Record<DocStatus, string> = {
   archived: 'Archiwum'
 }
 
-function sortNodes(nodes: TreeNode[]): TreeNode[] {
+export interface TreeOptions {
+  sort?: SortMode
+  toneOf?: (doc: DocEntry) => Tone
+}
+
+const collator = new Intl.Collator('pl', { numeric: true })
+const TONE_ORDER: Tone[] = ['none', 'read', 'decide']
+const stronger = (a: Tone, b: Tone): Tone => (TONE_ORDER.indexOf(a) > TONE_ORDER.indexOf(b) ? a : b)
+const latestOf = (node: TreeNode): number => (node.kind === 'folder' ? node.latest : node.doc.mtimeMs)
+
+function sortNodes(nodes: TreeNode[], sort: SortMode): TreeNode[] {
   const label = (node: TreeNode): string => (node.kind === 'folder' ? node.name : displayName(node.doc))
   nodes.sort((a, b) => {
     const aBranch = a.kind === 'folder' && a.branch ? 0 : 1
     const bBranch = b.kind === 'folder' && b.branch ? 0 : 1
     if (aBranch !== bBranch) return aBranch - bBranch
     if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
-    return label(a).localeCompare(label(b), 'pl', { numeric: true })
+    if (sort === 'recent' && latestOf(a) !== latestOf(b)) return latestOf(b) - latestOf(a)
+    return collator.compare(label(a), label(b))
   })
   for (const node of nodes) {
-    if (node.kind === 'folder') sortNodes(node.children)
+    if (node.kind === 'folder') sortNodes(node.children, sort)
   }
   return nodes
+}
+
+/** Liczy dane poddrzew. Działa po uproszczeniu drzewa, bo scalanie podmienia węzły. */
+function summarize(nodes: TreeNode[], toneOf: (doc: DocEntry) => Tone): void {
+  for (const node of nodes) {
+    if (node.kind === 'doc') continue
+    summarize(node.children, toneOf)
+    node.count = 0
+    node.latest = 0
+    node.tone = 'none'
+    for (const child of node.children) {
+      node.count += child.kind === 'folder' ? child.count : 1
+      node.latest = Math.max(node.latest, latestOf(child))
+      node.tone = stronger(node.tone, child.kind === 'folder' ? child.tone : toneOf(child.doc))
+    }
+  }
 }
 
 /**
@@ -65,7 +101,7 @@ function insertDoc(root: TreeNode[], folders: Map<string, FolderNode>, parentKey
     key = `${key}/${segment}`
     let folder = folders.get(key)
     if (!folder) {
-      folder = { kind: 'folder', key, name: segment, children: [] }
+      folder = { kind: 'folder', key, name: segment, children: [], count: 0, latest: 0, tone: 'none' }
       folders.set(key, folder)
       siblings.push(folder)
     }
@@ -75,7 +111,7 @@ function insertDoc(root: TreeNode[], folders: Map<string, FolderNode>, parentKey
 }
 
 /** Buduje drzewo: branche inne niż domyślny, a w nich foldery i dokumenty. */
-export function buildTree(project: ProjectGroup): TreeNode[] {
+export function buildTree(project: ProjectGroup, options: TreeOptions = {}): TreeNode[] {
   const root: TreeNode[] = []
   const folders = new Map<string, FolderNode>()
 
@@ -93,7 +129,10 @@ export function buildTree(project: ProjectGroup): TreeNode[] {
         key: branchKey,
         name: doc.branch,
         children: [],
-        branch: { pullRequest: project.pullRequests[doc.branch], latestMtime: 0 }
+        branch: { pullRequest: project.pullRequests[doc.branch], latestMtime: 0 },
+        count: 0,
+        latest: 0,
+        tone: 'none'
       }
       folders.set(branchKey, branchNode)
       root.push(branchNode)
@@ -104,7 +143,187 @@ export function buildTree(project: ProjectGroup): TreeNode[] {
     insertDoc(branchNode.children, folders, branchKey, doc)
   }
 
-  return sortNodes(compactNodes(root))
+  const nodes = compactNodes(root)
+  summarize(nodes, options.toneOf ?? (() => 'none'))
+  return sortNodes(nodes, options.sort ?? 'name')
+}
+
+/** Większy folder startuje zwinięty i pokazuje tylko licznik. */
+export const BIG_FOLDER = 12
+export const ROW_H = 32
+/** Zwijany folder odprowadza tyle wierszy, reszta i tak jest poza ekranem. */
+const GHOST_LIMIT = 40
+/** Wcięcia drzewa: folder w projekcie, linia pod nim i treść za linią. */
+const TOP_X = 8
+const TREE_STEP = 15
+
+export interface ProjectModel {
+  project: ProjectGroup
+  nodes: TreeNode[]
+  count: number
+  latest: number
+  tone: Tone
+  /** Same dokumenty z archiwum, więc projekt nie musi niczego pokazywać od razu. */
+  stale: boolean
+}
+
+export interface LibraryModel {
+  projects: ProjectModel[]
+  /** Węzły zwinięte, dopóki użytkownik ich nie rozwinie. */
+  defaults: Set<string>
+  /** Węzły nad każdym dokumentem, od projektu w dół. */
+  chains: Map<string, string[]>
+}
+
+/**
+ * Układa bibliotekę. Archiwum to zwykle większość plików, więc nie miesza się z bieżącą pracą:
+ * ląduje na końcu projektu w jednej grupie, a projekt z samym archiwum po prostu jest zwinięty.
+ */
+export function buildLibrary(projects: ProjectGroup[], options: Required<TreeOptions>): LibraryModel {
+  const defaults = new Set<string>()
+  const chains = new Map<string, string[]>()
+
+  const models = projects.map((project): ProjectModel => {
+    const active = project.docs.filter((doc) => doc.status !== 'archived')
+    const archived = project.docs.filter((doc) => doc.status === 'archived')
+    const stale = active.length === 0
+    const nodes = buildTree({ ...project, docs: stale ? archived : active }, options)
+    if (!stale && archived.length > 0) {
+      const key = `${project.id}#:archive`
+      const children = buildTree({ ...project, id: key, docs: archived }, options)
+      const archive: FolderNode = { kind: 'folder', key, name: 'Archiwum', children, archive: true, count: 0, latest: 0, tone: 'none' }
+      summarize([archive], options.toneOf)
+      nodes.push(archive)
+    }
+
+    const visit = (list: TreeNode[], chain: string[]): void => {
+      for (const node of list) {
+        if (node.kind === 'doc') {
+          chains.set(node.doc.id, chain)
+          continue
+        }
+        if (node.archive || node.count > BIG_FOLDER) defaults.add(node.key)
+        visit(node.children, [...chain, node.key])
+      }
+    }
+    visit(nodes, [project.id])
+    if (stale) defaults.add(project.id)
+
+    return {
+      project,
+      nodes,
+      count: project.docs.length,
+      latest: project.docs.reduce((newest, doc) => Math.max(newest, doc.mtimeMs), 0),
+      tone: project.docs.reduce<Tone>((tone, doc) => stronger(tone, options.toneOf(doc)), 'none'),
+      stale
+    }
+  })
+
+  const order =
+    options.sort === 'name'
+      ? (a: ProjectModel, b: ProjectModel): number => collator.compare(a.project.name, b.project.name)
+      : (a: ProjectModel, b: ProjectModel): number => Number(a.stale) - Number(b.stale) || b.latest - a.latest
+  return { projects: models.sort(order), defaults, chains }
+}
+
+interface RowPlace {
+  key: string
+  y: number
+  /** Skąd wyjeżdża wiersz świeżo rozwinięty: miejsce rodzica. */
+  from: number
+  indent: number
+  /** Pionowe linie drzewa biegnące przez ten wiersz. */
+  guides: number[]
+  /** Łuk od linii do wiersza. */
+  elbow: number | null
+  /** Węzły nad wierszem. */
+  chain: string[]
+  /** Wiersz zwijanego folderu, który właśnie znika pod rodzicem. */
+  ghost: boolean
+}
+
+export type LibraryRow = RowPlace &
+  (
+    | { type: 'project'; model: ProjectModel; closed: boolean }
+    | { type: 'folder'; node: FolderNode; closed: boolean }
+    | { type: 'doc'; doc: DocEntry }
+  )
+
+export interface LibraryRows {
+  rows: LibraryRow[]
+  height: number
+}
+
+interface WalkContext {
+  /** Wcięcie treści i linia na tym poziomie. Poziom główny układa foldery bez linii. */
+  x: number
+  top: boolean
+  guides: number[]
+  chain: string[]
+  parentY: number
+  /** Miejsce rodzica, pod którym znikają wiersze zwijanego folderu. */
+  ghostY: number | null
+}
+
+/** Rozkłada drzewo na wiersze. Zwinięte gałęzie w ogóle nie trafiają na listę. */
+export function flattenLibrary(
+  library: LibraryModel,
+  isClosed: (key: string, byDefault: boolean) => boolean,
+  closing: ReadonlySet<string>
+): LibraryRows {
+  const rows: LibraryRow[] = []
+  let line = 0
+  let ghosts = 0
+
+  /** Duch stoi na miejscu rodzica i nie zajmuje własnego. */
+  const place = (ghostY: number | null): number => {
+    if (ghostY === null) return line++ * ROW_H
+    ghosts += 1
+    return ghostY
+  }
+  const full = (context: WalkContext): boolean => context.ghostY !== null && ghosts >= GHOST_LIMIT
+
+  const walk = (nodes: TreeNode[], context: WalkContext): void => {
+    const { top, guides, chain, parentY, ghostY } = context
+    nodes.forEach((node, index) => {
+      if (full(context)) return
+      const next = nodes[index + 1]
+      const bare = top && node.kind === 'folder'
+      const indent = top ? (bare ? TOP_X : TOP_X + TREE_STEP) : context.x
+      const elbow = bare ? null : indent - TREE_STEP
+      const continues = !bare && next !== undefined && (!top || next.kind === 'doc')
+      const lines = continues ? [...guides, elbow as number] : guides
+      const shared = { indent, guides: lines, elbow, chain, from: parentY, ghost: ghostY !== null }
+
+      if (node.kind === 'doc') {
+        rows.push({ ...shared, key: node.doc.id, y: place(ghostY), type: 'doc', doc: node.doc })
+        return
+      }
+      const closed = isClosed(node.key, library.defaults.has(node.key))
+      const y = place(ghostY)
+      rows.push({ ...shared, key: node.key, y, type: 'folder', node, closed })
+      if (closed && !closing.has(node.key)) return
+      walk(node.children, {
+        x: indent + TREE_STEP * 2,
+        top: false,
+        guides: lines,
+        chain: [...chain, node.key],
+        parentY: y,
+        ghostY: ghostY ?? (closed ? y : null)
+      })
+    })
+  }
+
+  for (const model of library.projects) {
+    const { id } = model.project
+    const closed = isClosed(id, library.defaults.has(id))
+    const y = place(null)
+    rows.push({ key: id, y, from: y, indent: 0, guides: [], elbow: null, chain: [], ghost: false, type: 'project', model, closed })
+    if (closed && !closing.has(id)) continue
+    ghosts = 0
+    walk(model.nodes, { x: 0, top: true, guides: [], chain: [id], parentY: y, ghostY: closed ? y : null })
+  }
+  return { rows, height: line * ROW_H }
 }
 
 export function inboxDocs(projects: ProjectGroup[]): DocEntry[] {
@@ -125,7 +344,7 @@ export function blockedLabel(count: number): string {
 /** Tytuł dokumentu mówi więcej niż nazwa pliku, szczególnie przy `index.html`. */
 export function displayName(doc: DocEntry): string {
   if (doc.title) return doc.title
-  const name = doc.name.replace(/\.html?$/i, '')
+  const name = doc.name.replace(/\.(?:html?|md|markdown)$/i, '')
   return name.toLowerCase() === 'index' ? (doc.relPath.split('/').at(-2) ?? name) : name
 }
 

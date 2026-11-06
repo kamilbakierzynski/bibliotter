@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, watch } from 'node:fs'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   type Anchor,
   type Annotation,
@@ -62,18 +62,26 @@ export function toOverlayItems(annotations: Annotation[]): OverlayItem[] {
       item.kind === 'comment'
         ? String(numbers.get(item.id))
         : (item.messages[0]?.text ?? '').slice(0, STICKY_LABEL_LENGTH)
-    return [{ id: item.id, kind: item.kind, audience: item.audience, color: item.color, anchor: item.anchor, label }]
+    const waiting = item.messages.at(-1)?.author === 'agent'
+    return [{ id: item.id, kind: item.kind, audience: item.audience, color: item.color, anchor: item.anchor, label, waiting }]
   })
 }
 
 const WATCH_DEBOUNCE_MS = 150
 
-/** Powiadamia o zmianach uwag, także tych zapisanych przez agenta w innym procesie. */
+// Folder `state` nie trafia do prywatnego gita z danymi.
+const signalDir = (libraryDir: string): string => join(dirname(libraryDir), 'state', 'signals')
+
+/**
+ * Powiadamia o zmianach uwag, także tych zapisanych przez agenta w innym procesie.
+ * Słucha sygnału w osobnym folderze, a nie całej biblioteki: skan zapisuje tam tysiące plików,
+ * a każde zdarzenie, nawet odrzucone, zabiera główny proces Electrona na kilka milisekund.
+ */
 export function watchAnnotations(libraryDir: string, onChange: () => void): () => void {
-  mkdirSync(libraryDir, { recursive: true })
+  const directory = signalDir(libraryDir)
+  mkdirSync(directory, { recursive: true })
   let timer: NodeJS.Timeout | null = null
-  const watcher = watch(libraryDir, { recursive: true }, (_event, fileName) => {
-    if (fileName !== null && !fileName.includes('annotations')) return
+  const watcher = watch(directory, () => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(onChange, WATCH_DEBOUNCE_MS)
   })
@@ -95,6 +103,17 @@ export class AnnotationStore {
     return join(this.libraryDir, docId, 'annotations')
   }
 
+  /** Sygnał to tylko podpowiedź dla otwartej apki, więc jego błąd nie może cofnąć zapisanej uwagi. */
+  private async signal(): Promise<void> {
+    const directory = signalDir(this.libraryDir)
+    try {
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'annotations'), new Date().toISOString())
+    } catch {
+      // Dwa procesy mogą pisać sygnał w tej samej chwili. Wystarczy, że dotrze jeden.
+    }
+  }
+
   private async write(annotation: Annotation): Promise<Annotation> {
     const directory = this.directory(annotation.docId)
     await mkdir(directory, { recursive: true })
@@ -102,6 +121,7 @@ export class AnnotationStore {
     const temp = `${target}.${randomBytes(4).toString('hex')}.tmp`
     await writeFile(temp, `${JSON.stringify(annotation, null, 2)}\n`, 'utf8')
     await rename(temp, target)
+    await this.signal()
     return annotation
   }
 
@@ -182,5 +202,6 @@ export class AnnotationStore {
   async delete(id: string): Promise<void> {
     const annotation = await this.get(id)
     await rm(join(this.directory(annotation.docId), `${id}.json`), { force: true })
+    await this.signal()
   }
 }

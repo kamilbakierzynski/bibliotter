@@ -1,6 +1,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import type { DocStatus } from '../shared/types'
+import { mapLimit } from './concurrency'
 
 export interface DocVersion {
   sha: string
@@ -25,6 +26,8 @@ export interface DocMeta {
   versions: DocVersion[]
 }
 
+const LOAD_CONCURRENCY = 32
+
 export class MetaStore {
   private readonly metas = new Map<string, DocMeta>()
 
@@ -32,16 +35,18 @@ export class MetaStore {
 
   async load(): Promise<void> {
     await mkdir(this.libraryDir, { recursive: true })
-    this.metas.clear()
-    for (const entry of await readdir(this.libraryDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
+    const entries = await readdir(this.libraryDir, { withFileTypes: true })
+    const folders = entries.filter((entry) => entry.isDirectory())
+    const loaded = await mapLimit(folders, LOAD_CONCURRENCY, async (entry): Promise<DocMeta | null> => {
       try {
-        const raw = await readFile(join(this.libraryDir, entry.name, 'meta.json'), 'utf8')
-        const meta = JSON.parse(raw) as DocMeta
-        this.metas.set(meta.id, meta)
+        return JSON.parse(await readFile(join(this.libraryDir, entry.name, 'meta.json'), 'utf8')) as DocMeta
       } catch {
-        // Uszkodzony wpis pomijamy, a jego plik zostaje na dysku do ręcznej naprawy.
+        return null // Uszkodzony wpis pomijamy, a jego plik zostaje na dysku do ręcznej naprawy.
       }
+    })
+    this.metas.clear()
+    for (const meta of loaded) {
+      if (meta) this.metas.set(meta.id, meta)
     }
   }
 
@@ -69,7 +74,7 @@ export class MetaStore {
     const directory = join(this.libraryDir, meta.id, 'versions')
     await mkdir(directory, { recursive: true })
     const stamp = savedAt.toISOString().replace(/[:.]/g, '-')
-    const file = `${stamp}-${sha.slice(0, 12)}.html`
+    const file = `${stamp}-${sha.slice(0, 12)}${extname(sourcePath).toLowerCase()}`
     await copyFile(sourcePath, join(directory, file))
     return { ...meta, versions: [...meta.versions, { sha, savedAt: savedAt.toISOString(), file }] }
   }

@@ -1,5 +1,5 @@
 import { ipcRenderer, type IpcRendererEvent } from 'electron'
-import type { OverlayEvent, OverlayItem, OverlayMode } from '../shared/annotations'
+import type { OverlayEvent, OverlayItem, OverlayMode, SelectionAction } from '../shared/annotations'
 import { guardPointerEvents, startOverlay } from './overlay'
 
 /*
@@ -34,7 +34,9 @@ window.addEventListener(
       send: (event: OverlayEvent) => ipcRenderer.send('overlay:event', event),
       onMode: (listener) => subscribe<OverlayMode>('overlay:mode', listener),
       onItems: (listener) => subscribe<OverlayItem[]>('overlay:items', listener),
-      onFocus: (listener) => subscribe<string | null>('overlay:focus', listener)
+      onFocus: (listener) => subscribe<string | null>('overlay:focus', listener),
+      onTrack: (listener) => subscribe<boolean>('overlay:track', listener),
+      onSelection: (listener) => subscribe<SelectionAction>('overlay:selection', listener)
       },
       pointerGuard
     )

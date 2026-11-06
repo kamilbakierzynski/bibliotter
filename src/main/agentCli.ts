@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util'
 import type { AgentApi, AgentComment, AgentDocument } from './agentApi'
 
-export const USAGE = `htmldocs: dokumenty HTML i uwagi użytkownika
+export const USAGE = `htmldocs: dokumenty HTML i Markdown oraz uwagi użytkownika
 
   htmldocs list [--status <status>] [--project <nazwa>] [--branch <nazwa>]
   htmldocs current                     dokument otwarty teraz w apce

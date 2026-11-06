@@ -2,7 +2,7 @@
   "name": "html-docs-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Lokalna biblioteka i viewer dokumentów HTML generowanych przez agentów",
+  "description": "Lokalna biblioteka i viewer dokumentów HTML i Markdown generowanych przez agentów",
   "main": "out/main/index.js",
   "bin": {
     "htmldocs": "out/main/cli.js"
@@ -16,6 +16,8 @@
     "test:e2e": "electron-vite build && node tests/e2e/run.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
@@ -27,6 +29,7 @@
     "@vitejs/plugin-react": "^6.2.1",
     "electron": "^45.2.3",
     "electron-vite": "^6.0.0",
+    "marked": "^18.1.3",
     "playwright-core": "^1.65.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",

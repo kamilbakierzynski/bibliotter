@@ -60,10 +60,33 @@ export interface OverlayItem {
   anchor: Anchor
   /** Numer komentarza albo tekst karteczki. */
   label: string
+  /** Agent odpisał, więc uwaga czeka na użytkownika. */
+  waiting: boolean
 }
 
+/** Prostokąt w widoku dokumentu, w pikselach CSS. */
+export interface OverlayRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Klawisze, które dokument przekazuje do powłoki, gdy to on ma fokus. */
+export const OVERLAY_KEYS = [
+  'v', 'c', 'n', 's', 'i', 'x', 'h', 't', '?', 'escape', 'arrowleft', 'arrowright'
+] as const
+export type OverlayKey = (typeof OVERLAY_KEYS)[number]
+
+/** Co zrobić z tekstem zaznaczonym w dokumencie. */
+export type SelectionAction = 'comment' | 'sticky' | 'copy'
+
 export type OverlayEvent =
-  | { type: 'place'; kind: AnnotationKind; anchor: Anchor }
-  | { type: 'select'; id: string }
+  | { type: 'place'; kind: AnnotationKind; anchor: Anchor; rect: OverlayRect }
+  | { type: 'select'; id: string; rect: OverlayRect | null }
+  /** Uwaga wybrana poza dokumentem stoi już na ekranie. */
+  | { type: 'focused'; id: string; rect: OverlayRect | null }
   | { type: 'orphans'; ids: string[] }
-  | { type: 'shortcut'; key: 'comment' | 'sticky' | 'cancel' }
+  | { type: 'shortcut'; key: OverlayKey; shift: boolean; ctrl: boolean }
+  | { type: 'selection'; active: boolean }
+  | { type: 'positions'; items: { id: string; rect: OverlayRect }[] }

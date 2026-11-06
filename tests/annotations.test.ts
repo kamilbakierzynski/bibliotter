@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentApi, writeCurrentDocument } from '../src/main/agentApi'
-import { AnnotationStore, parseAnchor } from '../src/main/annotationStore'
+import { AnnotationStore, parseAnchor, watchAnnotations } from '../src/main/annotationStore'
 import { MetaStore, type DocMeta } from '../src/main/metaStore'
 import type { NewAnnotation } from '../src/shared/annotations'
 
@@ -52,6 +52,40 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(home, { recursive: true, force: true })
+})
+
+describe('watchAnnotations', () => {
+  it('budzi apkę, gdy uwagę zapisze inny proces', async () => {
+    const onChange = vi.fn()
+    const stop = watchAnnotations(join(home, 'library'), onChange)
+
+    await new AnnotationStore(join(home, 'library')).create('d1', 'sha1', comment)
+
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3000 })
+    stop()
+  })
+
+  it('budzi apkę po usunięciu uwagi', async () => {
+    const created = await store.create('d1', 'sha1', comment)
+    const onChange = vi.fn()
+    const stop = watchAnnotations(join(home, 'library'), onChange)
+
+    await store.delete(created.id)
+
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3000 })
+    stop()
+  })
+
+  it('nie słucha zapisów skanu w bibliotece', async () => {
+    const onChange = vi.fn()
+    const stop = watchAnnotations(join(home, 'library'), onChange)
+
+    await addDoc('d1')
+    await new Promise((done) => setTimeout(done, 400))
+
+    expect(onChange).not.toHaveBeenCalled()
+    stop()
+  })
 })
 
 describe('AnnotationStore', () => {

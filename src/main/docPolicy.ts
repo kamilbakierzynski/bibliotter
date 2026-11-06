@@ -26,6 +26,20 @@ const ASSET_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2'
 }
 
+/**
+ * Markdown to tekst, więc strona z niego nie uruchamia skryptów, nawet gdy plik zawiera HTML.
+ * Sieć i tak przechodzi przez `isRequestAllowed`, a stąd blokada trafia do licznika.
+ */
+export const MARKDOWN_CSP = [
+  "default-src 'none'",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "base-uri 'none'",
+  "form-action 'none'"
+].join('; ')
+
 export const docUrl = (docId: string): string => `${DOC_SCHEME}://${docId}/`
 
 export function assetContentType(path: string): string | null {

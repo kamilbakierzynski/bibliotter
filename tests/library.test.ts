@@ -87,6 +87,84 @@ describe('klasyfikacja i kopie', () => {
     expect(snapshot.ignoredCount).toBe(1)
   })
 
+  it('zbiera Markdown obok HTML i zachowuje jego kopię z własnym rozszerzeniem', async () => {
+    const path = await put('plan.md', `# Plan Markdown
+
+## A
+
+${prose}
+
+## B
+`)
+    await put('raport.html', docHtml('Raport'))
+    await put('README.md', `# Repo
+
+## A
+
+${prose}
+
+## B
+`)
+
+    const first = await library.scan()
+    const doc = findDoc(first, 'plan.md')
+
+    expect(doc).toMatchObject({ format: 'markdown', title: 'Plan Markdown', classification: 'document' })
+    expect(findDoc(first, 'raport.html').format).toBe('html')
+    expect(first.ignoredCount).toBe(1)
+    expect((await library.search('łamigłówkach')).map((hit) => hit.doc.name).sort()).toEqual(['plan.md', 'raport.html'])
+
+    await rm(path)
+    const second = await library.scan()
+
+    expect(findDoc(second, 'plan.md')).toMatchObject({ format: 'markdown', missing: true })
+    expect(library.getServedPath(doc.id)).toMatch(/.md$/)
+  })
+
+  it('skan bez zmian nikogo nie budzi', async () => {
+    await put('plan.html', docHtml('Plan'))
+    await library.scan()
+    const before = changes.length
+
+    await library.scan()
+
+    expect(changes).toHaveLength(before)
+  })
+
+  it('czyta każde repozytorium tylko raz, nawet gdy pliki pytają równolegle', async () => {
+    await initRepo(join(root, 'repo'))
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) await put(`repo/${name}.html`, docHtml(name))
+    library.close()
+    const started: string[] = []
+    const realGit = git
+    library = await Library.open({
+      dataDir: home,
+      git: (args, cwd) => {
+        started.push(args.join(' '))
+        return realGit(args, cwd)
+      },
+      gh,
+      getConfig: () => ({ roots: [root], folderLinks: links }),
+      onChange: () => {}
+    })
+
+    await library.scan()
+
+    expect(started.filter((command) => command.startsWith('rev-parse --show-toplevel'))).toHaveLength(1)
+  })
+
+  it('wyszukiwanie widzi tylko bieżącą wersję zmienionego dokumentu', async () => {
+    const path = await put('plan.html', docHtml('Plan', ' pierwszawersja'))
+    await library.scan()
+
+    await writeFile(path, docHtml('Plan', ' drugawersja'))
+    await utimes(path, new Date(), new Date(Date.now() + 5000))
+    await library.scan()
+
+    expect(await library.search('pierwszawersja')).toEqual([])
+    expect((await library.search('drugawersja')).map((hit) => hit.doc.name)).toEqual(['plan.html'])
+  })
+
   it('zachowuje kopię i pokazuje ją po usunięciu oryginału', async () => {
     const path = await put('plan.html', docHtml('Plan'))
     const { id } = findDoc(await library.scan(), 'plan.html')

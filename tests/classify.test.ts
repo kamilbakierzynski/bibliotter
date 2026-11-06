@@ -6,7 +6,7 @@ const prose = 'Zdanie opisujące decyzję w dokumencie. '.repeat(30)
 const documentHtml = `<!doctype html><html><head><title>Plan  prac</title><style>h1{color:red}</style></head>
 <body><h1>Plan</h1><h2>Cel</h2><p>${prose}</p><h2>Ryzyka</h2><script>console.log('niewidoczne')</script></body></html>`
 
-const context = { relPath: 'docs/plan.html', siblings: 3 }
+const context = { relPath: 'docs/plan.html', siblings: 3, format: 'html' } as const
 
 describe('analyzeHtml', () => {
   it('wyciąga tytuł, nagłówki i tekst bez kodu', () => {

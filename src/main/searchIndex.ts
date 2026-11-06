@@ -1,9 +1,9 @@
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type { PullRequest } from '../shared/types'
 import type { HtmlFeatures } from './classify'
 import { normalizeText, queryTerms } from './textNormalize'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const SNIPPET_CONTEXT = 70
 const MAX_RESULTS = 60
 
@@ -51,6 +51,14 @@ interface FileRow {
   text_length: number
 }
 
+export interface DocText {
+  docId: string
+  sha: string
+  title: string
+  path: string
+  text: string
+}
+
 export interface SearchMatch {
   docId: string
   before: string
@@ -79,6 +87,7 @@ export function buildSnippet(text: string, terms: string[]): Omit<SearchMatch, '
 /** Indeks odtwarzalny z plików. Źródłem prawdy pozostają dokumenty i ich `meta.json`. */
 export class SearchIndex {
   private readonly db: DatabaseSync
+  private readonly statements = new Map<string, StatementSync>()
 
   constructor(path: string) {
     this.db = new DatabaseSync(path)
@@ -100,6 +109,16 @@ export class SearchIndex {
     this.db.close()
   }
 
+  /** Skan pyta o każdy plik, więc przygotowane zapytania nie mogą powstawać za każdym razem. */
+  private sql(query: string): StatementSync {
+    let statement = this.statements.get(query)
+    if (!statement) {
+      statement = this.db.prepare(query)
+      this.statements.set(query, statement)
+    }
+    return statement
+  }
+
   transaction(run: () => void): void {
     this.db.exec('BEGIN')
     try {
@@ -112,7 +131,7 @@ export class SearchIndex {
   }
 
   getFile(path: string): CachedFile | null {
-    const row = this.db.prepare('SELECT * FROM files WHERE path = ?').get(path) as FileRow | undefined
+    const row = this.sql('SELECT * FROM files WHERE path = ?').get(path) as FileRow | undefined
     if (!row) return null
     return {
       mtimeMs: row.mtime,
@@ -130,8 +149,8 @@ export class SearchIndex {
   }
 
   putFile(path: string, mtimeMs: number, size: number, sha: string, features: HtmlFeatures): void {
-    this.db
-      .prepare(
+    this
+      .sql(
         `INSERT OR REPLACE INTO files
          (path, mtime, size, sha, title, headings, inline_css, local_scripts, app_mount, text_length)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -152,28 +171,30 @@ export class SearchIndex {
 
   /** Usuwa wpisy plików, których skan już nie znalazł. */
   retainFiles(paths: Set<string>): void {
-    const known = this.db.prepare('SELECT path FROM files').all() as { path: string }[]
-    const remove = this.db.prepare('DELETE FROM files WHERE path = ?')
+    const known = this.sql('SELECT path FROM files').all() as { path: string }[]
+    const remove = this.sql('DELETE FROM files WHERE path = ?')
     for (const { path } of known) {
       if (!paths.has(path)) remove.run(path)
     }
   }
 
   hasDocText(docId: string, sha: string): boolean {
-    return this.db.prepare('SELECT 1 FROM doc_text WHERE doc_id = ? AND sha = ?').get(docId, sha) !== undefined
+    return this.sql('SELECT 1 FROM doc_text WHERE doc_id = ? AND sha = ?').get(docId, sha) !== undefined
   }
 
-  putDocText(docId: string, sha: string, title: string, path: string, text: string): void {
+  putDocText({ docId, sha, title, path, text }: DocText): void {
     this.deleteDocText(docId)
-    this.db.prepare('INSERT INTO doc_text (doc_id, sha, text) VALUES (?, ?, ?)').run(docId, sha, text)
-    this.db
-      .prepare('INSERT INTO doc_fts (doc_id, title, path, body) VALUES (?, ?, ?, ?)')
-      .run(docId, normalizeText(title), normalizeText(path), normalizeText(text))
+    const { lastInsertRowid } = this.sql('INSERT INTO doc_text (doc_id, sha, text) VALUES (?, ?, ?)').run(docId, sha, text)
+    this.sql('INSERT INTO doc_fts (rowid, doc_id, title, path, body) VALUES (?, ?, ?, ?, ?)')
+      .run(lastInsertRowid, docId, normalizeText(title), normalizeText(path), normalizeText(text))
   }
 
+  /** Wpis w FTS ma ten sam `rowid` co tekst, bo szukanie po `doc_id` przegląda cały indeks. */
   deleteDocText(docId: string): void {
-    this.db.prepare('DELETE FROM doc_text WHERE doc_id = ?').run(docId)
-    this.db.prepare('DELETE FROM doc_fts WHERE doc_id = ?').run(docId)
+    const row = this.sql('SELECT rowid FROM doc_text WHERE doc_id = ?').get(docId) as { rowid: number } | undefined
+    if (!row) return
+    this.sql('DELETE FROM doc_fts WHERE rowid = ?').run(row.rowid)
+    this.sql('DELETE FROM doc_text WHERE rowid = ?').run(row.rowid)
   }
 
   search(query: string): SearchMatch[] {
@@ -193,8 +214,7 @@ export class SearchIndex {
   }
 
   getPullRequest(repo: string, branch: string): { fetchedAt: number; pullRequest: PullRequest | null } | null {
-    const row = this.db
-      .prepare('SELECT fetched_at, data FROM pull_requests WHERE repo = ? AND branch = ?')
+    const row = this.sql('SELECT fetched_at, data FROM pull_requests WHERE repo = ? AND branch = ?')
       .get(repo, branch) as { fetched_at: number; data: string | null } | undefined
     if (!row) return null
     return {
@@ -204,8 +224,7 @@ export class SearchIndex {
   }
 
   putPullRequest(repo: string, branch: string, fetchedAt: number, pullRequest: PullRequest | null): void {
-    this.db
-      .prepare('INSERT OR REPLACE INTO pull_requests (repo, branch, fetched_at, data) VALUES (?, ?, ?, ?)')
+    this.sql('INSERT OR REPLACE INTO pull_requests (repo, branch, fetched_at, data) VALUES (?, ?, ?, ?)')
       .run(repo, branch, fetchedAt, pullRequest ? JSON.stringify(pullRequest) : null)
   }
 }

@@ -35,6 +35,22 @@ describe('walkRoots', () => {
     expect(files.find((file) => file.name === 'luzny.html')?.repoDir).toBeNull()
   })
 
+  it('znajduje Markdown i liczy pliki osobno dla każdego formatu', async () => {
+    await put('docs/plan.md', '# Plan')
+    await put('docs/notatki.MARKDOWN', '# Notatki')
+    await put('docs/raport.html')
+    await put('docs/szkic.mdx', '# Nie')
+
+    const { files } = await walkRoots([root])
+    const summary = files.map(({ name, format, siblings }) => [name, format, siblings]).sort()
+
+    expect(summary).toEqual([
+      ['notatki.MARKDOWN', 'markdown', 2],
+      ['plan.md', 'markdown', 2],
+      ['raport.html', 'html', 1]
+    ])
+  })
+
   it('rozpoznaje worktree, w którym .git jest plikiem', async () => {
     await put('wt/.git', 'gitdir: ../repo/.git/worktrees/wt')
     await put('wt/a.html')

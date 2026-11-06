@@ -11,12 +11,13 @@ import type {
   PullRequest,
   SearchHit
 } from '../shared/types'
-import { analyzeHtml, classify, type Classification, type HtmlFeatures } from './classify'
+import { analyzeDocument, classify, type Classification, type HtmlFeatures } from './classify'
+import { mapLimit } from './concurrency'
 import type { GitRunner, RepoInfo } from './git'
 import { positionAt, readRepo } from './git'
 import { MetaStore, type DocMeta } from './metaStore'
-import { type FoundFile, docIdFor, folderName, isInside, normalizePath, stableId, walkRoots } from './scanner'
-import { SearchIndex } from './searchIndex'
+import { type FoundFile, docIdFor, folderName, formatOf, isInside, normalizePath, stableId, walkRoots } from './scanner'
+import { type DocText, SearchIndex } from './searchIndex'
 
 const MAX_FILE_BYTES = 32 * 1024 * 1024
 const ARCHIVE_AFTER_MS = 14 * 24 * 60 * 60 * 1000
@@ -24,6 +25,7 @@ const REPO_CACHE_MS = 30_000
 const PR_CACHE_MS = 15 * 60 * 1000
 const MAX_PR_LOOKUPS = 20
 const READ_CONCURRENCY = 16
+const WRITE_CONCURRENCY = 16
 
 export interface LibraryOptions {
   dataDir: string
@@ -68,24 +70,6 @@ const emptySnapshot = (): LibrarySnapshot => ({
 
 const toPosix = (path: string): string => path.split(sep).join('/')
 
-async function mapLimit<Item, Result>(
-  items: Item[],
-  limit: number,
-  run: (item: Item) => Promise<Result>
-): Promise<Result[]> {
-  const results = new Array<Result>(items.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next
-      next += 1
-      results[index] = await run(items[index] as Item)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return results
-}
-
 function isGitHubRemote(url: string | null): boolean {
   return url?.includes('github.com') ?? false
 }
@@ -94,13 +78,15 @@ function isGitHubRemote(url: string | null): boolean {
 export class Library {
   private readonly metas: MetaStore
   private readonly index: SearchIndex
-  private readonly repoCache = new Map<string, { readAt: number; repo: RepoInfo | null }>()
+  private readonly repoCache = new Map<string, { readAt: number; repo: Promise<RepoInfo | null> }>()
   private readonly servedPaths = new Map<string, string>()
   private readonly entries = new Map<string, DocEntry>()
   private snapshot: LibrarySnapshot = emptySnapshot()
   private running: Promise<LibrarySnapshot> | null = null
   private pending = false
   private forceGitRefresh = false
+  /** Ostatnio ogłoszona treść biblioteki. Skan bez zmian nikogo nie budzi. */
+  private published = ''
   private githubUnavailable = false
 
   private constructor(private readonly options: LibraryOptions) {
@@ -172,10 +158,17 @@ export class Library {
     do {
       this.pending = false
       snapshot = await this.scanOnce()
-      this.options.onChange(snapshot)
+      this.publish(snapshot)
     } while (this.pending)
     void this.refreshPullRequests()
     return snapshot
+  }
+
+  private publish(snapshot: LibrarySnapshot): void {
+    const content = JSON.stringify(snapshot)
+    if (content === this.published) return
+    this.published = content
+    this.options.onChange(snapshot)
   }
 
   private async scanOnce(): Promise<LibrarySnapshot> {
@@ -189,6 +182,9 @@ export class Library {
 
     this.index.transaction(() => {
       this.index.retainFiles(new Set(present.map((file) => file.path)))
+      for (const file of present) {
+        if (file.text !== null) this.index.putFile(file.path, file.mtimeMs, file.size, file.sha, { ...file, text: file.text })
+      }
     })
 
     const metaByPath = new Map(this.metas.all().map((meta) => [normalizePath(meta.path), meta]))
@@ -198,15 +194,18 @@ export class Library {
 
     const { primary, otherPaths } = this.deduplicate(kept)
     const seenPaths = new Set(present.map((file) => normalizePath(file.path)))
-    const entries: DocEntry[] = []
     const groups = new Map<string, Placement>()
+    for (const item of primary) groups.set(item.placement.projectKey, item.placement)
 
-    for (const item of primary) {
-      const adopted = this.findMovedMeta(item, seenPaths)
-      const entry = await this.buildEntry({ ...item, meta: item.meta ?? adopted }, otherPaths)
-      entries.push(entry)
-      groups.set(item.placement.projectKey, item.placement)
-    }
+    const claimed = this.claimMovedMetas(primary, seenPaths)
+    const built = await mapLimit(claimed, WRITE_CONCURRENCY, (item) => this.buildEntry(item, otherPaths))
+    const entries = built.map(({ entry }) => entry)
+    // Wiele wstawień do indeksu w jednej transakcji jest o rząd wielkości szybsze.
+    this.index.transaction(() => {
+      for (const { text } of built) {
+        if (text) this.index.putDocText(text)
+      }
+    })
 
     const missing = await this.collectMissing(roots, seenPaths, new Set(entries.map((entry) => entry.id)))
     for (const { entry, placement } of missing) {
@@ -235,21 +234,21 @@ export class Library {
     if (file.size > MAX_FILE_BYTES) return null
     try {
       const buffer = await readFile(file.path)
-      const features = analyzeHtml(buffer.toString('utf8'))
+      const features = analyzeDocument(file.format, buffer.toString('utf8'))
       const sha = createHash('sha256').update(buffer).digest('hex')
-      this.index.putFile(file.path, file.mtimeMs, file.size, sha, features)
       return { ...file, ...features, sha }
     } catch {
       return null // Plik mógł zniknąć albo być zablokowany przez inny program.
     }
   }
 
-  private async repoFor(directory: string): Promise<RepoInfo | null> {
+  /** Pamiętamy obietnicę, bo pliki jednego repozytorium pytają o nie równolegle. */
+  private repoFor(directory: string): Promise<RepoInfo | null> {
     const key = normalizePath(directory)
     const cached = this.repoCache.get(key)
     const now = this.now().getTime()
     if (cached && now - cached.readAt < REPO_CACHE_MS) return cached.repo
-    const repo = await readRepo(directory, this.options.git)
+    const repo = readRepo(directory, this.options.git)
     this.repoCache.set(key, { readAt: now, repo })
     return repo
   }
@@ -307,7 +306,7 @@ export class Library {
   private verdictFor(file: AnalyzedFile, relPath: string, meta: DocMeta | undefined): Classification {
     const override = meta?.classificationOverride
     if (override) return { classification: override, reason: 'Twoja decyzja' }
-    return classify(file, { relPath, siblings: file.siblings })
+    return classify(file, { relPath, siblings: file.siblings, format: file.format })
   }
 
   /** Identyczne kopie w jednym projekcie, np. w worktree, pokazujemy jako jeden dokument. */
@@ -344,11 +343,17 @@ export class Library {
   }
 
   /** Plik przeniesiony lub przemianowany przejmuje historię zaginionego dokumentu. */
-  private findMovedMeta(item: PlacedFile, seenPaths: Set<string>): DocMeta | undefined {
-    if (item.meta) return undefined
-    return this.metas
-      .all()
-      .find((meta) => meta.sha === item.file.sha && !seenPaths.has(normalizePath(meta.path)))
+  private claimMovedMetas(items: PlacedFile[], seenPaths: Set<string>): PlacedFile[] {
+    const orphans = new Map<string, DocMeta>()
+    for (const meta of this.metas.all()) {
+      if (!seenPaths.has(normalizePath(meta.path)) && !orphans.has(meta.sha)) orphans.set(meta.sha, meta)
+    }
+    return items.map((item) => {
+      if (item.meta) return item
+      const meta = orphans.get(item.file.sha)
+      orphans.delete(item.file.sha)
+      return { ...item, meta }
+    })
   }
 
   private newDocId(path: string): string {
@@ -357,7 +362,10 @@ export class Library {
     return this.metas.get(base) ? stableId('d', `${path}#${this.now().getTime()}`) : base
   }
 
-  private async buildEntry(item: PlacedFile, otherPaths: Map<string, string[]>): Promise<DocEntry> {
+  private async buildEntry(
+    item: PlacedFile,
+    otherPaths: Map<string, string[]>
+  ): Promise<{ entry: DocEntry; text: DocText | null }> {
     const { file, placement, verdict } = item
     const classification = verdict.classification
     let meta = item.meta
@@ -367,14 +375,15 @@ export class Library {
     }
 
     const id = meta?.id ?? docIdFor(file.path)
-    await this.ensureSearchText(id, file, placement)
+    const text = await this.searchTextFor(id, file, placement)
     this.servedPaths.set(id, file.path)
 
     const position = placement.repo ? positionAt(placement.repo, file.mtimeMs) : null
-    return {
+    const entry: DocEntry = {
       id,
       path: file.path,
       name: file.name,
+      format: file.format,
       relPath: placement.relPath,
       title: file.title,
       mtimeMs: file.mtimeMs,
@@ -389,6 +398,7 @@ export class Library {
       otherPaths: otherPaths.get(file.path) ?? [],
       sha: file.sha
     }
+    return { entry, text }
   }
 
   private initialStatus(mtimeMs: number): DocStatus {
@@ -436,23 +446,24 @@ export class Library {
     return versioned
   }
 
-  private async ensureSearchText(id: string, file: AnalyzedFile, placement: Placement): Promise<void> {
-    if (this.index.hasDocText(id, file.sha)) return
+  /** Tekst do indeksu, jeśli indeks nie ma jeszcze tej wersji dokumentu. */
+  private async searchTextFor(id: string, file: AnalyzedFile, placement: Placement): Promise<DocText | null> {
+    if (this.index.hasDocText(id, file.sha)) return null
     let text = file.text
     if (text === null) {
       try {
-        text = analyzeHtml(await readFile(file.path, 'utf8')).text
+        text = analyzeDocument(file.format, await readFile(file.path, 'utf8')).text
       } catch {
-        return
+        return null
       }
     }
-    this.index.putDocText(
-      id,
-      file.sha,
-      file.title ?? file.name,
-      `${placement.projectName} ${placement.relPath}`,
+    return {
+      docId: id,
+      sha: file.sha,
+      title: file.title ?? file.name,
+      path: `${placement.projectName} ${placement.relPath}`,
       text
-    )
+    }
   }
 
   private async collectMissing(
@@ -487,6 +498,7 @@ export class Library {
           id: meta.id,
           path: meta.path,
           name: folderName(meta.path),
+          format: formatOf(meta.path) ?? 'html',
           relPath,
           title: meta.title,
           mtimeMs: meta.mtimeMs,
@@ -514,9 +526,10 @@ export class Library {
     base: Pick<LibrarySnapshot, 'roots' | 'unavailableRoots' | 'folderLinks' | 'ignoredCount'>
   ): LibrarySnapshot {
     const keyByEntry = new Map<string, string>()
+    const idByPath = new Map(entries.map((entry) => [entry.path, entry.id]))
     for (const { file, placement } of primary) {
-      const entry = entries.find((candidate) => candidate.path === file.path)
-      if (entry) keyByEntry.set(entry.id, placement.projectKey)
+      const id = idByPath.get(file.path)
+      if (id) keyByEntry.set(id, placement.projectKey)
     }
     for (const { entry, placement } of missing) keyByEntry.set(entry.id, placement.projectKey)
 
@@ -570,7 +583,7 @@ export class Library {
     const lookups: { project: ProjectGroup; branch: string; key: string }[] = []
 
     for (const project of this.snapshot.projects) {
-      const repo = this.repoCache.get(normalizePath(project.path))?.repo
+      const repo = await this.repoCache.get(normalizePath(project.path))?.repo
       if (!isGitHubRemote(repo?.remoteUrl ?? null)) continue
       const key = normalizePath(project.path)
       for (const branch of new Set(project.docs.map((doc) => doc.branch))) {
@@ -593,7 +606,7 @@ export class Library {
         changed = true
       }
     }
-    if (changed) this.options.onChange(this.snapshot)
+    if (changed) this.publish(this.snapshot)
   }
 
   private async fetchPullRequest(

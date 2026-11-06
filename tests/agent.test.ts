@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -66,6 +66,29 @@ describe('runCli', () => {
       ['agent', 'Gotowe']
     ])
     expect(await runCli(['comments'], api)).toBe('Brak uwag.')
+  })
+
+  it('czyta Markdown jako źródło i szuka w jego treści', async () => {
+    const path = join(dataDir, 'plan.md')
+    const meta = {
+      id: 'dmarkdown',
+      path,
+      title: 'Plan',
+      firstSeenAt: '2026-11-06T10:00:00.000Z',
+      status: 'to-read',
+      sha: 'abc',
+      mtimeMs: 1,
+      projectPath: null,
+      branch: null,
+      commit: null,
+      versions: []
+    }
+    await writeFile(path, '# Plan\n\n**Jednorożec** w treści\n')
+    await mkdir(join(dataDir, 'library', meta.id), { recursive: true })
+    await writeFile(join(dataDir, 'library', meta.id, 'meta.json'), JSON.stringify(meta))
+
+    expect(await runCli(['read', meta.id], api)).toContain('**Jednorożec**')
+    expect((await api.search('jednorożec'))[0]?.snippet).toBe('Plan Jednorożec w treści')
   })
 
   it('zgłasza, że nic nie jest otwarte', async () => {

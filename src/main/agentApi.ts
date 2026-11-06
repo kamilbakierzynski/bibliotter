@@ -3,9 +3,9 @@ import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises
 import { basename, join } from 'node:path'
 import type { Annotation, AnnotationKind, AnnotationStatus, Audience } from '../shared/annotations'
 import { AnnotationStore } from './annotationStore'
-import { analyzeHtml } from './classify'
+import { analyzeDocument, analyzeHtml } from './classify'
 import { type DocMeta, MetaStore } from './metaStore'
-import { normalizePath } from './scanner'
+import { formatOf, normalizePath } from './scanner'
 import { normalizeText, queryTerms } from './textNormalize'
 
 const SEARCH_LIMIT = 30
@@ -154,8 +154,10 @@ export class AgentApi {
 
   async readDocument(reference: string, format: 'text' | 'html' = 'text'): Promise<{ title: string | null; path: string; content: string }> {
     const { path, title } = await this.resolve(reference)
-    const html = await readFile(path, 'utf8')
-    return { title, path, content: format === 'html' ? html : analyzeHtml(html).text }
+    const source = await readFile(path, 'utf8')
+    // Markdown jest czytelny dla agenta, a wycięcie składni zgubiłoby strukturę dokumentu.
+    const plain = format === 'text' && formatOf(path) !== 'markdown'
+    return { title, path, content: plain ? analyzeHtml(source).text : source }
   }
 
   async comments(filter: CommentFilter = {}): Promise<AgentComment[]> {
@@ -202,7 +204,8 @@ export class AgentApi {
       if (meta.classificationOverride === 'ignored') continue
       let text: string
       try {
-        text = analyzeHtml(await readFile(await this.readablePath(meta), 'utf8')).text
+        const path = await this.readablePath(meta)
+        text = analyzeDocument(formatOf(path) ?? 'html', await readFile(path, 'utf8')).text
       } catch {
         continue
       }

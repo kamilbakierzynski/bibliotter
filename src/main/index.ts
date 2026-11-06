@@ -1,5 +1,6 @@
 import { rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
 import {
   app,
   BrowserWindow,
@@ -12,18 +13,33 @@ import {
   session,
   shell
 } from 'electron'
-import { DOC_STATUSES, type DocEntry, type DocStatus, type LibrarySnapshot, type ViewerBounds } from '../shared/types'
-import type { Audience, NewAnnotation, OverlayEvent, OverlayMode } from '../shared/annotations'
+import {
+  DOC_STATUSES,
+  type DocEntry,
+  type DocStatus,
+  type LibrarySnapshot,
+  type ThemeMode,
+  type ViewerBounds,
+  type ViewerPlacement,
+  type ViewerWheel
+} from '../shared/types'
+import type { Audience, NewAnnotation, OverlayEvent, OverlayMode, SelectionAction } from '../shared/annotations'
 import { currentDocumentPath, writeCurrentDocument } from './agentApi'
 import { AnnotationStore, parseAnchor, parseStickyColor, toOverlayItems, watchAnnotations } from './annotationStore'
 import { type AppConfig, dataDir, loadConfig, saveConfig } from './config'
 import { isExternalUrl } from './docPolicy'
+import { DockLayer } from './dockLayer'
 import { DocViewer, registerDocScheme } from './docViewer'
 import { FolderWatcher } from './folderWatcher'
 import { commandRunner, readRepo } from './git'
 import { Library } from './library'
+import { Thumbnailer } from './thumbnails'
 
 const RESCAN_ON_FOCUS_AFTER_MS = 60_000
+/** Kolor ściany, żeby okno nie błysnęło innym tłem przed pierwszą klatką powłoki. */
+const WALL_COLORS: Record<ThemeMode, string> = { light: '#e7e7e9', dark: '#08080a' }
+const CAPTION_SYMBOLS: Record<ThemeMode, string> = { light: '#63636b', dark: '#a4a4ac' }
+const TITLE_BAR_HEIGHT = 32
 
 registerDocScheme()
 
@@ -32,47 +48,65 @@ const gh = commandRunner('gh')
 
 let mainWindow: BrowserWindow | null = null
 let viewer: DocViewer | null = null
+let dockLayer: DockLayer | null = null
+let thumbnails: Thumbnailer | null = null
 let library: Library | null = null
 let config: AppConfig = { roots: [], allowedHosts: [], folderLinks: [] }
 let lastScanAt = 0
-let openDocId: string | null = null
 let stopWatchingAnnotations: (() => void) | null = null
 
 const annotations = new AnnotationStore(join(dataDir(), 'library'))
 const watcher = new FolderWatcher(() => void scanLibrary())
 
-/** Wysyła uwagi do panelu i do warstwy otwartego dokumentu. Działa też po zmianach agenta. */
+/** Wysyła uwagi do panelu i do warstw otwartych dokumentów. Działa też po zmianach agenta. */
 async function pushAnnotations(): Promise<void> {
   const all = await annotations.listAll()
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('annotations:changed', all)
-  if (openDocId) viewer?.setOverlayItems(toOverlayItems(all.filter((item) => item.docId === openDocId)))
+  sendToShell('annotations:changed', all)
+  for (const docId of viewer?.openDocIds() ?? []) {
+    viewer?.setOverlayItems(docId, toOverlayItems(all.filter((item) => item.docId === docId)))
+  }
 }
 
-function forwardOverlayEvent(event: OverlayEvent): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send('viewer:overlay-event', event)
-  // Klawiatura została w dokumencie, a tekst uwagi pisze się w panelu apki.
-  if (event.type === 'place') mainWindow.webContents.focus()
+function sendToShell(channel: string, payload: unknown): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+}
+
+function forwardOverlayEvent(docId: string, event: OverlayEvent): void {
+  sendToShell('viewer:overlay-event', { docId, event })
+  // Klawiatura została w dokumencie, a tekst uwagi pisze się w powłoce.
+  if (event.type === 'place') mainWindow?.webContents.focus()
 }
 
 async function openDocument(doc: DocEntry): Promise<void> {
-  openDocId = doc.id
   viewer?.open(doc.id)
-  await writeCurrentDocument(dataDir(), {
-    docId: doc.id,
-    title: doc.title,
-    path: doc.path,
-    project: doc.projectName,
-    branch: doc.branch,
-    openedAt: new Date().toISOString()
-  })
   await requireLibrary().markOpened(doc.id)
 }
 
-async function closeDocument(): Promise<void> {
-  openDocId = null
-  viewer?.close()
-  await writeCurrentDocument(dataDir(), null)
+/** Agent widzi jako bieżący dokument z fokusem w powłoce. */
+async function setCurrentDocument(doc: DocEntry | null): Promise<void> {
+  await writeCurrentDocument(
+    dataDir(),
+    doc && {
+      docId: doc.id,
+      title: doc.title,
+      path: doc.path,
+      project: doc.projectName,
+      branch: doc.branch,
+      openedAt: new Date().toISOString()
+    }
+  )
+}
+
+function titleBarFor(mode: ThemeMode): Electron.TitleBarOverlay {
+  return { color: '#00000000', symbolColor: CAPTION_SYMBOLS[mode], height: TITLE_BAR_HEIGHT }
+}
+
+/** Motyw obejmuje też dokumenty, które reagują na `prefers-color-scheme`. */
+function applyTheme(mode: ThemeMode): void {
+  nativeTheme.themeSource = mode
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.setTitleBarOverlay(titleBarFor(mode))
+  mainWindow.setBackgroundColor(WALL_COLORS[mode])
 }
 
 function parseNewAnnotation(value: unknown): NewAnnotation {
@@ -124,6 +158,22 @@ async function addRoots(): Promise<LibrarySnapshot> {
   return updateConfig({ roots: [...new Set([...config.roots, ...folders])] })
 }
 
+async function isFolder(path: string): Promise<boolean> {
+  return stat(path).then(
+    (info) => info.isDirectory(),
+    () => false
+  )
+}
+
+/** Foldery upuszczone na ścianę. Ścieżki pochodzą z powłoki, więc sprawdzamy, że to katalogi. */
+async function addDroppedFolders(paths: unknown): Promise<LibrarySnapshot> {
+  const dropped = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string' && isAbsolute(path)) : []
+  const checked = await Promise.all(dropped.map(async (path) => ((await isFolder(path)) ? [path] : [])))
+  const folders = checked.flat()
+  if (folders.length === 0) return requireLibrary().getSnapshot()
+  return updateConfig({ roots: [...new Set([...config.roots, ...folders])] })
+}
+
 async function linkFolder(): Promise<LibrarySnapshot> {
   const snapshot = requireLibrary().getSnapshot()
   const [folder] = await chooseFolders('Wybierz folder z dokumentami', false)
@@ -146,7 +196,25 @@ async function linkFolder(): Promise<LibrarySnapshot> {
 function isValidBounds(value: unknown): value is ViewerBounds {
   if (typeof value !== 'object' || value === null) return false
   const { x, y, width, height } = value as Record<string, unknown>
-  return [x, y, width, height].every((part) => Number.isFinite(part))
+  return [x, y, width, height].every((part) => Number.isInteger(part)) && Number(width) > 0 && Number(height) > 0
+}
+
+function isWheel(value: unknown): value is ViewerWheel {
+  if (typeof value !== 'object' || value === null) return false
+  const { x, y, deltaX, deltaY } = value as Record<string, unknown>
+  return [x, y, deltaX, deltaY].every((part) => Number.isFinite(part))
+}
+
+function parsePlacements(value: unknown): ViewerPlacement[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item: unknown) => {
+    const { docId, bounds, live } = (item ?? {}) as Record<string, unknown>
+    return typeof docId === 'string' && isValidBounds(bounds) ? [{ docId, bounds, live: live === true }] : []
+  })
+}
+
+function isSelectionAction(value: unknown): value is SelectionAction {
+  return value === 'comment' || value === 'sticky' || value === 'copy'
 }
 
 function assertShell(event: IpcMainInvokeEvent | IpcMainEvent): void {
@@ -177,6 +245,7 @@ function registerIpc(): void {
   handle('library:get', () => scanLibrary())
   handle('library:rescan', () => scanLibrary(true))
   handle('library:add-root', () => addRoots())
+  handle('library:add-paths', (paths: unknown) => addDroppedFolders(paths))
   handle('library:remove-root', (path: unknown) =>
     updateConfig({ roots: config.roots.filter((root) => root !== path) })
   )
@@ -202,8 +271,11 @@ function registerIpc(): void {
     if (typeof url === 'string' && isExternalUrl(url)) void shell.openExternal(url)
   })
   handle('viewer:open', (docId: unknown) => openDocument(requireDoc(docId)))
-  handle('viewer:close', () => closeDocument())
-  handle('viewer:reload', () => viewer?.reload())
+  handle('viewer:close', (docId: unknown) => viewer?.close(String(docId)))
+  handle('viewer:reload', (docId: unknown) => viewer?.reload(String(docId)))
+  handle('viewer:layout', (placements: unknown) => viewer?.setLayout(parsePlacements(placements)))
+  handle('viewer:capture', (docId: unknown) => viewer?.capture(String(docId)) ?? null)
+  handle('viewer:set-current', (docId: unknown) => setCurrentDocument(docId === null ? null : requireDoc(docId)))
 
   handle('annotations:list', () => annotations.listAll())
   handle('annotations:create', async (docId: unknown, input: unknown) => {
@@ -231,31 +303,63 @@ function registerIpc(): void {
     await pushAnnotations()
   })
 
-  ipcMain.on('viewer:set-bounds', (event, bounds: unknown) => {
+  ipcMain.on('viewer:focus', (event, docId: unknown) => {
     assertShell(event)
-    viewer?.setBounds(isValidBounds(bounds) ? bounds : null)
+    if (typeof docId === 'string') viewer?.focus(docId)
+    else mainWindow?.webContents.focus()
   })
-  ipcMain.on('viewer:set-mode', (event, mode: unknown) => {
+  ipcMain.on('viewer:wheel', (event, docId: unknown, wheel: unknown) => {
+    assertShell(event)
+    if (typeof docId === 'string' && isWheel(wheel)) viewer?.wheel(docId, wheel)
+  })
+  ipcMain.on('layer:place', (event, bounds: unknown) => {
+    assertShell(event)
+    if (isValidBounds(bounds)) dockLayer?.place(bounds)
+  })
+  ipcMain.on('layer:focus', (event) => {
+    assertShell(event)
+    dockLayer?.focus()
+  })
+  ipcMain.on('viewer:set-mode', (event, docId: unknown, mode: unknown) => {
     assertShell(event)
     const next: OverlayMode = mode === 'comment' || mode === 'sticky' ? mode : null
-    viewer?.setOverlayMode(next)
-    if (next) viewer?.focusDocument()
+    viewer?.setOverlayMode(String(docId), next)
+    if (next) viewer?.focus(String(docId))
   })
-  ipcMain.on('viewer:focus-annotation', (event, id: unknown) => {
+  ipcMain.on('viewer:focus-annotation', (event, docId: unknown, id: unknown) => {
     assertShell(event)
-    viewer?.focusOverlayItem(typeof id === 'string' ? id : null)
+    viewer?.focusOverlayItem(String(docId), typeof id === 'string' ? id : null)
+  })
+  ipcMain.on('viewer:track', (event, docId: unknown, on: unknown) => {
+    assertShell(event)
+    viewer?.trackOverlay(String(docId), on === true)
+  })
+  ipcMain.on('viewer:selection', (event, docId: unknown, action: unknown) => {
+    assertShell(event)
+    if (isSelectionAction(action)) viewer?.runSelectionAction(String(docId), action)
+  })
+  ipcMain.on('thumbs:request', (event, docIds: unknown) => {
+    assertShell(event)
+    if (Array.isArray(docIds)) thumbnails?.request(docIds.filter((id): id is string => typeof id === 'string'))
+  })
+  ipcMain.on('window:set-theme', (event, mode: unknown) => {
+    assertShell(event)
+    if (mode === 'light' || mode === 'dark') applyTheme(mode)
   })
 }
 
 function createWindow(): BrowserWindow {
+  const theme: ThemeMode = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   const window = new BrowserWindow({
-    width: 1400,
+    width: 1440,
     height: 900,
     minWidth: 900,
     minHeight: 600,
     title: 'HTML Docs',
     show: false,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f6f6f4',
+    backgroundColor: WALL_COLORS[theme],
+    titleBarStyle: 'hidden',
+    titleBarOverlay: titleBarFor(theme),
     webPreferences: {
       preload: join(__dirname, '../preload/shell.js'),
       sandbox: true,
@@ -265,7 +369,9 @@ function createWindow(): BrowserWindow {
   })
 
   window.once('ready-to-show', () => window.show())
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const layer = new DockLayer(window)
+  dockLayer = layer
+  window.webContents.setWindowOpenHandler((details) => layer.open(details))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.on('focus', () => {
     if (Date.now() - lastScanAt > RESCAN_ON_FOCUS_AFTER_MS) void scanLibrary(true)
@@ -275,11 +381,19 @@ function createWindow(): BrowserWindow {
     window,
     allowedHosts: config.allowedHosts,
     lookupDocPath: (docId) => library?.getServedPath(docId),
-    onState: (state) => {
-      if (!window.isDestroyed()) window.webContents.send('viewer:state', state)
-    },
+    onState: (state) => sendToShell('viewer:state', state),
     onOverlayEvent: forwardOverlayEvent,
-    onOverlayReady: () => void pushAnnotations()
+    onOverlayReady: () => void pushAnnotations(),
+    onKey: (key) => sendToShell('viewer:key', key),
+    onFocus: (docId) => sendToShell('viewer:focus', docId),
+    onStacked: () => layer.raise()
+  })
+
+  thumbnails = new Thumbnailer({
+    dir: join(dataDir(), 'cache', 'thumbs'),
+    viewer: () => viewer,
+    shaOf: (docId) => library?.getEntry(docId)?.sha ?? null,
+    send: (thumb) => sendToShell('thumbs:ready', thumb)
   })
 
   const devServer = process.env.ELECTRON_RENDERER_URL
@@ -290,6 +404,10 @@ function createWindow(): BrowserWindow {
   }
 
   window.on('closed', () => {
+    thumbnails?.close()
+    thumbnails = null
+    dockLayer?.close()
+    dockLayer = null
     mainWindow = null
     viewer = null
   })
