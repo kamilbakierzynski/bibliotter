@@ -59,6 +59,8 @@ Sygnał ma dwa zastosowania: status „Do decyzji” i uwaga, na którą odpisa�
 
 - Szyna 60 px, panel 264 px, uwagi 300 px.
 - Dok 52 px wysokości, narzędzia 36 px, małe przyciski 28 px.
+- Arkusz kończy się 10 px nad dołem okna, a dok 26 px, czyli 16 px nad dolną krawędzią arkusza.
+- Najmniejsze okno to 900 × 600 px.
 - Paleta 760 × 558 px, mniejsza tylko wtedy, gdy nie mieści się w oknie.
 - Promienie są koncentryczne: powłoka 22, dok 18, arkusz 16, wiersz 10.
 
@@ -108,7 +110,9 @@ Biblioteka ma się czytać tak samo przy 50 i przy 5000 dokumentów:
 
 ### Dok
 
-Stoi pod arkuszem, wyśrodkowany względem sceny. Taca pokazuje kolor karteczki, odbiorcę komentarza albo akcje zaznaczonego tekstu. Przy co najmniej trzech arkuszach dochodzi mapka szeregu. Dok i paleta to jeden element, który rośnie, a nie dwa okna.
+Pływa nad arkuszami, wyśrodkowany względem sceny. Szeroka taca dosuwa go do krawędzi okna, ale nigdy za nią nie wychodzi. Taca pokazuje kolor karteczki, odbiorcę komentarza albo akcje zaznaczonego tekstu. Przy co najmniej trzech arkuszach dochodzi mapka szeregu. Dok i paleta to jeden element, który rośnie, a nie dwa okna.
+
+Dok nie może zasłaniać treści, więc każdy dokument dostaje u dołu 84 px zapasu i po przewinięciu do końca ostatnia linia stoi nad dokiem. Dymek i wątek przy dole arkusza odchylają się ponad dok, a panel uwag w wąskim oknie kończy się nad nim. Kółko nad dokiem przewija dokument pod spodem, a po kliknięciu w dok klawiatura wraca do dokumentu.
 
 ### Paleta
 
@@ -150,7 +154,7 @@ Widać go po uruchomieniu i po zamknięciu ostatniego arkusza. `H` przechodzi na
 - Panel zamknięty: pinezki i podkreślenia na arkuszu, wątek wyrasta spod pinezki.
 - Panel otwarty: wątki wiszą na ścianie na wysokości cytatu i doganiają go na sprężynie.
 - Przełącznik w nagłówku lub `Shift I` przenosi je na listę.
-- Szereg zajmuje całą ścianę, więc uwagi stają wtedy na panelu. To samo dotyczy okna węższego niż 1180 px.
+- Szereg zajmuje całą ścianę, więc uwagi stają wtedy na panelu. To samo dotyczy okna węższego niż 1180 px, gdzie panel stoi nad arkuszem i kończy się nad dokiem.
 
 ### Skróty
 
@@ -188,20 +192,28 @@ Docelowo Windows: `Ctrl` zamiast `⌘`, przyciski okna po prawej, „Pokaż w Ek
 
 Fioletowych gradientów, Inter, szkła wszędzie, emoji, kart z kolorową lewą krawędzią, kremu z szeryfem i terakotą. Także koloru bez znaczenia i animacji, która nie mówi, skąd coś przyszło.
 
-## Do rozstrzygnięcia przy wdrożeniu
+## Elementy nad dokumentem
 
-Dokument to natywny `WebContentsView`, zawsze nad rendererem. Nie da się na nim rysować z Reacta, więc każdy element, który nachodzi na arkusz, potrzebuje osobnego rozwiązania.
+Dokument to natywny `WebContentsView`, zawsze nad rendererem. Nie da się na nim rysować z Reacta, dlatego są dwa mechanizmy.
 
-| Element | Propozycja |
+**Warstwa doku** (`src/main/dockLayer.ts`, `src/renderer/src/shell/layer.ts`). Dok, paleta i wskazówka mieszkają na osobnej, przezroczystej stronie w widoku nad dokumentami. Powłoka otwiera ją przez `window.open`, więc strona działa w tym samym wątku, a React rysuje na niej przez portal bez kopii stanu. Strona ma zawsze rozmiar okna, a widać ją tylko przez wycięcie, czyli zewnętrzny `View` obejmujący dok i jego drogę. Tylko tam łapie mysz, reszta trafia do dokumentu. Przesunięcie wycięcia to operacja po stronie przeglądarki, bez zmiany rozmiaru strony, więc dok nie drga, gdy wycięcie idzie za nim.
+
+**Zamrażanie** (`src/renderer/src/shell/native.ts`). Arkusz w ruchu albo pod czymś rysowanym w powłoce to zrzut `capturePage`. Widok czeka wtedy poza oknem w docelowym rozmiarze, a po zatrzymaniu nowy zrzut przenika stary i wraca żywa strona. Skrypty dokumentu działają przez cały czas.
+
+| Element | Rozwiązanie |
 |---|---|
-| Paleta i ściąga | Zrzut `capturePage` pod rozmytą zasłoną, widok natywny schowany na czas palety. |
-| Przestrzelenie liny | Zrzut na czas ruchu albo przestrzelenie mieszczące się w odstępie sceny. |
-| Popover statusu | Osobna przezroczysta warstwa dopasowana do jego wymiarów. |
-| Wątek pod pinezką | Rysowany w dokumencie przez `src/preload/overlay.ts`. |
-| Klawisze przy `Ctrl` | Te nad arkuszem też przez `overlay.ts`. |
-| Zerknięcie | Dwa widoki natywne w stosie, zrzut tylko na czas wjazdu. |
-| Szereg | Zrzuty w ruchu, żywe widoki po zatrzymaniu kamery. |
-| Miniatury na Ścianie | Zrzut poza ekranem po zeskanowaniu, trzymany w pamięci podręcznej i odświeżany przy zmianie pliku. |
+| Dok, taca, wskazówka doku | Warstwa doku. Dokument zostaje żywy. |
+| Paleta i ściąga | Warstwa doku, a pod nią zrzut arkusza za rozmytą zasłoną. |
+| Ruch liny, zerknięcia i szeregu | Zrzut na czas ruchu, żywy widok po zatrzymaniu. |
+| Status, Przytrzymanie, podgląd z szyny | Rysowane w powłoce nad zrzutem. |
+| Wątek pod pinezką i szkic uwagi | Rysowane w powłoce nad zrzutem. Tekst pisany w dokumencie trafiałby do jego skryptów. |
+| Pinezki, karteczki, podkreślenia | `src/preload/overlay.ts`, w zamkniętym Shadow DOM dokumentu. |
+| Zerknięcie | Żywe jest tylko zerknięcie, układ pod nim czeka jako zrzut. |
+| Szereg | Żywe są arkusze w pełni widoczne, te ucięte przez scenę zostają zrzutami. |
+| Miniatury na Ścianie | Ukryte okno poza ekranem, wynik trzymany w pamięci podręcznej według zawartości pliku. |
 | Arkusz rosnący z miniatury | Zrzut na czas ruchu, żywy widok po zatrzymaniu. |
+| Podmiana dokumentu w arkuszu | Stary zrzut przygasa, nowy przenika ponad nim, a stary widok od razu się zamyka. |
 
-Koszt zrzutów: skrypty w dokumencie działają dalej, ale przez ok. sekundę ruchu widać obraz, a nie żywą stronę. Miniatura pokazuje stan z chwili zrzutu, a dokumenty z JS nie działają na niej do otwarcia.
+Koszt: przez ok. sekundę ruchu widać obraz, a nie żywą stronę. Miniatura pokazuje stan z chwili zrzutu, a dokumenty z JS nie działają na niej do otwarcia. Dokument z własnym wewnętrznym przewijaniem albo `overflow: hidden` na korzeniu nie dostaje dolnego zapasu. Wokół doku jest kilka pikseli wycięcia, w których kliknięcie nie trafia w dokument, choć kółko działa.
+
+Kontenery, które tylko przycinają, mają `overflow: clip`. `hidden` da się przewinąć z kodu, np. przez `focus()` albo `scrollIntoView`, a to przesuwa całą powłokę.

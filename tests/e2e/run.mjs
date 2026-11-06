@@ -108,20 +108,49 @@ document.getElementById('plus').addEventListener('click', () => {
 show()
 </script></body>`
 
+/** Miniatury renderują dokumenty w ukrytym oknie o tej szerokości. */
+const THUMB_WIDTH = 1040
+
 function attachDocument(app) {
   return async (fragment) => {
     const deadline = Date.now() + 10000
     while (Date.now() < deadline) {
       for (const page of app.windows()) {
-        if (page.url().startsWith('htmldoc://') && (await page.title().catch(() => '')).includes(fragment)) {
-          return page
-        }
+        if (!page.url().startsWith('htmldoc://')) continue
+        const width = await page.evaluate(() => innerWidth).catch(() => THUMB_WIDTH)
+        if (width !== THUMB_WIDTH && (await page.title().catch(() => '')).includes(fragment)) return page
       }
       await delay(100)
     }
     throw new Error(`Nie znaleziono dokumentu „${fragment}”`)
   }
 }
+
+/** Otwarty przed chwilą arkusz jest najpierw zrzutem, a dopiero potem żywym widokiem. */
+const documentIsLive = (shell) => shell.waitForFunction(() => !document.querySelector('canvas.sheet-frame'))
+
+/** Dok, paleta i wskazówka żyją na osobnej stronie nad dokumentami. */
+async function dockLayer(app, shell) {
+  const deadline = Date.now() + 10000
+  while (Date.now() < deadline) {
+    const layer = app.windows().find((page) => page !== shell && page.url() === 'about:blank')
+    if (layer) return layer
+    await delay(50)
+  }
+  throw new Error('Nie znaleziono warstwy doku')
+}
+
+const docRow = (shell, name) => shell.locator('.row[data-doc]', { hasText: name })
+const railTab = (shell, view) => shell.locator(`.rb[data-view="${view}"]`)
+
+/** Arkusz na scenie. Pozostałe sloty czekają zwinięte. */
+const stageSheet = (shell) =>
+  shell.evaluate(() => {
+    const { top, width, height } = [...document.querySelectorAll('.sheet')]
+      .map((sheet) => sheet.getBoundingClientRect())
+      .sort((a, b) => b.width - a.width)[0]
+    return { top, width, height }
+  })
 
 const DOCUMENT_BODY = `<style>body { margin: 16px }</style><h1>Temat</h1><h2>Cel</h2><h2>Ryzyka</h2>
 <p>${'Akapit opisujący łamigłówki i decyzje projektowe. '.repeat(30)}</p>`
@@ -150,8 +179,9 @@ async function libraryFlow(workspace) {
   let app = await launch()
   try {
     const shell = await app.firstWindow()
+    const layer = await dockLayer(app, shell)
     const findDocument = attachDocument(app)
-    const row = (name) => shell.locator('.row.doc', { hasText: name })
+    const row = (name) => docRow(shell, name)
     await row('stary').waitFor()
 
     await check('nowy plik pojawia się bez ręcznego skanowania', async () => {
@@ -162,10 +192,7 @@ async function libraryFlow(workspace) {
     await check('otwarcie oznacza dokument jako przeczytany', async () => {
       await row('nowy').click()
       await findDocument('Nowy dokument')
-      await shell.getByLabel('Status dokumentu').waitFor()
-      await shell.waitForFunction(
-        () => document.querySelector('select[aria-label="Status dokumentu"]')?.value === 'read'
-      )
+      await layer.locator('#statusBtn', { hasText: 'Przeczytane' }).waitFor()
     })
 
     await check('zmiana otwartego pliku proponuje nową wersję', async () => {
@@ -178,38 +205,41 @@ async function libraryFlow(workspace) {
     })
 
     await check('zmieniony dokument wraca do przeczytania i do skrzynki', async () => {
-      await shell.getByRole('tab', { name: /Skrzynka/ }).click()
-      await shell.locator('.two-line', { hasText: 'Nowy dokument' }).waitFor()
-      await shell.getByRole('tab', { name: 'Biblioteka' }).click()
+      await railTab(shell, 'inbox').click()
+      await row('Nowy dokument').waitFor()
+      await railTab(shell, 'library').click()
     })
 
     await check('wyszukiwanie znajduje treść bez polskich znaków', async () => {
-      await shell.getByLabel('Szukaj w treści dokumentów').fill('lamiglowki')
-      await shell.locator('.snippet mark').first().waitFor()
-      assert.equal(await shell.locator('.snippet mark').first().textContent(), 'łamigłówki')
-      await shell.getByLabel('Szukaj w treści dokumentów').fill('')
+      await layer.locator('#cmdBtn').click()
+      await layer.locator('#cmdInput').fill('lamiglowki')
+      const mark = layer.locator('.cr .snippet mark').first()
+      await mark.waitFor()
+      assert.equal(await mark.textContent(), 'łamigłówki')
+      await layer.keyboard.press('Escape')
+      await layer.locator('.dock.wide').waitFor({ state: 'detached' })
     })
 
     await check('status można zmienić ręcznie', async () => {
-      await shell.getByLabel('Status dokumentu').selectOption('to-decide')
-      await shell.locator('.row.doc .mark.decide').waitFor()
+      await layer.locator('#statusBtn').click()
+      await shell.locator('[data-status="to-decide"]').click()
+      await shell.locator('.row[data-doc] .dot.decide').waitFor()
     })
 
     await check('niepewny plik można dodać do biblioteki', async () => {
       const prose = 'Długi tekst bez nagłówków, który nie wygląda na pełny dokument. '.repeat(20)
       await writeFile(join(docs, 'prawie.html'), `<title>Prawie</title><style>p{}</style><p>${prose}</p>`)
-      const tab = shell.getByRole('tab', { name: /Niepewne/ })
-      await shell.getByRole('tab', { name: /Niepewne 1/ }).waitFor({ timeout: 8000 })
-      await tab.click()
-      await shell.locator('.two-line', { hasText: 'Prawie' }).click()
+      await railTab(shell, 'review').locator('i').waitFor({ timeout: 8000 })
+      await railTab(shell, 'review').click()
+      await row('Prawie').click()
       await shell.getByRole('button', { name: 'Dodaj do biblioteki' }).click()
-      await shell.getByRole('tab', { name: 'Biblioteka' }).click()
+      await railTab(shell, 'library').click()
       await row('prawie').waitFor()
     })
 
     await check('po usunięciu oryginału zostaje zachowana kopia', async () => {
       await rm(join(docs, 'stary.html'))
-      await shell.locator('.row.doc', { hasText: 'stary' }).locator('.tag').waitFor({ timeout: 8000 })
+      await row('stary').locator('.tag').waitFor({ timeout: 8000 })
       await row('stary').click()
       await findDocument('Stary dokument')
       await shell.locator('.notice', { hasText: 'zachowana kopia' }).waitFor()
@@ -222,10 +252,10 @@ async function libraryFlow(workspace) {
   try {
     const shell = await app.firstWindow()
     await check('status i kopia przetrwają ponowne uruchomienie', async () => {
-      await shell.locator('.row.doc .mark.decide').waitFor()
-      await shell.locator('.row.doc', { hasText: 'stary' }).locator('.tag').waitFor()
+      await shell.locator('.row[data-doc] .dot.decide').waitFor()
+      await docRow(shell, 'stary').locator('.tag').waitFor()
     })
-    await shell.locator('.row.doc', { hasText: 'nowy' }).click()
+    await docRow(shell, 'nowy').click()
     await delay(500)
     await shell.screenshot({ path: join(artifacts, 'library.png') })
   } finally {
@@ -292,45 +322,56 @@ async function annotationFlow(workspace) {
   let commentId
   try {
     const shell = await app.firstWindow()
+    const layer = await dockLayer(app, shell)
     shell.setDefaultTimeout(6000)
+    layer.setDefaultTimeout(6000)
     const findDocument = attachDocument(app)
     const errors = []
-    shell.on('pageerror', (error) => errors.push(String(error)))
-    await shell.locator('.row.doc', { hasText: 'Dokument z uwagami' }).click()
+    for (const surface of [shell, layer]) surface.on('pageerror', (error) => errors.push(String(error)))
+    const thread = (text) => shell.locator('#threads .thread', { hasText: text })
+    const save = async () => {
+      await shell.getByRole('button', { name: 'Zapisz' }).click()
+      await shell.locator('.bubble').waitFor({ state: 'detached' })
+    }
+    await docRow(shell, 'Dokument z uwagami').click()
     const page = await findDocument('Dokument z uwagami')
     await page.waitForLoadState('load')
     const target = await centerOf(page, '#akcja')
 
     await check('kliknięcie w trybie komentarza stawia pinezkę, a nie uruchamia dokumentu', async () => {
-      await shell.getByRole('button', { name: 'Komentarz' }).click()
+      await layer.locator('.tb[data-tool="comment"]').click()
       await overlayCovers(page, target)
       await page.mouse.click(target.x, target.y)
-      await shell.locator('.composer').waitFor()
+      await shell.locator('.draft .bubble').waitFor()
       assert.equal(await page.evaluate(() => window.klikniecia), undefined)
     })
 
-    await check('po wskazaniu miejsca klawiatura przechodzi do panelu', async () => {
+    await check('po wskazaniu miejsca klawiatura przechodzi do dymka', async () => {
       const focused = await app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows()[0].webContents.isFocused()
+        BrowserWindow.getAllWindows().find((window) => window.isVisible()).webContents.isFocused()
       )
       assert.equal(focused, true)
       assert.equal(await shell.evaluate(() => document.activeElement?.tagName), 'TEXTAREA')
     })
 
-    await check('komentarz zapisuje się w panelu i w pliku', async () => {
+    await check('komentarz zapisuje się w dymku i w pliku', async () => {
       await shell.getByLabel('Treść uwagi').fill('Zmień nazwę tego przycisku')
-      await shell.getByRole('button', { name: 'Zapisz' }).click()
-      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).waitFor()
-      await shell.locator('.composer').waitFor({ state: 'detached' })
+      await save()
+      await shell.locator('[data-moved="insp"] em', { hasText: '1' }).waitFor()
     })
 
     const pin = { x: target.x + 13, y: target.y - 13 }
 
-    await check('kliknięcie pinezki wybiera wątek i nie trafia w dokument', async () => {
+    await check('kliknięcie pinezki otwiera wątek i nie trafia w dokument', async () => {
       await overlayCovers(page, pin)
       await page.mouse.click(pin.x, pin.y)
-      await shell.locator('.thread.selected', { hasText: 'Zmień nazwę' }).waitFor()
+      await shell.locator('.th-pop .thread.on', { hasText: 'Zmień nazwę' }).waitFor()
       assert.equal(await page.evaluate(() => window.klikniecia), undefined)
+    })
+
+    await check('wątek przy pinezce ma własną wysokość', async () => {
+      const box = await shell.locator('.th-pop').boundingBox()
+      assert.ok(box.height > 60, String(box.height))
     })
 
     await check('agent widzi otwarty dokument i uwagę bez apki w tle (CLI)', async () => {
@@ -355,22 +396,24 @@ async function annotationFlow(workspace) {
       await tool('reply_comment', { id: commentId, text: 'Czy nazwa „Wybierz” będzie dobra?' })
     })
 
-    await check('odpowiedź agenta pojawia się w otwartym panelu', async () => {
-      await shell.locator('.message.agent', { hasText: 'Czy nazwa' }).waitFor({ timeout: 5000 })
-      await shell.locator('.flag', { hasText: 'Agent odpisał' }).waitFor()
+    await check('odpowiedź agenta pojawia się w otwartym wątku', async () => {
+      await shell.locator('.th-pop .msg.agent', { hasText: 'Czy nazwa' }).waitFor({ timeout: 5000 })
+      await shell.locator('.th-pop .th-flag', { hasText: 'Agent odpisał' }).waitFor()
     })
 
     await check('karteczka dla mnie jest ukryta przed agentem', async () => {
+      await page.keyboard.press('Escape')
+      await shell.locator('.th-pop').waitFor({ state: 'detached' })
       await page.locator('#cel').scrollIntoViewIfNeeded()
       const visible = await centerOf(page, '#cel')
-      await page.keyboard.press('Escape')
-      await shell.getByRole('button', { name: 'Karteczka' }).click()
+      await layer.locator('.tb[data-tool="sticky"]').click()
+      await layer.getByRole('button', { name: 'Niebieska' }).click()
       await overlayCovers(page, visible)
       await page.mouse.click(visible.x, visible.y)
       await shell.getByLabel('Treść uwagi').fill('Poruszyć na spotkaniu')
-      await shell.getByRole('radio', { name: 'Niebieska' }).click()
-      await shell.getByRole('button', { name: 'Zapisz' }).click()
-      await shell.locator('.thread', { hasText: 'Poruszyć' }).waitFor()
+      await save()
+      await page.keyboard.press('i')
+      await thread('Poruszyć').locator('.th-mark.sticky.blue').waitFor()
 
       assert.doesNotMatch(await cli('comments'), /Poruszyć/)
       assert.match(await cli('comments', '--personal'), /Poruszyć/)
@@ -378,10 +421,10 @@ async function annotationFlow(workspace) {
     })
 
     await check('zbiorcza lista pokazuje tematy na spotkanie', async () => {
-      await shell.getByRole('tab', { name: /Uwagi/ }).click()
-      await shell.locator('.two-line', { hasText: 'Poruszyć' }).click()
-      await shell.locator('.thread.selected', { hasText: 'Poruszyć' }).waitFor()
-      await shell.getByRole('tab', { name: 'Biblioteka' }).click()
+      await railTab(shell, 'notes').click()
+      await shell.locator('[data-open-note]', { hasText: 'Poruszyć' }).click()
+      await shell.locator('#threads .thread.on', { hasText: 'Poruszyć' }).waitFor()
+      await railTab(shell, 'library').click()
     })
 
     await check('kod dokumentu nie widzi uwag ani mostu do apki', async () => {
@@ -405,25 +448,27 @@ async function annotationFlow(workspace) {
         range.selectNodeContents(document.getElementById('cel'))
         getSelection().addRange(range)
       })
-      await shell.getByRole('button', { name: 'Komentarz' }).click()
-      await shell.locator('.composer blockquote', { hasText: 'karteczka na spotkanie' }).waitFor()
-      await shell.getByRole('button', { name: 'Anuluj' }).click()
-      await shell.locator('.composer').waitFor({ state: 'detached' })
+      await layer.locator('.tray-s .ask', { hasText: 'Skomentuj' }).click()
+      await shell.locator('.draft .bubble').waitFor()
+      await shell.getByLabel('Treść uwagi').fill('Cytat zostaje przy uwadze')
+      await save()
+      const comment = (await tool('list_comments')).find((item) => item.messages[0].text === 'Cytat zostaje przy uwadze')
+      assert.match(comment.quote, /karteczka na spotkanie/)
     })
 
     await check('skrót C w dokumencie włącza tryb komentarza, a Escape go wyłącza', async () => {
       await page.mouse.click(5, 5)
       await page.keyboard.press('c')
-      await shell.locator('.tool.active', { hasText: 'Komentarz' }).waitFor()
+      await layer.locator('.tb.on[data-tool="comment"]').waitFor()
       await page.keyboard.press('Escape')
-      await shell.locator('.tool.active').waitFor({ state: 'detached' })
+      await layer.locator('.tb.on[data-tool="move"]').waitFor()
     })
 
     await check('uwaga do całego dokumentu nie ma kotwicy', async () => {
       await shell.getByRole('button', { name: 'Uwaga do całego dokumentu' }).click()
       await shell.getByLabel('Treść uwagi').fill('Skróć całość')
-      await shell.getByRole('button', { name: 'Zapisz' }).click()
-      await shell.locator('.thread', { hasText: 'Skróć całość' }).waitFor()
+      await save()
+      await thread('Skróć całość').waitFor()
       const comment = (await tool('list_comments')).find((item) => item.messages[0].text === 'Skróć całość')
       assert.equal(comment.heading, null)
     })
@@ -449,32 +494,37 @@ async function annotationFlow(workspace) {
   app = await launch()
   try {
     const shell = await app.firstWindow()
+    shell.setDefaultTimeout(6000)
+    const thread = (text) => shell.locator('#threads .thread', { hasText: text })
+
     await check('uwagi i odpowiedź agenta przetrwają ponowne uruchomienie', async () => {
-      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).waitFor()
-      await shell.locator('.thread', { hasText: 'Poruszyć' }).waitFor()
-      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).locator('.thread-head').click()
-      await shell.locator('.message.agent', { hasText: 'Zmienię po Twojej decyzji' }).waitFor()
+      await docRow(shell, 'Dokument z uwagami').click()
+      await shell.locator('[data-moved="insp"]').click()
+      await thread('Zmień nazwę').waitFor()
+      await thread('Poruszyć').waitFor()
+      await thread('Zmień nazwę').locator('.th-head').click()
+      await shell.locator('.msg.agent', { hasText: 'Zmienię po Twojej decyzji' }).waitFor()
     })
 
     await check('uwaga z usuniętego miejsca jest oznaczona, a nie gubiona', async () => {
-      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).locator('.flag', { hasText: 'Nie ma tego miejsca' }).waitFor()
+      await thread('Zmień nazwę').locator('.th-flag', { hasText: 'Nie ma tego miejsca' }).waitFor()
       const [comment] = await tool('list_comments', { document: 'current' })
       assert.equal(comment.outdated, true)
     })
 
     await check('uwaga zamknięta przez agenta znika z listy', async () => {
       await tool('resolve_comment', { id: commentId, text: 'Przycisk usunięty' })
-      await shell.locator('.thread', { hasText: 'Zmień nazwę' }).waitFor({ state: 'detached', timeout: 5000 })
+      await thread('Zmień nazwę').waitFor({ state: 'detached', timeout: 5000 })
       await shell.getByRole('button', { name: 'Zamknięte: 1' }).click()
       await shell.locator('.thread.resolved', { hasText: 'Zmień nazwę' }).waitFor()
     })
 
     await check('usunięcie uwagi wymaga potwierdzenia', async () => {
-      const thread = shell.locator('.thread', { hasText: 'Skróć całość' })
-      await thread.locator('.thread-head').click()
-      await thread.getByRole('button', { name: 'Usuń' }).click()
-      await thread.getByRole('button', { name: 'Na pewno?' }).click()
-      await thread.waitFor({ state: 'detached' })
+      const entry = thread('Skróć całość')
+      await entry.locator('.th-head').click()
+      await entry.getByRole('button', { name: 'Usuń' }).click()
+      await entry.getByRole('button', { name: 'Na pewno?' }).click()
+      await entry.waitFor({ state: 'detached' })
     })
   } finally {
     await app.close()
@@ -490,21 +540,24 @@ async function firstRun(workspace, docs) {
   })
   try {
     const shell = await app.firstWindow()
+    const setup = shell.locator('.h-setup', { hasText: 'Wskaż foldery' })
     await check('pierwszy start pokazuje wybór folderów', async () => {
-      await shell.getByRole('button', { name: 'Dodaj foldery' }).waitFor()
+      await setup.waitFor()
     })
     await app.evaluate(({ dialog }, folder) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
     }, docs)
     await check('dodany folder trafia do drzewa i konfiguracji', async () => {
       await shell.getByRole('button', { name: 'Dodaj foldery' }).click()
-      await shell.locator('.row.doc', { hasText: 'interaktywny' }).waitFor()
+      await docRow(shell, 'interaktywny').waitFor()
       const saved = JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))
       assert.deepEqual(saved.roots, [docs])
     })
     await check('usunięcie folderu czyści drzewo', async () => {
-      await shell.getByRole('button', { name: 'Usuń' }).click()
-      await shell.locator('.row.doc').first().waitFor({ state: 'detached' })
+      await railTab(shell, 'folders').click()
+      await shell.locator('.folders [aria-label^="Usuń"]').click()
+      await setup.waitFor()
+      assert.equal(await shell.locator('.row[data-doc]').count(), 0)
     })
   } finally {
     await app.close()
@@ -531,7 +584,7 @@ async function main() {
   const control = join(workspace, 'kontrola.html')
   await writeFile(control, leakDoc(sink.httpPort, sink.udpPort))
 
-  const hasSilos = existsSync(silosDoc)
+  const hasSilos = !process.env.E2E_SKIP_WORK_DOCS && existsSync(silosDoc)
   if (hasSilos) await copyFile(silosDoc, join(docs, 'silos-v2.html'))
 
   await firstRun(workspace, docs)
@@ -545,18 +598,21 @@ async function main() {
   })
   const consoleErrors = []
   const shell = await app.firstWindow()
-  shell.on('console', (message) => {
-    if (message.type() === 'error') consoleErrors.push(message.text())
-  })
-  shell.on('pageerror', (error) => consoleErrors.push(String(error)))
+  const layer = await dockLayer(app, shell)
+  for (const surface of [shell, layer]) {
+    surface.on('console', (message) => {
+      if (message.type() === 'error') consoleErrors.push(message.text())
+    })
+    surface.on('pageerror', (error) => consoleErrors.push(String(error)))
+  }
   const findDocument = attachDocument(app)
-  const openDoc = (name) => shell.locator('.row.doc', { hasText: name }).click()
+  const openDoc = (name) => docRow(shell, name).click()
 
   try {
-    await shell.waitForSelector('.row.doc')
+    await shell.waitForSelector('.row[data-doc]')
 
     await check('skan pomija node_modules i pokazuje dokumenty', async () => {
-      const names = await shell.locator('.row.doc .label').allTextContents()
+      const names = await shell.locator('.row[data-doc] .lbl').allTextContents()
       assert.ok(names.includes('Napastnik'), names.join())
       assert.ok(!names.includes('Pomijany'), names.join())
     })
@@ -601,7 +657,7 @@ async function main() {
       assert.equal(probes.crossDoc, 'zablokowano')
     })
     await check('apka pokazuje liczbę zablokowanych żądań', async () => {
-      const notice = await shell.locator('.notice').textContent()
+      const notice = await shell.locator('.notice').first().textContent()
       assert.match(notice, /Zablokowano \d+/)
     })
     await check('dokument nie czyta sąsiednich plików spoza listy', async () => {
@@ -650,8 +706,55 @@ async function main() {
 
     await check('widok dokumentu dopasowuje się do okna', async () => {
       const size = await interactive.evaluate(() => [innerWidth, innerHeight])
-      const box = await shell.locator('.viewport').boundingBox()
+      const box = await stageSheet(shell)
       assert.deepEqual(size, [Math.round(box.width), Math.round(box.height)])
+    })
+
+    await check('koniec dokumentu wychodzi spod doku', async () => {
+      const end = await interactive.evaluate(() => {
+        scrollTo(0, document.documentElement.scrollHeight)
+        return document.getElementById('dol').getBoundingClientRect().bottom
+      })
+      const bottom = end + (await stageSheet(shell)).top
+      const dockTop = (await layer.locator('#dock').boundingBox()).y
+      assert.ok(bottom <= dockTop, `${bottom} > ${dockTop}`)
+    })
+
+    await check('podmieniony dokument nie zostaje pod nowym', async () => {
+      await documentIsLive(shell)
+      const titles = await app.evaluate(({ BrowserWindow }) => {
+        const main = BrowserWindow.getAllWindows().find((item) => item.isVisible())
+        const views = main.contentView.children.filter((view) => view.webContents?.getURL().startsWith('htmldoc://'))
+        return views.map((view) => view.webContents.getTitle())
+      })
+      assert.deepEqual(titles, ['Interaktywny'])
+    })
+
+    await check('kliknięcie w dok oddaje klawiaturę dokumentowi', async () => {
+      await app.evaluate(({ webContents }) =>
+        webContents.getAllWebContents().find((item) => item.getURL() === 'about:blank').focus()
+      )
+      await layer.locator('.tb[data-tool="move"]').click()
+      await delay(300)
+      const url = await app.evaluate(({ webContents }) => webContents.getFocusedWebContents()?.getURL())
+      assert.ok(url?.startsWith('htmldoc://'), url)
+    })
+
+    await check('powłoki i doku nie da się przewinąć z kodu', async () => {
+      const moved = (page, selectors) =>
+        page.evaluate((list) => {
+          const elements = list.flatMap((selector) => [...document.querySelectorAll(selector)])
+          for (const element of elements) element.scrollTop = element.scrollLeft = 90
+          return elements.filter((element) => element.scrollTop || element.scrollLeft).map((element) => element.className)
+        }, selectors)
+      assert.deepEqual(await moved(shell, ['.app', '.sheet', '.sheet-stack']), [])
+      assert.deepEqual(await moved(layer, ['.dock-room', '.dock', '.tray']), [])
+    })
+
+    await check('powłoka nie otwiera innych okien niż warstwa doku', async () => {
+      const windows = app.windows().length
+      assert.equal(await shell.evaluate(() => window.open('https://example.com/okno', 'inne')), null)
+      assert.equal(app.windows().length, windows)
     })
 
     if (hasSilos) {

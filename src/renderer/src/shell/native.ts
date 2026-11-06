@@ -95,7 +95,6 @@ function showShot(i: number, shot: Shot & Frame, fade: boolean): void {
   const previous = [...stack.children]
   shot.canvas.classList.toggle('fade', fade)
   stack.append(shot.canvas)
-  stack.classList.remove('stale')
   box.style.background = shot.background
   frames.set(i, { docId: shot.docId, width: shot.width, height: shot.height })
   if (fade) setTimeout(() => previous.forEach((node) => node.remove()), FADE_MS + 40)
@@ -104,11 +103,12 @@ function showShot(i: number, shot: Shot & Frame, fade: boolean): void {
 
 export function clearFrames(i: number): void {
   frames.delete(i)
-  const stack = stackOf(i)
-  if (stack) {
-    stack.replaceChildren()
-    stack.classList.remove('stale')
-  }
+  stackOf(i)?.replaceChildren()
+}
+
+/** Dokument już się zmienił, więc jego stary obraz przygasa i czeka pod nowym. */
+function dimFrames(i: number): void {
+  for (const frame of stackOf(i)?.children ?? []) frame.classList.add('stale')
 }
 
 function targetBounds(i: number): ViewerBounds {
@@ -125,14 +125,19 @@ function placements(live: ReadonlySet<number>): ViewerPlacement[] {
   const list: ViewerPlacement[] = []
   for (const s of sheets) {
     const docId = ui.panes[s.i]
-    if (!docId || !openViews.has(docId)) continue
-    const bounds = isOpen(s.i) ? targetBounds(s.i) : known.get(docId)
-    if (!bounds) continue
+    if (!docId || !isOpen(s.i) || !openViews.has(docId)) continue
+    const bounds = targetBounds(s.i)
     known.set(docId, bounds)
     const item = { docId, bounds, live: live.has(s.i) }
     // Zerknięcie leży nad innymi arkuszami, więc wchodzi na stos jako ostatnie.
     if (s.i === ui.peek) list.push(item)
     else list.unshift(item)
+  }
+  // Widok bez otwartego arkusza czeka odstawiony. Na starym miejscu przykryłby scenę w ruchu.
+  const placed = new Set(list.map(({ docId }) => docId))
+  for (const docId of openViews) {
+    const bounds = known.get(docId)
+    if (bounds && !placed.has(docId)) list.unshift({ docId, bounds, live: false })
   }
   return list
 }
@@ -237,11 +242,13 @@ async function step(): Promise<void> {
         const shot = await grab(docId)
         if (shot) showShot(i, shot, false)
         liveDocs.delete(i)
-        if (ui.panes[i] !== docId) stackOf(i)?.classList.add('stale')
+        if (ui.panes[i] !== docId) dimFrames(i)
       })
     )
   }
 
+  // Zrzut już wisi na arkuszu, więc podmieniony dokument nie potrzebuje widoku.
+  releaseUnused()
   await sendPlacements(new Set(liveDocs.keys()))
   if (held) setHeld(false)
 
@@ -342,7 +349,23 @@ export function wheelUnderDock(x: number, y: number, deltaX: number, deltaY: num
 }
 
 export const viewIsOpen = (docId: string): boolean => openViews.has(docId)
-export const openViewIds = (): string[] => [...openViews]
+
+/** Zamyka widoki, których nie ma na scenie ani w układzie, do którego można wrócić. */
+export function releaseUnused(): void {
+  const needed = new Set<string>()
+  for (const s of sheets) {
+    const id = ui.panes[s.i]
+    if (id && (isOpen(s.i) || s.o.x > 0.01)) needed.add(id)
+    else if (s.o.x <= 0.01) clearFrames(s.i)
+  }
+  for (const id of ui.last?.docs ?? []) if (id) needed.add(id)
+  for (const id of ui.stash?.docs ?? []) if (id) needed.add(id)
+  for (const id of openViews) if (!needed.has(id)) dropView(id)
+  for (const s of sheets) {
+    const id = ui.panes[s.i]
+    if (id && !needed.has(id)) ui.panes[s.i] = null
+  }
+}
 
 export function docReady(docId: string): void {
   readyAt.set(docId, performance.now())

@@ -16,7 +16,7 @@ import {
   syncSel
 } from './layout'
 import { load, setLibrary } from './library'
-import { docReady, touch, wheelUnderDock } from './native'
+import { docReady, focusLive, touch, wheelUnderDock } from './native'
 import { closeThread, handleOverlayEvent, syncTools, syncViewSeg } from './notes'
 import { closeCmd, renderCmd } from './palette'
 import { applyGlow, focusPane } from './sheets'
@@ -117,6 +117,8 @@ function connectKeyboard(page: Window): void {
   })
   page.addEventListener('click', (event) => {
     if (isPopOpen() && !(event.target as HTMLElement).closest('#statusPop')) togglePop(false)
+    // Kliknięcie obok dokumentu nie zabiera mu klawiatury, więc strzałki dalej go przewijają.
+    focusLive()
   })
 }
 

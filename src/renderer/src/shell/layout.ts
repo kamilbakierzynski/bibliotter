@@ -4,9 +4,8 @@ import { clamp, connectLoop, lerp, Spring, type SpringOptions, wake } from '../m
 import { fitHome, renderMorph, renderZoom } from './home'
 import { hideFly, tipNeedsRoom } from './keys'
 import { inLayer, placeLayer } from './layer'
-import { noteQuiet, touch, trackQuiet } from './native'
+import { noteQuiet, releaseUnused, touch, trackQuiet } from './native'
 import { onWall, renderHangs, syncPanelMode } from './notes'
-import { releaseUnused } from './sheets'
 import { canAnnotate, focusedDoc, isOpen, MAX_SHEETS, notify, type PanelView, pinned, ui } from './state'
 
 /*
@@ -114,7 +113,8 @@ export const OPEN: SpringOptions = { k: 170, z: 0.74 }
 export const SHUT: SpringOptions = { k: 240, z: 0.9 }
 const rowWidth = (w: number): number => Math.max(480, w * 0.64)
 const DOCK_H = 52
-const NARROW_W = 860
+/** Najmniejszy odstęp doku od krawędzi okna. */
+const DOCK_EDGE = 8
 /** Zapas wycięcia na cień doku. Zasłania dokument, więc jest mały. */
 const LAYER_SIDE = 20
 const LAYER_TOP = 8
@@ -215,7 +215,9 @@ export function measure(): void {
   G.cmdW = Math.min(760, G.W - 32)
   G.cmdH = Math.min(558, G.H - 40)
   G.overlay = G.W < 1180
-  document.documentElement.classList.toggle('narrow', G.W <= NARROW_W)
+  // Panel nad arkuszem kończy się nad dokiem, który inaczej zasłoniłby jego stopkę.
+  if (G.overlay) G.insBot = G.stageBot + G.dockZone + G.stageGap
+  els.inspIn.style.bottom = `${G.insBot}px`
   els.cmd.style.width = `${G.cmdW}px`
   els.cmd.style.height = `${G.cmdH}px`
 }
@@ -289,6 +291,11 @@ export function placeInitial(): void {
   dockC.set((G.open + G.stageGap + base) / 2)
   rope.T = navT.x
   rope.B = navB.x
+}
+
+/** Start zakłada otwartą nawigację, a pusta biblioteka zostawia ją zamkniętą. */
+export function centerDock(): void {
+  dockC.set((sL.t + sR.t) / 2)
 }
 
 export function sheetRects(w: number, atTarget = false): { l: number; w: number }[] {
@@ -468,12 +475,16 @@ function settle(): void {
   noteQuiet()
 }
 
+/** Dok stoi nad środkiem sceny, ale szeroka taca nie może wyjść poza okno. */
+const dockLeft = (center: number, width: number): number =>
+  clamp(center - width / 2, DOCK_EDGE, Math.max(DOCK_EDGE, G.W - width - DOCK_EDGE))
+
 /** Wycięcie obejmuje dok, a w ruchu także miejsce, do którego dok zmierza. */
 function fitLayer(left: number, cw: number, ch: number, barW: number, ctx: number): void {
   const barAim = barW + trayW.t - trayW.x + camW.t - camW.x + (ctxP.t - ctx) * els.barCtxIn.offsetWidth
   const aimW = mW.t > 0 ? G.cmdW : barAim
   const aimH = mH.t > 0 ? G.cmdH : DOCK_H
-  const aimL = lerp(dockC.t, G.W / 2, mW.t) - aimW / 2
+  const aimL = dockLeft(lerp(dockC.t, G.W / 2, mW.t), aimW)
   const tip = tipNeedsRoom()
   const rest =
     Math.abs(left - aimL) < 0.5 &&
@@ -533,7 +544,7 @@ export function render(): void {
   const cw = lerp(barW, G.cmdW, mW.x)
   const ch = lerp(DOCK_H, G.cmdH, mH.x)
   const { dock, bar, cmd } = els
-  const left = lerp(dockC.x, G.W / 2, clamp(mW.x)) - cw / 2
+  const left = dockLeft(lerp(dockC.x, G.W / 2, clamp(mW.x)), cw)
   fitLayer(left, cw, ch, barW, ctx)
   dock.style.width = `${cw}px`
   dock.style.height = `${ch}px`

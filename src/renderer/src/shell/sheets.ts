@@ -1,6 +1,6 @@
 import { goHome, openHome, thumbOf } from './home'
 import { applyLayout, paintGlow, reflow, SHUT, OFF, sheets, sL, sR, syncCam, syncChrome, syncSel } from './layout'
-import { clearFrames, dropView, ensureView, syncCurrent, viewIsOpen, openViewIds } from './native'
+import { clearFrames, dropView, ensureView, syncCurrent, viewIsOpen } from './native'
 import { afterFocusChange, closeThread, setSelNote, setTool } from './notes'
 import { data, findNote, focusedId, isOpen, notify, openPane, pinned, saveLastDocs, ui } from './state'
 
@@ -193,23 +193,6 @@ export function splitKey(): void {
     ui.focus = i
   })
   syncFocus()
-}
-
-/** Zamyka widoki, których nie ma na scenie ani w układzie, do którego można wrócić. */
-export function releaseUnused(): void {
-  const needed = new Set<string>()
-  for (const s of sheets) {
-    const id = ui.panes[s.i]
-    if (id && (isOpen(s.i) || s.o.x > 0.01)) needed.add(id)
-    else if (s.o.x <= 0.01) clearFrames(s.i)
-  }
-  for (const id of ui.last?.docs ?? []) if (id) needed.add(id)
-  for (const id of ui.stash?.docs ?? []) if (id) needed.add(id)
-  for (const id of openViewIds()) if (!needed.has(id)) dropView(id)
-  for (const s of sheets) {
-    const id = ui.panes[s.i]
-    if (id && !needed.has(id)) ui.panes[s.i] = null
-  }
 }
 
 /** Dokument zniknął z biblioteki, więc jego arkusz schodzi ze sceny. */

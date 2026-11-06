@@ -1,6 +1,6 @@
 import type { DocStatus, LibrarySnapshot } from '../../../shared/types'
 import { homeDocs } from './home'
-import { els, navT, setNav, syncChrome, syncSel } from './layout'
+import { centerDock, els, navT, setNav, syncChrome, syncSel } from './layout'
 import { dropMissing } from './sheets'
 import { countDocs, data, libraryDocs, notify, readLastDocs, ui } from './state'
 
@@ -73,6 +73,7 @@ export function setLibrary(snapshot: LibrarySnapshot): void {
   notify()
   syncSel(true)
   if (wasFirst && !ui.setup) setNav(true, navT.x + 30)
+  else if (wasFirst) centerDock()
   else if (wasSetup && !ui.setup) playScan()
   else if (!wasSetup && ui.setup && ui.nav) setNav(false)
 }
