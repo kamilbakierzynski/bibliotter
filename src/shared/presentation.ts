@@ -113,20 +113,27 @@ export function stepFrom(
   return found ?? null
 }
 
+const NO_ADDED: ReadonlyMap<string, number> = new Map()
+
 /**
  * Stan dokumentu w kroku, bez kształtów do narysowania. Maska leży wokół kadru, który widać,
- * także odziedziczonego, a przy całym dokumencie nie ma czego zasłaniać.
+ * także odziedziczonego, a przy całym dokumencie nie ma czego zasłaniać. `added` to uwagi dodane
+ * w trakcie prezentacji i numery kroków, na których powstały. Nie ma ich w trasie, ale ich krok
+ * je pokazuje.
  */
 export function stepState(
   steps: readonly PresentationStep[],
   index: number,
   reveal: boolean,
-  missing = NONE
+  missing = NONE,
+  added = NO_ADDED
 ): Omit<PresentState, 'pending'> {
   const step = steps[index]
   const owner = shotOwner(steps, index, missing)
   const camera = owner < 0 ? null : (steps[owner] as PresentationStep).camera
-  return { show: [...(step?.show ?? [])], reveal, rest: step?.rest ?? 'normal', camera }
+  const extra = [...added].filter(([, at]) => at === index).map(([id]) => id)
+  const show = [...new Set([...(step?.show ?? []), ...extra])]
+  return { show, reveal, rest: step?.rest ?? 'normal', camera }
 }
 
 /** Nowy krok startuje jako kopia poprzedniego: ta sama reszta dokumentu i te same uwagi, kamera stoi. */

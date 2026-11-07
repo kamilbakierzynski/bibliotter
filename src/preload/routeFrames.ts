@@ -1,6 +1,6 @@
 import type { Anchor, FractionBox, OverlayEvent } from '../shared/annotations'
 import type { PickKind, RouteFrame, StepCamera, StepRest } from '../shared/presentation'
-import { createAnchor, resolveAnchor } from './anchor'
+import { blockOf, createAnchor, resolveAnchor, resolvePlace } from './anchor'
 
 /*
  * Kadry trasy w dokumencie. Gdy formularz trasy jest otwarty, przerywana ramka pokazuje, co
@@ -17,8 +17,6 @@ import { createAnchor, resolveAnchor } from './anchor'
 
 /** Krótsze przeciągnięcie to tylko kliknięcie, a z kliknięcia nie powstaje obszar. */
 const MIN_AREA = 12
-/** Mniejszy element to słowo albo ikona, a kamera powiększyłaby go do granic. */
-const MIN_PLACE = 40
 /** Maska odsuwa się od kadru o tyle pikseli strony, żeby nie cięła treści przy samej krawędzi. */
 const MASK_ROOM = 10
 
@@ -106,20 +104,9 @@ function setBox(node: HTMLElement, rect: Rect): void {
 
 const anchorOf = (camera: StepCamera): Anchor | null => (camera.kind === 'hold' ? null : camera.anchor)
 
-/**
- * Miejsce to blok, a nie słowo pod kursorem: akapit, obraz, tabela. Kliknięcie w pogrubienie
- * bierze cały akapit, a w drobną ikonę jej pudełko.
- */
-function placeOf(hit: Element): Element {
-  let element = hit
-  while (element.parentElement && element !== document.body) {
-    const rect = element.getBoundingClientRect()
-    const inline = getComputedStyle(element).display === 'inline'
-    if (!inline && rect.width >= MIN_PLACE && rect.height >= MIN_PLACE / 2) break
-    element = element.parentElement
-  }
-  return element
-}
+/** Element kadru. Obszar liczy się w ułamkach swojego elementu, a Miejsce bierze cały blok. */
+const frameElement = (camera: StepCamera): Element | null =>
+  camera.kind === 'hold' ? null : camera.kind === 'place' ? resolvePlace(camera.anchor) : resolveAnchor(camera.anchor)
 
 export function createRouteFrames(
   send: (event: OverlayEvent) => void,
@@ -154,11 +141,10 @@ export function createRouteFrames(
   }
 
   const targetOf = (frame: RouteFrame): Element | null => {
-    const anchor = anchorOf(frame.camera)
-    if (!anchor) return null
+    if (frame.camera.kind === 'hold') return null
     let target = targets.get(frame.id) ?? null
     if (!target?.isConnected) {
-      target = resolveAnchor(anchor)
+      target = frameElement(frame.camera)
       targets.set(frame.id, target)
     }
     return target
@@ -197,7 +183,7 @@ export function createRouteFrames(
     if (camera && anchor) {
       const key = JSON.stringify(anchor)
       if (maskTarget?.key !== key || !maskTarget.element?.isConnected) {
-        maskTarget = { key, element: resolveAnchor(anchor) }
+        maskTarget = { key, element: frameElement(camera) }
       }
       const box = maskTarget.element ? pageRect(maskTarget.element) : null
       rect = box && camera.kind === 'area' ? within(box, camera.box) : box
@@ -261,8 +247,7 @@ export function createRouteFrames(
       layoutMask()
     },
     spot(camera) {
-      const anchor = camera ? anchorOf(camera) : null
-      const element = anchor ? resolveAnchor(anchor) : null
+      const element = camera ? frameElement(camera) : null
       const box = element?.getBoundingClientRect()
       if (!camera || !element || !box || (box.width === 0 && box.height === 0)) return null
       const rect = { x: box.left, y: box.top, width: box.width, height: box.height }
@@ -281,7 +266,7 @@ export function createRouteFrames(
         const hit = elementAt(event.clientX, event.clientY)
         if (!hit) return
         hideAim()
-        const place = placeOf(hit)
+        const place = blockOf(hit)
         send({ type: 'route-pick', camera: { kind: 'place', anchor: createAnchor(place, event.clientX, event.clientY) } })
         return
       }
@@ -297,7 +282,7 @@ export function createRouteFrames(
     move(x, y, held) {
       if (pick === 'place') {
         const hit = elementAt(x, y)
-        const rect = hit ? pageRect(placeOf(hit)) : null
+        const rect = hit ? pageRect(blockOf(hit)) : null
         aim.classList.toggle('hidden', rect === null)
         if (rect) setBox(aim, rect)
         return

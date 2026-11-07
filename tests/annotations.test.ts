@@ -139,6 +139,11 @@ describe('parseAnchor', () => {
     expect(parseAnchor(null)).toBeNull()
   })
 
+  it('kotwica od agenta może mieć sam cytat, ale nie może być pusta', () => {
+    expect(parseAnchor({ selector: '', quote: 'Ryzyka projektu' })).toMatchObject({ selector: '', quote: 'Ryzyka projektu' })
+    expect(parseAnchor({ selector: '', quote: '  ' })).toBeNull()
+  })
+
   it('ogranicza wartości spoza zakresu i skraca cytat', () => {
     const anchor = parseAnchor({ selector: 'p', offsetX: 9, offsetY: -1, quote: 'x'.repeat(5000) })
 

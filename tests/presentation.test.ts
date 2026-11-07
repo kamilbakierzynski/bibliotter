@@ -79,6 +79,17 @@ describe('trasa', () => {
     expect(stepState(steps, 2, false, new Set(['s2'])).camera).toBeNull()
   })
 
+  it('uwaga dodana w trakcie pokazuje się tylko na kroku, na którym powstała', () => {
+    const steps = [{ ...step('s1'), show: ['n1'] }, { ...step('s2', { kind: 'place', anchor }), show: ['n1'] }]
+    const added = new Map([
+      ['nowa', 1],
+      ['n1', 0]
+    ])
+    expect(stepState(steps, 0, false, undefined, added).show).toEqual(['n1'])
+    expect(stepState(steps, 1, false, undefined, added).show).toEqual(['n1', 'nowa'])
+    expect(steps[1]?.show).toEqual(['n1'])
+  })
+
   it('stan kroku z powłoki przechodzi przez sprawdzenie, a śmieci odpadają', () => {
     const read = (value: unknown): ReturnType<typeof parsePresentState> => parsePresentState(value, (item) => parseAnchor(item))
     expect(read({ show: ['n1', 'n1', 3], reveal: 'tak', rest: 'mgła', camera: { kind: 'hold' }, pending: ['k1'] })).toEqual({

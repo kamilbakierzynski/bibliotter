@@ -1,6 +1,6 @@
 # Tryb prezentacji
 
-Ustalenia z brainstormu z 2026-11-07. Wdrożone są kamera, kształty oraz zapis i formularz trasy. Odtwarzania jeszcze nie ma.
+Ustalenia z brainstormu z 2026-11-07. Wdrożone są kamera, kształty, zapis i formularz trasy, odtwarzanie, uwagi w trakcie oraz narzędzia MCP i polecenia CLI.
 
 ## Po co
 
@@ -163,12 +163,12 @@ Prezentacja działa od 2026-11-07. Tryb prowadzi `src/renderer/src/shell/present
 
 - **Wejście:** `F5`, przycisk Prezentuj w doku i paleta. `Shift F5` zaczyna od kroku wybranego w formularzu. Dokument bez trasy otwiera formularz trasy zamiast prezentacji.
 - **Układ:** szyna chowa się w lewą krawędź, panel się zamyka, kilka arkuszy składa się do jednego, a minimapa znika. Arkusz bierze całą szerokość okna, a tabliczka nad nim zostaje z samym tytułem. Wyjście przywraca szynę, panel, arkusze i minimapę.
-- **Dok:** narzędzia i szukanie zjeżdżają, a na ich miejsce wjeżdża pilot: wstecz, „n z m”, dalej, nazwa kroku, kropki do skoku przy trasie do 16 kroków, wskaźnik i Zakończ. Narzędzia uwag i licznik dodanych uwag przyjdą w etapie 5.
+- **Dok:** narzędzia i szukanie zjeżdżają, a na ich miejsce wjeżdża pilot: wstecz, „n z m”, dalej, nazwa kroku, kropki do skoku przy trasie do 16 kroków, narzędzia uwag, wskaźnik, licznik dodanych uwag i Zakończ. Narzędzia i licznik opisuje część „Wdrożenie uwag w trakcie”.
 - **Krok:** kamera jedzie do kadru. Maska i uwagi kroku zmieniają się w dokumencie między zrzutem startowym a ruchem kamery, przez haczyk `before` w `aimCamera`, więc przenikają razem z przelotem. Gdy kamera stoi, zmiana przenika w miejscu. Szybkie naciśnięcia nie tworzą kolejki: licznik idzie od razu, a kamera jedzie do ostatniego wybranego kroku.
 - **Maska:** prostokąt o 10 px strony szerszy od kadru, z cieniem na całą stronę. Przygaszenie ma krycie 0,62, a ukrycie pełne. Maska leży pod kształtami i karteczkami, więc to, co krok pokazuje, widać w całości, także poza kadrem. Kadr odziedziczony przez krok bez ruchu też dostaje maskę. Przy całym dokumencie maski nie ma.
 - **Uwagi:** dokument pokazuje tylko uwagi z listy kroku, a pinezki komentarzy spoza listy znikają. Rysunki schowane przełącznikiem wracają na czas prezentacji. `D` odsłania wszystkie otwarte uwagi i kształty dokumentu, a drugie `D` je chowa.
 - **Kształty:** kształt, którego nie było w poprzednim kroku, czeka schowany, aż kamera stanie, a potem rośnie wzdłuż swojej linii w tempie pióra: 1,4 px strony na milisekundę, od 0,32 do 0,9 s. Urwany koniec cienieje jak gotowy, więc wygląda jak czubek pióra. Przy ograniczonym ruchu w systemie kształt staje od razu.
-- **Klawisze:** `→`, spacja i `PgDn` idą dalej, a `←`, `Shift` ze spacją i `PgUp` wracają. `Home` i `End` skaczą na krańce trasy. `P` włącza wskaźnik, `V` interakcję, a `D` odsłania uwagi. `Esc` najpierw wyłącza wskaźnik, a potem kończy prezentację. Reszta skrótów milczy, żeby przypadkowa litera nie otworzyła panelu przed widzami.
+- **Klawisze:** `→`, spacja i `PgDn` idą dalej, a `←`, `Shift` ze spacją i `PgUp` wracają. `Home` i `End` skaczą na krańce trasy. `P` włącza wskaźnik, `V` interakcję, a `D` odsłania uwagi. `C`, `N`, `M` i `A` to narzędzia uwag. `Esc` najpierw anuluje nową uwagę, potem odkłada narzędzie albo wskaźnik, a na końcu kończy prezentację. Reszta skrótów milczy, żeby przypadkowa litera nie otworzyła panelu przed widzami.
 - **Klawisze w dokumencie:** warstwa łapie klawisze kroków na końcu drogi zdarzenia, a nie na jej początku. Pole tekstowe i element, który sam obsłużył klawisz przez `preventDefault`, zostają przy swoim. Poza prezentacją klawisze kroków należą w całości do dokumentu.
 - **Pomijanie:** krok, którego kadru nie ma w dokumencie, wypada z prezentacji i z licznika. Krok bez ruchu za nim bierze kadr wcześniejszego kroku. Gdy żaden krok nie ma kadru, `F5` otwiera formularz trasy.
 - **Powrót na trasę:** po przewinięciu poza krok następny klawisz ustawia kamerę na kadrze kolejnego kroku. Krok bez ruchu też ustawia kadr od nowa, więc wraca na trasę.
@@ -179,7 +179,46 @@ Ograniczenia:
 - Zakreślenia leżą w osobnej warstwie pod maską, więc zakreślenie, które krok pokazuje poza kadrem, zostaje przygaszone razem z resztą.
 - Zmiana rozmiaru okna w trakcie prezentacji nie przelicza kadru. Poprawi go dopiero następny krok.
 - Prezentacja działa w jednym oknie. Nie ma widoku prowadzącego ani obsługi drugiego ekranu.
-- Uwag w trakcie jeszcze nie ma. Dok w prezentacji nie ma narzędzi uwag, a `C`, `N` i `M` milczą.
+- Strzałka wciśnięta tuż po `F5`, zanim dokument dostanie stan pierwszego kroku, przepada. Okno trwa do 0,4 s, bo tyle prezentacja czeka na zgłoszenie kroków bez kadru.
+
+## Wdrożenie uwag w trakcie
+
+Uwagi w trakcie działają od 2026-11-07. Śledzi je `src/renderer/src/shell/present.ts`, pole wpisu i narzędzia w pilocie rysuje `src/renderer/src/ui/Dock.tsx`, a szkic w dokumencie stawia `src/preload/overlay.ts`.
+
+- **Narzędzia:** pilot ma Komentarz, Karteczkę, Zakreślacz i Kształt, pod `C`, `N`, `M` i `A`, tylko w dokumencie, który można komentować. Zakreślacz i kształt działają jak poza prezentacją, z ostatnim wybranym kolorem i rodzajem kształtu.
+- **Szkic:** `C` albo `N` stawia szkic od razu, bez klikania. Szkic staje obok kadru kroku, na wysokości jego górnej krawędzi, a gdy obok nie ma miejsca na ekranie, wchodzi w kadr. Krok bez kadru stawia go na środku widoku. Szkic widać w dokumencie: pinezka z plusem albo pusta karteczka w kolorze papieru. Kliknięcie w dokument przestawia szkic i nie zmienia trybu, więc można celować kilka razy. Drugie `C` albo `N` zamyka szkic, a zmiana kroku go anuluje.
+- **Pole wpisu:** stoi nad środkiem doku, w warstwie doku, a wycięcie warstwy rośnie o pole. Dokument nie zamarza w zrzut, więc szkic da się przestawić w trakcie pisania. Pole bierze klawiaturę po każdym przestawieniu szkicu. Enter zapisuje, `Shift Enter` łamie wiersz, a `Esc` anuluje. Komentarz ma przełącznik odbiorcy, a karteczka podpowiedź o kliknięciu w dokument. Przyciski stopki nie biorą fokusu, bo kliknięcie obok pola oddałoby klawiaturę dokumentowi. Po zapisie albo anulowaniu klawiatura wraca do dokumentu.
+- **Na kroku:** uwaga albo kształt, którego nie było przed prezentacją, należy do kroku widocznego w doku, w chwili gdy przyszła lista uwag. `stepState` dopisuje takie uwagi do listy ich kroku, a sama trasa się nie zmienia. Dokument pokazuje nową uwagę od razu, jeszcze przed stanem z powłoki, żeby pinezka nie mignęła. Uwagi, które przyjdą w trakcie ruchu kamery, dostają stan po ruchu.
+- **Licznik:** „+n” w pilocie, przed Zakończ, liczy uwagi i kształty dodane w tej prezentacji, bez usuniętych. Przy zerze go nie ma.
+- **Po wyjściu:** panel uwag otwiera się z nagłówkiem „Dodane podczas prezentacji” i samymi uwagami dodanymi w trakcie, także zamkniętymi. Kształtów na liście nie ma, bo panel ich nie pokazuje. „Pokaż wszystkie uwagi” w stopce wraca do zwykłej listy, a zamknięcie panelu kończy listę dodanych. Nowa prezentacja zaczyna licznik od zera.
+- **Testy:** `tests/presentation.test.ts` sprawdza, że uwaga dodana w trakcie pokazuje się tylko na swoim kroku. `tests/e2e/present.mjs` sprawdza dodatkowo 6 rzeczy: `N` ze szkicem karteczki w dokumencie, polem nad środkiem doku w wycięciu warstwy i żywym dokumentem; Enter z licznikiem „+1”; nową uwagę ukrytą na innym kroku, nieobecną w trasie i widoczną po powrocie; `C` z kliknięciem, które przestawia pinezkę; kolejność `Esc` dla pola i zakreślacza; listę dodanych po wyjściu i powrót do wszystkich uwag.
+
+Ograniczenia:
+
+- W prezentacji nie ma tacy kolorów, więc karteczka, zakreślacz i kształt biorą kolor wybrany ostatnio poza prezentacją.
+- Szkic karteczki pokazuje sam kolor papieru, bez tekstu z pola.
+- Pole wpisu i wskazówka przycisku pilota mogą na siebie zachodzić, gdy mysz stoi nad pilotem.
+- Klawisz, który przyjdzie z dokumentu, gdy pole w warstwie ma fokus, przepada. W zwykłej pracy to się nie zdarza, bo klawiatura jest wtedy w polu. Trafiają na to testy, które wysyłają klawisze prosto do dokumentu.
+
+## Wdrożenie MCP i CLI
+
+Agent czyta i układa trasę od 2026-11-07. Format dla agenta i jego sprawdzanie są w `src/main/agentPresentation.ts`, odczyt i zapis w `src/main/agentApi.ts`, narzędzia `get_presentation` i `set_presentation` w `src/main/mcpServer.ts`, a polecenie `bibliotter presentation` w `src/main/agentCli.ts`. Plugin ma wersję 0.6.0 z przebudowanym `server/mcp.cjs`.
+
+- **Odczyt:** kroki mają id, tytuł, kadr, resztę strony i listę tego, co pokazują. Kadr to `hold`, `place` albo `area`, opisany cytatem, selektorem i nagłówkiem, bez punktu kliknięcia. Lista `items` opisuje uwagi z kroków i wszystkie kształty dokumentu: rodzaj, kolor, cytat i nagłówek. Prywatna uwaga przychodzi bez treści, chyba że agent poprosi o `include_personal`, a w CLI poda `--personal`.
+- **Zapis:** `set_presentation` podmienia całą trasę. Kroki oddane bez zmian zachowują swój kadr co do piksela, bo zapis rozpoznaje selektor z cytatem i bierze zapisaną kotwicę. Id kroku zostaje, gdy jest poprawne i jedyne. Pusta lista usuwa trasę.
+- **Miejsca:** cytat albo selektor. Pierwsze 48 znaków cytatu musi stać w tekście dokumentu, porównywanym bez znaczników i odstępów, jak w warstwie. Selektor jest na miejsca bez tekstu, np. obraz. Nagłówek liczy zapis z najbliższego wcześniejszego `h1`–`h3`. Markdown przechodzi najpierw przez ten sam render co w apce.
+- **Sprawdzanie:** zły cytat, kolor, rodzaj kadru czy reszty odrzuca cały zapis z nazwą pola, np. `steps[1].camera`, i nic nie powstaje. Id, którego nie ma w dokumencie, daje ostrzeżenie, a krok je pomija. Cytat, który stoi w tekście kilka razy, też daje ostrzeżenie, bo apka weźmie pierwsze trafienie.
+- **Kształty:** `shapes` w kroku tworzy nowe kształty w dokumencie, prywatne jak te rysowane ręką, i dopisuje je do listy kroku. Prostokąt i elipsa obejmują miejsce `at` z zapasem albo podane pudełko. Elipsa dostaje większy zapas, bo wpisana w pudełko ucina jego rogi. Strzałka i linia biegną z `from` do `to`, a punkt w elemencie to ułamki `x` i `y`, domyślnie środek. Kolor to jedna z czterech nazw, domyślnie różowy. `delete_shapes`, a w CLI `deleteShapes`, usuwa kształty razem z ich id w krokach.
+- **Kadr Miejsce:** kamera i maska podnoszą trafiony element do bloku (`blockOf` w `src/preload/anchor.ts`), więc cytat z pogrubienia kadruje cały akapit. Kotwica z kliknięcia już wskazuje blok i się nie zmienia. Obszar zostaje na swoim elemencie, bo liczy się w jego ułamkach. Kotwica może mieć sam cytat bez selektora.
+- **CLI:** `bibliotter presentation <dokument>` wypisuje kroki, a `--set <plik|->` czyta JSON z pliku albo ze standardowego wejścia: `{"steps": [...], "deleteShapes": [...]}` albo samą listę kroków. `--json` daje format jak w MCP.
+- **Otwarta apka:** zapis idzie przez sygnały uwag i trasy, więc apka wczytuje kształty i kroki bez restartu.
+- **Testy:** `tests/agent.test.ts` sprawdza szukanie cytatu, zapis z kształtami, odrzucenie całego zapisu, zachowanie kadru użytkownika, ostrzeżenia, usuwanie kształtów, prywatne karteczki i CLI. `tests/e2e/present.mjs` sprawdza, że trasa ułożona przez MCP przy otwartej apce kadruje cały akapit z cytatem, a nie pogrubienie, i rysuje elipsę wokół cytatu. Zrzut jest w `tests/e2e/artifacts/present-agent.png`.
+
+Ograniczenia:
+
+- Agent nie widzi strony, więc kadr Miejsce od agenta zawsze bierze cały blok, a Obszar wymaga pudełka w ułamkach elementu.
+- Cytat przez granicę nagłówka przechodzi, ale bez nagłówka w opisie.
+- Zasłony nie ma jeszcze w apce, więc agent też jej nie narysuje.
 
 ## Do sprawdzenia przy wdrożeniu
 
@@ -191,5 +230,5 @@ Ograniczenia:
 2. ~~Kształty: narzędzie, Tusz, zapis, przełącznik rysunków.~~ Zrobione bez zasłony, która czeka na trasę.
 3. ~~Trasa: zapis i formularz.~~ Zrobione, z podglądem kadru kamerą.
 4. ~~Odtwarzanie: tryb, dok jako sterowanie, kamera, maska.~~ Zrobione, bez narzędzi uwag w doku.
-5. Uwagi w trakcie i lista po wyjściu.
-6. Narzędzia MCP i polecenia CLI.
+5. ~~Uwagi w trakcie i lista po wyjściu.~~ Zrobione, bez tacy kolorów w pilocie.
+6. ~~Narzędzia MCP i polecenia CLI.~~ Zrobione, z kształtami od agenta.

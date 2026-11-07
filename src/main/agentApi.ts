@@ -3,11 +3,14 @@ import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises
 import { basename, join } from 'node:path'
 import type { Annotation, AnnotationKind, AnnotationStatus, Audience } from '../shared/annotations'
 import { countLabels, hasLabel, type LabelCount } from '../shared/labels'
+import { type AgentPresentation, presentationIn, presentationOut, quoteFinder } from './agentPresentation'
 import { AnnotationStore } from './annotationStore'
 import { analyzeDocument, analyzeHtml } from './classify'
 import { loadConfig } from './config'
 import { LabelStore } from './labelStore'
+import { renderMarkdown } from './markdown'
 import { type DocMeta, MetaStore } from './metaStore'
+import { PresentationStore } from './presentationStore'
 import { formatOf, isInside, normalizePath } from './scanner'
 import { sendSignal } from './signals'
 import { normalizeText, queryTerms } from '../shared/textNormalize'
@@ -54,6 +57,12 @@ export interface AgentComment {
   messages: { author: string; text: string; createdAt: string }[]
 }
 
+export interface SavedPresentation extends AgentPresentation {
+  /** Identyfikatory nowych kształtów, w kolejności podania. */
+  created: string[]
+  warnings: string[]
+}
+
 export interface CommentFilter {
   doc?: string
   status?: AnnotationStatus | 'all'
@@ -91,6 +100,7 @@ const exists = (path: string): Promise<boolean> =>
 export class AgentApi {
   private readonly metas: MetaStore
   private readonly labelStore: LabelStore
+  private readonly presentations: PresentationStore
   readonly annotations: AnnotationStore
 
   constructor(private readonly dataDir: string) {
@@ -98,6 +108,7 @@ export class AgentApi {
     this.metas = new MetaStore(libraryDir)
     this.labelStore = new LabelStore(libraryDir, () => sendSignal(libraryDir, 'labels'))
     this.annotations = new AnnotationStore(libraryDir)
+    this.presentations = new PresentationStore(libraryDir)
   }
 
   /** Folder ukryty w apce znika też z pola widzenia agenta, a dane dokumentów zostają na dysku. */
@@ -196,6 +207,54 @@ export class AgentApi {
     // Markdown jest czytelny dla agenta, a wycięcie składni zgubiłoby strukturę dokumentu.
     const plain = format === 'text' && formatOf(path) !== 'markdown'
     return { title, path, content: plain ? analyzeHtml(source).text : source }
+  }
+
+  /** Trasa i kształty leżą przy wpisie dokumentu w bibliotece, więc plik spoza niej nie wystarczy. */
+  private async libraryDoc(reference: string): Promise<{ meta: DocMeta; path: string }> {
+    const { id } = await this.resolve(reference)
+    const meta = id ? (await this.allMetas()).find((candidate) => candidate.id === id) : undefined
+    if (!meta) throw new Error(`Document ${reference} is not in the library`)
+    return { meta, path: await this.readablePath(meta) }
+  }
+
+  private async notesOf(docId: string): Promise<Annotation[]> {
+    return (await this.annotations.listAll()).filter((note) => note.docId === docId)
+  }
+
+  async presentation(reference: string, includePersonal = false): Promise<AgentPresentation> {
+    const { meta } = await this.libraryDoc(reference)
+    const [presentation, notes] = await Promise.all([this.presentations.read(meta.id), this.notesOf(meta.id)])
+    return presentationOut(presentation, notes, includePersonal)
+  }
+
+  /**
+   * Zastępuje całą trasę. Najpierw sprawdza wszystkie kroki i kształty, a dopiero potem pisze,
+   * więc błąd w jednym kroku nie zostawia połowy zmian. Pusta lista usuwa trasę.
+   */
+  async setPresentation(reference: string, steps: unknown, deleteShapes: string[] = []): Promise<SavedPresentation> {
+    const { meta, path } = await this.libraryDoc(reference)
+    const notes = await this.notesOf(meta.id)
+    for (const id of deleteShapes) {
+      if (!notes.some((note) => note.id === id && note.kind === 'shape')) throw new Error(`No shape ${id} in the document`)
+    }
+    const dropped = new Set(deleteShapes)
+    const source = await readFile(path, 'utf8')
+    const html = formatOf(path) === 'markdown' ? renderMarkdown(source).html : source
+    const change = presentationIn(steps, {
+      before: await this.presentations.read(meta.id),
+      notes: notes.filter((note) => !dropped.has(note.id)),
+      find: quoteFinder(html),
+      dropped
+    })
+    for (const id of deleteShapes) await this.annotations.delete(id)
+    const created: string[] = []
+    for (const { step, input } of change.shapes) {
+      const shape = await this.annotations.create(meta.id, meta.sha, input)
+      change.presentation.steps[step]?.show.push(shape.id)
+      created.push(shape.id)
+    }
+    const saved = await this.presentations.write(meta.id, change.presentation)
+    return { ...presentationOut(saved, await this.notesOf(meta.id)), created, warnings: change.warnings }
   }
 
   async comments(filter: CommentFilter = {}): Promise<AgentComment[]> {

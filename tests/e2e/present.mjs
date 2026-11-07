@@ -1,13 +1,15 @@
 // Odtwarzanie trasy: F5 i przycisk w doku zaczynają prezentację, klawisze prowadzą po krokach,
 // kamera jedzie do kadru, maska przygasza albo chowa resztę strony, kształty kroku rysują się po
 // ruchu kamery, a krok bez kadru wypada. Esc kończy i przywraca układ. Uwaga dodana w trakcie
-// zostaje na swoim kroku, a po wyjściu panel pokazuje listę dodanych.
+// zostaje na swoim kroku, a po wyjściu panel pokazuje listę dodanych. Agent układa trasę przez MCP.
 // Część `npm run test:e2e`. Można też uruchomić sam ten plik: node tests/e2e/present.mjs
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { _electron as electron } from 'playwright-core'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -30,6 +32,7 @@ const presentDoc = `<!doctype html><title>${TITLE}</title>
   #slider { width: 200px; height: 40px; border: 1px solid #999 }
 </style>
 <body><h1>${TITLE}</h1><h2>Cel</h2><p>${prose}</p>
+<p id="wniosek" style="max-width: 460px">Wąski akapit, a w nim zdanie z <strong>ważnym wnioskiem</strong> na końcu.</p>
 <div id="slider" tabindex="0"></div>
 <textarea id="field"></textarea>
 <h2>Ryzyka</h2>
@@ -111,9 +114,11 @@ const sample = (app, url, box) =>
 /** Wycięcie warstwy doku w oknie. Poza nim kliknięcia trafiają do dokumentu. */
 const layerCutout = (app) =>
   app.evaluate(({ BrowserWindow }) => {
+    // Strona warstwy leży w przycinającym widoku, a jego prostokąt to wycięcie.
     for (const window of BrowserWindow.getAllWindows()) {
-      const view = window.contentView.children.find((child) => child.webContents?.getURL() === 'about:blank')
-      if (view) return view.getBounds()
+      for (const child of window.contentView.children) {
+        if (child.children?.some((view) => view.webContents?.getURL() === 'about:blank')) return child.getBounds()
+      }
     }
     return null
   })
@@ -395,14 +400,30 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
     }, docId)
 
     await check('N stawia karteczkę przy kadrze, a pole wpisu staje nad dokiem i nie zamraża dokumentu', async () => {
+      const focus = (target) => target.evaluate(() => [document.hasFocus(), document.activeElement?.tagName, document.activeElement?.className])
+      const state = async () =>
+        JSON.stringify([await root(), await count.textContent(), await title.textContent(), await focus(shell), await focus(layer), await focus(page)])
       await page.keyboard.press('F5')
-      await atStep('1 z 4', 'Wstęp')
+      await title.filter({ hasText: 'Wstęp' }).waitFor({ timeout: 8000 }).catch(async () => {
+        throw new Error(`F5: ${await state()}`)
+      })
+      // Dokument łapie klawisze kroków, gdy dostanie stan pierwszego kroku, a ten idzie za kamerą.
+      await delay(800)
       await page.keyboard.press('ArrowRight')
-      await atStep('2 z 4', 'Wykres')
+      await title.filter({ hasText: 'Wykres' }).waitFor({ timeout: 8000 }).catch(async () => {
+        throw new Error(`strzałka: ${await state()}`)
+      })
       await page.waitForFunction(() => visualViewport.scale > 1.3, null, { timeout: 8000 })
       await until(async () => (await whole()).sticky < 20)
+      // Przelot kamery stoi na zrzutach, więc pole otwieramy dopiero po nim.
+      const frozen = () => shell.evaluate(() => document.querySelectorAll('canvas.sheet-frame').length)
+      await until(async () => (await frozen()) === 0)
       await page.keyboard.press('n')
-      await layer.locator('#presentNote.on').waitFor()
+      await layer.locator('#presentNote.on').waitFor({ timeout: 5000 }).catch(async () => {
+        const tools = await layer.locator('[data-present-tool]').count()
+        const kind = await layer.locator('#presentNote').getAttribute('class')
+        throw new Error(`pole się nie otworzyło: narzędzia ${tools}, klasa ${kind}`)
+      })
       await until(fieldFocused)
       // Szkic karteczki widać w dokumencie od razu, w kolorze papieru.
       await until(async () => (await whole()).sticky > 400)
@@ -417,8 +438,16 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
         throw new Error(`wycięcie nie obejmuje pola: ${JSON.stringify(await layerCutout(app))} wobec ${JSON.stringify(note)}`)
       })
       await delay(400)
-      assert.ok(await shell.evaluate(() => !document.querySelector('canvas.sheet-frame')), 'dokument zamarzł na czas pisania')
+      assert.equal(await frozen(), 0, 'dokument zamarzł na czas pisania')
       assert.equal(await shell.locator('.draft .bubble').count(), 0, 'dymek szkicu nad arkuszem')
+      // Zrzut dopiero z gotowym kształtem kroku, bo pióro rysuje go po ruchu kamery.
+      let last = -1
+      await until(async () => {
+        const pink = (await whole()).pink
+        const done = pink > 300 && Math.abs(pink - last) < 1
+        last = pink
+        return done
+      })
       await capture(app, url, join(artifacts, 'present-note.png'))
       const clip = { x: dock.x - 12, y: note.y - 12, width: dock.width + 24, height: dock.y + dock.height - note.y + 24 }
       await writeFile(join(artifacts, 'present-note-dock.png'), await layer.screenshot({ clip }))
@@ -455,30 +484,33 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
       await page.keyboard.press('c')
       await layer.locator('#presentNote.on .seg').waitFor()
       await until(fieldFocused)
-      // Kamera stawia wykres na środku widoku, więc kliknięcie w środek trafia w wykres.
-      const view = await page.evaluate(() => ({ x: innerWidth / 2, y: innerHeight / 2 }))
-      await page.mouse.click(view.x, view.y)
+      // Mysz z Playwrighta liczy się od rogu widocznego kawałka strony, ale bez skali kamery.
+      const target = await page.evaluate(() => {
+        const box = document.getElementById('diagram').getBoundingClientRect()
+        return { x: box.x + box.width / 2 - visualViewport.offsetLeft, y: box.y + box.height / 2 - visualViewport.offsetTop }
+      })
+      await page.mouse.click(target.x, target.y)
       await until(fieldFocused)
       await field.pressSequentially('Komentarz w trakcie')
       await field.press('Enter')
       await layer.locator('#presentAdded', { hasText: '+2' }).waitFor()
       const comment = await until(async () => (await added()).find((note) => note.kind === 'comment'))
-      assert.match(comment.anchor.selector, /diagram/)
+      assert.match(comment.anchor.selector, /diagram/, JSON.stringify(comment.anchor))
       assert.ok(comment.anchor.offsetX > 0.2 && comment.anchor.offsetX < 0.8, `pinezka nie przeszła: ${comment.anchor.offsetX}`)
     })
 
-    await check('Esc najpierw anuluje uwagę, a dopiero potem kończy prezentację', async () => {
-      await page.keyboard.press('n')
-      await layer.locator('#presentNote.on').waitFor()
+    await check('Esc najpierw anuluje uwagę i odkłada narzędzie, a dopiero potem kończy prezentację', async () => {
+      await layer.locator('[data-present-tool="comment"]').click()
+      await layer.locator('#presentNote.on .seg').waitFor({ timeout: 8000 })
       await until(fieldFocused)
       await field.press('Escape')
-      await layer.locator('#presentNote:not(.on)').waitFor({ state: 'attached' })
+      await layer.locator('#presentNote:not(.on)').waitFor({ state: 'attached', timeout: 8000 })
       assert.ok(await root(), 'Esc w polu zakończył prezentację')
-      await page.keyboard.press('c')
-      await layer.locator('#presentNote.on').waitFor()
+      await page.keyboard.press('m')
+      await layer.locator('[data-present-tool="highlight"].lit').waitFor({ timeout: 8000 })
       await page.keyboard.press('Escape')
-      await layer.locator('#presentNote:not(.on)').waitFor({ state: 'attached' })
-      assert.ok(await root(), 'Esc w dokumencie zakończył prezentację zamiast anulować uwagę')
+      await layer.locator('[data-present-tool="highlight"]:not(.lit)').waitFor({ timeout: 8000 })
+      assert.ok(await root(), 'Esc z zakreślaczem zakończył prezentację')
       assert.equal((await added()).length, 2)
     })
 
@@ -490,6 +522,85 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
       await shell.locator('#showAllNotes').click()
       await shell.locator('#notesTitle', { hasText: 'Uwagi' }).waitFor()
       await until(async () => (await shell.locator('#threads .thread').count()) === 3)
+    })
+
+    await check('agent układa trasę przez MCP: kamera bierze cały akapit z cytatem, a jego kształt rysuje się w kroku', async () => {
+      const mcp = new Client({ name: 'test', version: '1.0.0' })
+      await mcp.connect(
+        new StdioClientTransport({ command: process.execPath, args: [join(entry, 'out/main/mcp.js')], env: { ...process.env, BIBLIOTTER_HOME: home } })
+      )
+      try {
+        const call = async (name, args) => {
+          const result = await mcp.callTool({ name, arguments: args })
+          assert.ok(!result.isError, result.content[0].text)
+          return JSON.parse(result.content[0].text)
+        }
+        const saved = await call('set_presentation', {
+          document: docId,
+          steps: [
+            { title: 'Agent: wstęp' },
+            {
+              title: 'Agent: wniosek',
+              camera: { kind: 'place', quote: 'ważnym wnioskiem' },
+              rest: 'dim',
+              shapes: [{ type: 'ellipse', at: { quote: 'ważnym wnioskiem' } }]
+            }
+          ]
+        })
+        assert.equal(saved.steps[1].camera.heading, 'Cel')
+        assert.equal(saved.created.length, 1)
+      } finally {
+        await mcp.close()
+      }
+      // Trasa od agenta dochodzi do otwartej apki sama.
+      await page.keyboard.press('F5')
+      await atStep('1 z 2', 'Agent: wstęp')
+      await delay(800)
+      await page.keyboard.press('ArrowRight')
+      await atStep('2 z 2', 'Agent: wniosek')
+      // Kamera kadruje cały akapit, a nie samo pogrubienie, które powiększyłaby do granic.
+      const framed = () =>
+        page.evaluate(() => {
+          const box = document.getElementById('wniosek').getBoundingClientRect()
+          const left = visualViewport.offsetLeft
+          const top = visualViewport.offsetTop
+          return {
+            scale: visualViewport.scale,
+            inside: box.left >= left - 1 && box.right <= left + visualViewport.width + 1 && box.top >= top - 1 && box.bottom <= top + visualViewport.height + 1,
+            box: box.toJSON(),
+            view: { left, top, width: visualViewport.width, height: visualViewport.height }
+          }
+        })
+      await until(async () => {
+        const view = await framed()
+        return view.scale > 1.8 && view.inside ? view : null
+      }).catch(async () => {
+        throw new Error(`kamera nie kadruje akapitu: ${JSON.stringify(await framed())}`)
+      })
+      assert.ok((await scale()) < 3.5, `kamera powiększyła samo pogrubienie: ${await scale()}`)
+      // Elipsa od agenta stoi wokół cytatu. Pióro rysuje ją po ruchu, więc zrzut czeka na cały kształt.
+      const aroundQuote = async () => {
+        const region = await page.evaluate(() => {
+          const box = document.querySelector('#wniosek strong').getBoundingClientRect()
+          const k = visualViewport.scale
+          const left = (box.left - visualViewport.offsetLeft - 20) * k
+          const top = (box.top - visualViewport.offsetTop - 20) * k
+          return { x: left, y: top, width: (box.width + 40) * k, height: (box.height + 40) * k }
+        })
+        return (await sample(app, url, region)).pink
+      }
+      let last = -1
+      await until(async () => {
+        const pink = await aroundQuote()
+        const done = pink > 2000 && pink === last
+        last = pink
+        return done
+      }).catch(() => {
+        throw new Error(`kształtu od agenta nie widać przy cytacie: ${last}`)
+      })
+      await capture(app, url, join(artifacts, 'present-agent.png'))
+      await page.keyboard.press('Escape')
+      await until(async () => !(await root()))
     })
 
     await check('prezentacja nie zgłasza błędów', async () => assert.deepEqual(errors, []))

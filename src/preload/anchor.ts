@@ -2,6 +2,8 @@ import type { Anchor } from '../shared/annotations'
 
 const QUOTE_LENGTH = 160
 const MATCH_LENGTH = 48
+/** Mniejszy element to słowo albo ikona, a kamera powiększyłaby go do granic. */
+const MIN_PLACE = 40
 /** Dłuższych elementów nie przeszukujemy przy każdym rysowaniu cytatu. */
 const MAX_QUOTE_SCOPE = 20_000
 
@@ -100,6 +102,27 @@ export function findRange(root: Element, quote: string): Range | null {
 }
 
 /** Odnajduje miejsce uwagi. Zwraca null, gdy treści nie ma już w dokumencie. */
+/**
+ * Miejsce kadru to blok, a nie słowo: akapit, obraz, tabela. Kliknięcie w pogrubienie bierze cały
+ * akapit, a w drobną ikonę jej pudełko. Cytat od agenta też może trafić w pogrubienie.
+ */
+export function blockOf(hit: Element): Element {
+  let element = hit
+  while (element.parentElement && element !== document.body) {
+    const rect = element.getBoundingClientRect()
+    const inline = getComputedStyle(element).display === 'inline'
+    if (!inline && rect.width >= MIN_PLACE && rect.height >= MIN_PLACE / 2) break
+    element = element.parentElement
+  }
+  return element
+}
+
+/** Element kadru Miejsce. Kotwica z kliknięcia już wskazuje blok, więc zostaje bez zmian. */
+export function resolvePlace(anchor: Anchor): Element | null {
+  const element = resolveAnchor(anchor)
+  return element ? blockOf(element) : null
+}
+
 export function resolveAnchor(anchor: Anchor): Element | null {
   let element: Element | null = null
   try {

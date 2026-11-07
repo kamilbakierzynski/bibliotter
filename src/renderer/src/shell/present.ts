@@ -78,11 +78,8 @@ const allIds = (docId: string): string[] => [
 ]
 
 /** Stan kroku razem z uwagami, które powstały na nim w trakcie prezentacji. */
-function stateFor(docId: string, index: number): Omit<PresentState, 'pending'> {
-  const state = stepState(stepsOf(docId), index, show.reveal, missingOf(docId))
-  const extra = [...added].filter(([, step]) => step === index).map(([id]) => id)
-  return { ...state, show: [...new Set([...state.show, ...extra])] }
-}
+const stateFor = (docId: string, index: number): Omit<PresentState, 'pending'> =>
+  stepState(stepsOf(docId), index, show.reveal, missingOf(docId), added)
 
 const visibleIn = (docId: string, state: Omit<PresentState, 'pending'>): Set<string> =>
   new Set(state.reveal ? everything(docId) : state.show)

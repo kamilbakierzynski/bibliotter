@@ -1,6 +1,6 @@
 import { ipcRenderer, type IpcRendererEvent } from 'electron'
 import { boxWithin, type CameraShot, type CameraView, type CameraViewport, type PageRect } from '../shared/camera'
-import { resolveAnchor } from './anchor'
+import { resolveAnchor, resolvePlace } from './anchor'
 import { DOC_FOOT } from './overlay'
 
 /*
@@ -35,9 +35,10 @@ function pageRectOf(element: Element): PageRect {
   return { x: rect.left + scrollX, y: rect.top + scrollY, width: rect.width, height: rect.height }
 }
 
+/** Kadr bez pudełka to Miejsce, więc kamera bierze cały blok, jak ramka trasy. */
 function targetOf(shot: CameraShot): PageRect | null {
   if ('rect' in shot) return shot.rect
-  const element = resolveAnchor(shot.anchor)
+  const element = shot.box ? resolveAnchor(shot.anchor) : resolvePlace(shot.anchor)
   return element ? boxWithin(pageRectOf(element), shot.box) : null
 }
 

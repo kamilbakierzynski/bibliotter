@@ -41,11 +41,15 @@ function cleanText(text: unknown): string {
 const clampRatio = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0
 
-/** Kotwica przychodzi z warstwy w dokumencie, więc jej pola sprawdzamy jak dane z zewnątrz. */
+/**
+ * Kotwica przychodzi z warstwy w dokumencie, więc jej pola sprawdzamy jak dane z zewnątrz.
+ * Agent nie zna selektorów, więc jego kotwica może mieć sam cytat, a dokument znajdzie miejsce po nim.
+ */
 export function parseAnchor(value: unknown, maxQuote = MAX_QUOTE_LENGTH): Anchor | null {
   if (typeof value !== 'object' || value === null) return null
   const { selector, offsetX, offsetY, quote, heading } = value as Record<string, unknown>
-  if (typeof selector !== 'string' || !selector || selector.length > MAX_SELECTOR_LENGTH) return null
+  if (typeof selector !== 'string' || selector.length > MAX_SELECTOR_LENGTH) return null
+  if (!selector && (typeof quote !== 'string' || !quote.trim())) return null
   return {
     selector,
     offsetX: clampRatio(offsetX),

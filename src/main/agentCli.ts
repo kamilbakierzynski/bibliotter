@@ -1,5 +1,7 @@
+import { readFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
-import type { AgentApi, AgentComment, AgentDocument } from './agentApi'
+import type { AgentApi, AgentComment, AgentDocument, SavedPresentation } from './agentApi'
+import type { AgentCamera, AgentItem, AgentPresentation } from './agentPresentation'
 import { canDrawOtter, otterText } from './otter'
 
 export const USAGE = `bibliotter: HTML and Markdown documents and the user's comments on them
@@ -14,9 +16,14 @@ export const USAGE = `bibliotter: HTML and Markdown documents and the user's com
   bibliotter reply <comment-id> "text"
   bibliotter resolve <comment-id> ["text"]
   bibliotter search "query"
+  bibliotter presentation <id|path|current>             steps of the document's presentation
+  bibliotter presentation <id|path|current> --set <file|->
+                                         replace them with steps from a JSON file or stdin
 
 Every command accepts --json.
-Private comments are skipped unless you pass --personal.`
+Private comments are skipped unless you pass --personal.
+The JSON for --set is {"steps": [...], "deleteShapes": [...]} in the format of --json output.
+A place is {"quote": "text from the document"} or {"selector": "css"}.`
 
 function formatDocument(doc: AgentDocument): string {
   const place = [doc.project, doc.branch].filter(Boolean).join(' / ')
@@ -43,13 +50,71 @@ function formatComment(comment: AgentComment): string {
   return lines.join('\n')
 }
 
+function formatCamera(camera: AgentCamera): string {
+  if (camera.kind === 'hold') return 'camera stays'
+  const place = camera.quote ? `"${camera.quote.slice(0, 60)}"` : camera.selector
+  const where = [place, camera.heading && `under ${camera.heading}`].filter(Boolean).join(' ')
+  return `${camera.kind === 'area' ? 'part of' : 'frames'} ${where}`
+}
+
+function formatItem(item: AgentItem | undefined, id: string): string {
+  if (!item) return `${id} (missing)`
+  const kind = item.kind === 'shape' ? `${item.color ?? ''} ${item.shape ?? 'shape'}`.trim() : item.kind === 'sticky' ? 'sticky note' : item.kind
+  const label = item.text ? `: ${item.text.slice(0, 60)}` : item.private ? ', private' : ''
+  return `${id} (${kind}${label})`
+}
+
+function formatPresentation(presentation: AgentPresentation): string {
+  if (presentation.steps.length === 0) return 'The document has no presentation.'
+  const items = new Map(presentation.items.map((item) => [item.id, item]))
+  return presentation.steps
+    .map((step, index) => {
+      const head = `${index + 1}. ${step.title || `Step ${index + 1}`}  [${step.id}]  ${formatCamera(step.camera)}, rest ${step.rest}`
+      const shows = step.show.map((id) => `   shows ${formatItem(items.get(id), id)}`)
+      return [head, ...shows].join('\n')
+    })
+    .join('\n')
+}
+
+function formatSaved(saved: SavedPresentation): string {
+  const lines = [`Presentation saved: ${saved.steps.length} ${saved.steps.length === 1 ? 'step' : 'steps'}.`]
+  if (saved.created.length > 0) lines.push(`New shapes: ${saved.created.join(', ')}`)
+  for (const warning of saved.warnings) lines.push(`Warning: ${warning}`)
+  return lines.join('\n')
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Buffer))
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/** Kroki z pliku albo ze standardowego wejścia. Sama lista kroków też wystarczy. */
+async function readSteps(source: string, readInput: (source: string) => Promise<string>): Promise<{ steps: unknown; deleteShapes: string[] }> {
+  let value: unknown
+  try {
+    value = JSON.parse(await readInput(source))
+  } catch (error) {
+    throw new Error(`Cannot read steps from ${source === '-' ? 'stdin' : source}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (Array.isArray(value)) return { steps: value, deleteShapes: [] }
+  if (typeof value !== 'object' || value === null) throw new Error('The JSON must be {"steps": [...]} or a list of steps')
+  const { steps, deleteShapes } = value as Record<string, unknown>
+  if (deleteShapes !== undefined && (!Array.isArray(deleteShapes) || deleteShapes.some((id) => typeof id !== 'string'))) {
+    throw new Error('deleteShapes must be a list of shape ids')
+  }
+  return { steps, deleteShapes: (deleteShapes as string[] | undefined) ?? [] }
+}
+
+const readSource = (source: string): Promise<string> => (source === '-' ? readStdin() : readFile(source, 'utf8'))
+
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`Missing argument: ${name}\n\n${USAGE}`)
   return value
 }
 
 /** Wykonuje komendę i zwraca tekst do wypisania. Błędy zgłasza wyjątkiem. */
-export async function runCli(argv: string[], api: AgentApi): Promise<string> {
+export async function runCli(argv: string[], api: AgentApi, readInput = readSource): Promise<string> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -62,6 +127,7 @@ export async function runCli(argv: string[], api: AgentApi): Promise<string> {
       project: { type: 'string' },
       branch: { type: 'string' },
       label: { type: 'string' },
+      set: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false }
     }
   })
@@ -121,6 +187,16 @@ export async function runCli(argv: string[], api: AgentApi): Promise<string> {
       const hits = await api.search(required(first, 'query'))
       if (values.json) return asJson(hits)
       return hits.map((hit) => `${hit.id}  ${hit.title ?? hit.path}\n  ${hit.snippet}`).join('\n') || 'No results.'
+    }
+    case 'presentation': {
+      const document = required(first, 'document')
+      if (values.set !== undefined) {
+        const { steps, deleteShapes } = await readSteps(values.set, readInput)
+        const saved = await api.setPresentation(document, steps, deleteShapes)
+        return values.json ? asJson(saved) : formatSaved(saved)
+      }
+      const presentation = await api.presentation(document, values.personal)
+      return values.json ? asJson(presentation) : formatPresentation(presentation)
     }
     // Ukryte: celowo nie ma go w USAGE, żeby agenci czytający pomoc nie płacili za żart.
     case 'otter':
