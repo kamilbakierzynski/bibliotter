@@ -4,7 +4,7 @@ import { DOC_STATUSES } from '../../../shared/types'
 import { t } from '../../../shared/i18n'
 import { wake } from '../motion/spring'
 import { drawings } from '../shell/drawings'
-import { dockHover, dockLeave, togglePop } from '../shell/keys'
+import { dockHover, dockLeave, hideTip, togglePop } from '../shell/keys'
 import { toggleLabelPop } from '../shell/labels'
 import { camW, els, popPill, toolPill } from '../shell/layout'
 import { setDocStatus } from '../shell/library'
@@ -20,7 +20,8 @@ import {
   show,
   startNote,
   stepBy,
-  stopPresentation
+  stopPresentation,
+  toggleStepList
 } from '../shell/present'
 import { stepLabel, stepsOf } from '../shell/route'
 import { copyReference } from '../shell/reference'
@@ -147,9 +148,21 @@ function PresentBar(): React.JSX.Element {
         >
           <Icon name="prev" />
         </button>
-        <span className="present-n" id="presentCount" aria-live="polite">
+        <button
+          className={show.list ? 'present-n on' : 'present-n'}
+          id="presentCount"
+          aria-live="polite"
+          aria-haspopup="true"
+          aria-expanded={show.list}
+          data-tip={show.list ? undefined : t('Wszystkie kroki')}
+          onClick={() => {
+            // Dymek stałby na dole otwartej listy.
+            hideTip()
+            toggleStepList()
+          }}
+        >
           {t('{n} z {total}', { n: Math.max(at + 1, 1), total: list.length })}
-        </span>
+        </button>
         <button
           className="tb"
           id="presentNext"
@@ -284,19 +297,63 @@ function NoteField({ draft }: { draft: Draft }): React.JSX.Element {
   )
 }
 
-/** Pole nowej uwagi w prezentacji. Stoi nad dokiem, a szkic czeka w dokumencie. */
+/** Wszystkie kroki trasy. Krok bez kadru prezentacja pomija, więc nie da się do niego skoczyć. */
+function StepList({ docId }: { docId: string }): React.JSX.Element {
+  const steps = stepsOf(docId)
+  const list = new Set(playableSteps())
+  const current = useRef<HTMLButtonElement>(null)
+
+  useLayoutEffect(() => {
+    current.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
+
+  return (
+    // Lista nie bierze fokusu, bo klawisze kroków obsługuje dokument.
+    <div className="bubble present-bubble present-steps" onMouseDown={(event) => event.preventDefault()}>
+      <ol id="presentSteps" aria-label={t('Kroki')}>
+        {steps.map((step, index) => {
+          const on = index === show.index
+          return (
+            <li key={step.id}>
+              <button
+                ref={on ? current : undefined}
+                className={on ? 'rt-step on' : 'rt-step'}
+                data-step={step.id}
+                aria-current={on ? 'step' : undefined}
+                disabled={!list.has(index)}
+                onClick={() => {
+                  goToStep(index)
+                  toggleStepList(false)
+                }}
+              >
+                <em>{index + 1}</em>
+                <span>{stepLabel(step, index)}</span>
+                {!list.has(index) && <Icon name="warn" className="rt-warn" />}
+              </button>
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
+/** Pole nowej uwagi albo lista kroków w prezentacji. Stoją nad dokiem, a szkic uwagi czeka w dokumencie. */
 export function PresentNote(): React.JSX.Element {
   useShell()
   const draft = ui.presenting !== null && ui.draft?.docId === ui.presenting ? ui.draft : null
+  const steps = ui.presenting !== null && show.list && !draft ? ui.presenting : null
+  const open = draft !== null || steps !== null
 
   // Wycięcie warstwy musi objąć pole, zanim da się w nie kliknąć.
   useLayoutEffect(() => {
     if (ui.ready) wake()
-  }, [draft !== null])
+  }, [draft !== null, steps !== null])
 
   return (
-    <div className={draft ? 'present-note on' : 'present-note'} id="presentNote" inert={!draft}>
+    <div className={open ? 'present-note on' : 'present-note'} id="presentNote" inert={!open}>
       {draft && <NoteField key={`${draft.docId} ${draft.kind}`} draft={draft} />}
+      {steps && <StepList docId={steps} />}
     </div>
   )
 }

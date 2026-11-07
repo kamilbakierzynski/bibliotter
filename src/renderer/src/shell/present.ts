@@ -37,7 +37,18 @@ export const show = {
   /** Krok na trasie, który widać albo do którego kamera właśnie jedzie. */
   index: -1,
   /** Przełącznik rysunków odsłania wszystkie uwagi dokumentu. */
-  reveal: false
+  reveal: false,
+  /** Lista kroków nad dokiem, otwierana licznikiem. */
+  list: false
+}
+
+/** Licznik w doku otwiera listę wszystkich kroków. Lista i pole nowej uwagi stoją w tym samym miejscu. */
+export function toggleStepList(force?: boolean): void {
+  const on = force ?? !show.list
+  if (on === show.list || (on && !ui.presenting)) return
+  if (on && ui.draft?.docId === ui.presenting) cancelDraft()
+  show.list = on
+  notify()
 }
 
 let saved: Saved | null = null
@@ -168,6 +179,7 @@ export function startNote(kind: 'comment' | 'sticky'): void {
     return
   }
   if (ui.tool !== 'move') setTool('move')
+  toggleStepList(false)
   window.api.placeNote(docId, kind, ui.color)
 }
 
@@ -309,6 +321,7 @@ export function stopPresentation(): void {
   wanted = null
   show.index = -1
   show.reveal = false
+  show.list = false
   visible = new Set()
   added.clear()
   shown = -1

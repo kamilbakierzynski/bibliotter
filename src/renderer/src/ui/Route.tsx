@@ -11,6 +11,7 @@ import {
   holdCamera,
   leaveRoute,
   loadRoute,
+  peekPreview,
   removeStep,
   renameStep,
   restoreStep,
@@ -256,8 +257,10 @@ export function RoutePanel({ docId }: { docId: string | null }): React.JSX.Eleme
             id="rtPreview"
             aria-label={t('Podgląd kroku')}
             aria-pressed={route.preview}
-            data-tip={t('Podgląd kroku')}
+            data-tip={route.preview ? t('Odepnij podgląd kroku') : t('Najedź, żeby podejrzeć krok, kliknij, żeby przypiąć')}
             disabled={steps.length === 0}
+            onMouseEnter={() => peekPreview(true)}
+            onMouseLeave={() => peekPreview(false)}
             onClick={togglePreview}
           >
             <Icon name="eye" />
@@ -305,7 +308,7 @@ export function RoutePanel({ docId }: { docId: string | null }): React.JSX.Eleme
       </div>
       {docId && loaded && (
         <footer className="insp-foot">
-          <div className="insp-acts">
+          <div className="insp-acts rt-foot">
             <button className="ask" id="rtAdd" onClick={() => addStep(docId)}>
               <Icon name="plus" />
               <span>{t('Dodaj krok')}</span>

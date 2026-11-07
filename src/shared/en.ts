@@ -136,6 +136,9 @@ export const EN: Record<string, string> = {
   'Pokaż w tym kroku': 'Show in this step',
   'Komentarz {n}: {text}': 'Comment {n}: {text}',
   'Podgląd kroku': 'Preview step',
+  'Odepnij podgląd kroku': 'Unpin step preview',
+  'Wszystkie kroki': 'All steps',
+  'Najedź, żeby podejrzeć krok, kliknij, żeby przypiąć': 'Hover to preview the step, click to pin',
   'Zamknij trasę': 'Close route',
   'Otwórz dokument, żeby ułożyć jego trasę.': 'Open a document to plan its route.',
   'Trasa prowadzi przez dokument krok po kroku, jedno kliknięcie na krok. Dodaj pierwszy krok i wskaż jego kadr w dokumencie.':

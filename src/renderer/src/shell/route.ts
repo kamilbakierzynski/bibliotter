@@ -44,8 +44,13 @@ export const route = {
   /** Kroki, których kadru nie ma w dokumencie. Zgłasza je warstwa dokumentu. */
   missing: new Map<string, Set<string>>(),
   picking: null as PickState | null,
-  /** Podgląd kroku jest włączony od startu i zostaje taki, jak go ustawił użytkownik. */
-  preview: true,
+  /**
+   * Podgląd kroku przypięty kliknięciem oka. Bez niego kamera stoi, bo układanie trasy nie powinno
+   * od razu przybliżać dokumentu. Zmiana dokumentu albo zamknięcie formularza odpina podgląd.
+   */
+  preview: false,
+  /** Kursor stoi na oku, więc podgląd pokazuje krok tylko na tę chwilę. */
+  peek: false,
   /** Ostatnio usunięty krok, do cofnięcia przyciskiem w formularzu. */
   removed: null as { docId: string; step: PresentationStep; index: number } | null
 }
@@ -265,8 +270,31 @@ export function setMissing(docId: string, ids: string[]): void {
 
 export function togglePreview(): void {
   route.preview = !route.preview
+  // Kliknięcie decyduje samo, więc odpięcie nie czeka, aż kursor zejdzie z oka.
+  clearTimeout(peekTimer)
+  route.peek = false
   syncFrames()
   notify()
+}
+
+/** Krótkie przejście kursorem przez oko, np. w drodze do zamknięcia panelu, nie rusza kamery. */
+const PEEK_DELAY = 180
+let peekTimer: ReturnType<typeof setTimeout> | undefined
+
+export function peekPreview(on: boolean): void {
+  clearTimeout(peekTimer)
+  if (!on) {
+    if (!route.peek) return
+    route.peek = false
+    syncFrames()
+    notify()
+    return
+  }
+  peekTimer = setTimeout(() => {
+    route.peek = true
+    syncFrames()
+    notify()
+  }, PEEK_DELAY)
 }
 
 /**
@@ -280,6 +308,9 @@ export function syncFrames(): void {
   if (framed && framed !== docId) {
     window.api.setRouteFrames(framed, null)
     if (route.picking?.docId === framed) endPick()
+    route.preview = false
+    route.peek = false
+    clearTimeout(peekTimer)
   }
   framed = docId
   void settlePreview()
@@ -321,7 +352,7 @@ const noteIds = (docId: string): string[] => [
  * maski, a prezentacja ustawia dokument sama.
  */
 function previewWant(): PreviewWant | null {
-  if (!route.preview || ui.presenting || route.picking || !ui.insp || ui.inspView !== 'route') return null
+  if (!(route.preview || route.peek) || ui.presenting || route.picking || !ui.insp || ui.inspView !== 'route') return null
   const docId = focusedId()
   if (!docId) return null
   const pane = openPane(docId)

@@ -12,7 +12,17 @@ import { cancelDraft, canWall, closeThread, dropCarry, setInsp, setTool, toggleN
 import { closeActs, closeCmd, openActs, openCmd, openMap, setMap } from './palette'
 import { openPair } from './pair'
 import { openPocket, togglePocket } from './pocket'
-import { presentTool, startNote, startPresentation, stepBy, stepToEnd, stopPresentation, toggleReveal } from './present'
+import {
+  presentTool,
+  show,
+  startNote,
+  startPresentation,
+  stepBy,
+  stepToEnd,
+  stopPresentation,
+  toggleReveal,
+  toggleStepList
+} from './present'
 import { toggleDrawings } from './drawings'
 import { copyReference } from './reference'
 import { endPick } from './route'
@@ -321,7 +331,8 @@ function presentKey(e: KeyLike): boolean {
   const k = e.key.toLowerCase()
   if (e.key === 'Escape') {
     if (dropCarry()) return true
-    if (ui.draft) cancelDraft()
+    if (show.list) toggleStepList(false)
+    else if (ui.draft) cancelDraft()
     else if (ui.tool !== 'move') setTool('move')
     else stopPresentation()
   } else if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) {

@@ -197,13 +197,11 @@ export async function routeFlow(workspace, { check, entry = projectRoot }) {
       await hint.filter({ hasText: 'cały dokument' }).waitFor()
     })
 
-    await check('podgląd kroku jest włączony od startu i daje się wyłączyć', async () => {
+    await check('podgląd kroku jest wyłączony od startu, a kamera stoi', async () => {
       const eye = shell.locator('#rtPreview')
-      assert.equal(await eye.getAttribute('aria-pressed'), 'true')
-      // Dalsze kroki wskazują kadry na całej stronie, więc podgląd na razie schodzi.
-      await eye.click()
-      await until(async () => (await eye.getAttribute('aria-pressed')) === 'false')
-      await delay(700)
+      assert.equal(await eye.getAttribute('aria-pressed'), 'false')
+      await delay(400)
+      assert.ok((await page.evaluate(() => visualViewport.scale)) < 1.01)
     })
 
     await check('nazwa kroku zapisuje się w trakcie pisania i stoi na liście', async () => {
@@ -280,6 +278,16 @@ export async function routeFlow(workspace, { check, entry = projectRoot }) {
       await storedWhen((route) => route.steps[0].id === second)
       await shell.keyboard.press('Alt+ArrowDown')
       await storedWhen((route) => route.steps[0].id === first)
+    })
+
+    await check('najechanie na oko podgląda krok, a zejście z niego wraca do całej strony', async () => {
+      const eye = shell.locator('#rtPreview')
+      await eye.hover()
+      await page.waitForFunction(() => visualViewport.scale > 1.2, null, { timeout: 8000 })
+      await steps.first().hover()
+      await page.waitForFunction(() => visualViewport.scale < 1.01, null, { timeout: 8000 })
+      assert.equal(await eye.getAttribute('aria-pressed'), 'false')
+      await delay(400)
     })
 
     await check('podgląd ustawia kamerę na kadrze kroku, przygasza resztę i wraca do całej strony', async () => {

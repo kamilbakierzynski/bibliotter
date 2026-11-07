@@ -349,6 +349,29 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
       await page.waitForFunction(() => visualViewport.scale > 1.3, null, { timeout: 8000 })
     })
 
+    await check('licznik otwiera listę wszystkich kroków, Esc ją zamyka, a wiersz skacze do kroku', async () => {
+      const rows = layer.locator('#presentSteps .rt-step')
+      await count.click()
+      await rows.first().waitFor({ state: 'visible' })
+      assert.equal(await rows.count(), 5)
+      // Krok bez kadru stoi na liście, ale prezentacja go pomija.
+      assert.equal(await layer.locator('#presentSteps .rt-step:disabled').count(), 1)
+      assert.equal(await layer.locator('#presentSteps .rt-step.on').textContent().then((text) => text.includes('Wykres z karteczką')), true)
+      await delay(600)
+      await writeFile(join(artifacts, 'present-steps.png'), await layer.screenshot())
+      await page.keyboard.press('Escape')
+      await rows.first().waitFor({ state: 'detached' })
+      assert.equal(await root(), true)
+      await count.click()
+      await rows.first().click()
+      await atStep('1 z 4')
+      await rows.first().waitFor({ state: 'detached' })
+      await page.waitForFunction(() => visualViewport.scale < 1.01, null, { timeout: 8000 })
+      await layer.locator('.present-dots button').nth(2).click()
+      await atStep('3 z 4', 'Wykres z karteczką')
+      await page.waitForFunction(() => visualViewport.scale > 1.3, null, { timeout: 8000 })
+    })
+
     await check('Esc kończy prezentację: kamera wraca do całej strony, a układ i karteczki na miejsce', async () => {
       await page.keyboard.press('Escape')
       await until(async () => !(await root()))

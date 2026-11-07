@@ -579,7 +579,9 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .rt-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 6px; color: var(--ink-2); font-size: 12.5px; line-height: 1.35; text-align: left; border-radius: var(--r-row); transition: color .16s, background-color .16s; }
 .rt-item:hover { color: var(--ink); background: var(--hover); }
 .rt-item[aria-checked="true"] { color: var(--ink); }
-.rt-play { margin-left: auto; }
+.rt-foot { flex-wrap: wrap; justify-content: flex-start; }
+/* „Prezentuj” stoi w osobnym wierszu na całą szerokość stopki. */
+.rt-play { flex: 1 0 100%; justify-content: center; margin-top: 2px; }
 .rt-play:disabled { opacity: .45; pointer-events: none; }
 .rt-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rt-box { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair-2); transition: background-color .16s; }
@@ -652,6 +654,11 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .present-note.on { display: block; }
 .present-bubble { width: 320px; transform-origin: 50% 100%; }
 .present-note-hint { color: var(--ink-3); font-size: 11.5px; }
+button.present-n { height: 26px; padding: 0 6px; border-radius: 8px; transition: color .16s, background-color .16s; }
+button.present-n:hover, button.present-n.on { color: var(--ink); background: var(--hover); }
+.present-steps { padding: 6px; }
+.present-steps ol { max-height: min(360px, 50vh); margin: 0; padding: 0; overflow: hidden auto; list-style: none; scrollbar-width: none; }
+.present-steps .rt-step:disabled { opacity: .5; pointer-events: none; }
 /* Szyna schodzi w lewą krawędź, a tabliczka arkusza zostawia sam tytuł */
 .nav { transition: opacity .3s; }
 .presenting .nav { opacity: 0; transition: opacity .18s; }
