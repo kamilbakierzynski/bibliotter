@@ -17,6 +17,7 @@ import { cameraFlow } from './camera.mjs'
 import { ticketsFlow } from './tickets.mjs'
 import { findFlow } from './find.mjs'
 import { htmlLinkFlow } from './htmlLinks.mjs'
+import { imageZoomFlow } from './imageZoom.mjs'
 import { linksPanelFlow } from './linksPanel.mjs'
 import { pairFlow } from './pair.mjs'
 import { languageFlow } from './language.mjs'
@@ -1575,6 +1576,7 @@ async function main() {
   await check('scenariusz minimapy i spisu treści dobiega końca', () => outlineFlow(workspace, { check }))
   await check('scenariusz linków dobiega końca', () => linkFlow(workspace))
   await check('scenariusz linków HTML dobiega końca', () => htmlLinkFlow(workspace, { check }))
+  await check('scenariusz powiększania obrazków dobiega końca', () => imageZoomFlow(workspace, { check }))
   await check('scenariusz panelu Linki dobiega końca', () => linksPanelFlow(workspace, { check }))
   await check('scenariusz pary planu i objaśnienia dobiega końca', () => pairFlow(workspace, { check }))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))

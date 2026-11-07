@@ -1,7 +1,7 @@
 import type { Annotation } from '../../../shared/annotations'
 import type { ViewerKey } from '../../../shared/types'
 import { renderPills } from '../motion/pill'
-import { springCurve } from '../motion/spring'
+import { springCurve } from '../../../shared/springCurve'
 // Kamera rejestruje się sama, a tryb prezentacji będzie ją wołał.
 import './camera'
 import { homeRendered, syncHomeSeg } from './home'

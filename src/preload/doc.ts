@@ -3,6 +3,7 @@ import type { OverlayEvent, OverlayItem, OverlayMode, ShapeTool, StickyColor } f
 import { isLocalHref, type LinkOutcome, type LinkPreview, type OpenMode, openModeOf } from '../shared/links'
 import { type Language, setLanguage, t } from '../shared/i18n'
 import { startCamera } from './camera'
+import { startLightbox } from './lightbox'
 import { type LinkPreviewHandle, startLinkPreview } from './linkPreview'
 import type { FindCommand, TextQuery, TextSpan } from '../shared/textSearch'
 import { FIND_STYLE, startFind } from './find'
@@ -20,6 +21,18 @@ import { guardPointerEvents, startOverlay } from './overlay'
  * głównego idzie surowy `href`, a ten rozwiązuje go względem prawdziwego miejsca pliku.
  */
 const pointerGuard = guardPointerEvents()
+
+/** Kursor powiększania wygrywa z kursorem dokumentu, a pod narzędziem nie pojawia się wcale. */
+const ZOOM_CURSOR_CSS = 'img:hover { cursor: zoom-in !important; }'
+let zoomCursorCss: string | null = null
+// Przed warstwą uwag, żeby Esc przy powiększeniu nie zamykał arkusza.
+const lightbox = startLightbox({
+  busy: () => pointerGuard.onClick !== null || pointerGuard.onPress !== null,
+  setCursor: (on) => {
+    if (zoomCursorCss) webFrame.removeInsertedCSS(zoomCursorCss)
+    zoomCursorCss = on ? webFrame.insertCSS(ZOOM_CURSOR_CSS, { cssOrigin: 'user' }) : null
+  }
+})
 /** O tym, czy to arkusz, decyduje proces główny, więc dokument HTML nie może tego udawać. */
 let isSheet = false
 void ipcRenderer.invoke('doc:is-sheet').then((answer: boolean) => {
@@ -83,6 +96,13 @@ function subscribe<Payload>(channel: string, listener: (payload: Payload) => voi
 }
 
 subscribe<Language>('overlay:language', setLanguage)
+// Tryb uwag, narzędzie albo krok prezentacji zmienia to, co jest pod powiększeniem, więc ono ustępuje.
+subscribe<OverlayMode>('overlay:mode', (mode) => mode !== null && lightbox.close())
+subscribe<boolean>('overlay:pointer', (on) => on && lightbox.close())
+subscribe<StickyColor | null>('overlay:marker', (color) => color !== null && lightbox.close())
+subscribe<ShapeTool | null>('overlay:shaper', (tool) => tool !== null && lightbox.close())
+subscribe<PresentState | null>('overlay:present', () => lightbox.close())
+subscribe<string | null>('overlay:carry', (id) => id !== null && lightbox.close())
 
 /** Ramki przepuszczają mysz do rodzica, bo inaczej ręka zatrzymałaby się na ich krawędzi. */
 const PRESENTING_CSS = `
