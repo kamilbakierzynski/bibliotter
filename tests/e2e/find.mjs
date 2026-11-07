@@ -15,8 +15,10 @@ const ALPHA = 'Alfa szukania'
 const BETA = 'Beta szukania'
 const CURRENT = 'bibliotter-find-current'
 const ALL = 'bibliotter-find'
-/** Miniatury renderują dokumenty w ukrytym oknie o tej szerokości. */
+/** Miniatury i podgląd trafienia renderują dokumenty w ukrytych oknach o tych szerokościach. */
 const THUMB_WIDTH = 1040
+const PREVIEW_WIDTH = 680
+const AMBER = { red: 235, green: [150, 205], blue: 100 }
 
 const prose = 'Akapit opisujący decyzje projektowe dokumentu i jego strukturę. '.repeat(24)
 const tall = '<div style="height: 1400px"></div>'
@@ -61,7 +63,8 @@ function attachDocument(app) {
       for (const page of app.windows()) {
         if (!page.url().startsWith('htmldoc://')) continue
         const width = await page.evaluate(() => innerWidth).catch(() => THUMB_WIDTH)
-        if (width !== THUMB_WIDTH && (await page.evaluate(() => document.title).catch(() => '')).includes(title)) return page
+        const hidden = width === THUMB_WIDTH || width === PREVIEW_WIDTH
+        if (!hidden && (await page.evaluate(() => document.title).catch(() => '')).includes(title)) return page
       }
       await delay(100)
     }
@@ -385,6 +388,58 @@ export async function findFlow(workspace, { check, entry = projectRoot }) {
       assert.equal(await field.inputValue(), 'orkiestrze')
       await field.fill('łąka')
       await until(shell, () => document.querySelector('.find-count')?.textContent.endsWith(' z 3'))
+    })
+
+    await check('najechanie na trafienie pokazuje jego miejsce w dokumencie z podświetleniem', async () => {
+      await layer.keyboard.press('Control+Shift+f')
+      await panelField.fill('orkiestrze')
+      await until(shell, () => document.querySelectorAll('.row.hit:not(.more)').length === 2)
+      await hits.nth(0).hover()
+      const shot = shell.locator('#hoverCard.on .hc-shot img')
+      await shot.waitFor({ timeout: 12000 })
+      await delay(300)
+      await shell.screenshot({ path: join(artifacts, 'find-hit-card.png') })
+      const amber = await shot.evaluate(async (img, { red, green, blue }) => {
+        await img.decode()
+        const canvas = new OffscreenCanvas(img.naturalWidth, img.naturalHeight)
+        const context = canvas.getContext('2d')
+        context.drawImage(img, 0, 0)
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+        let count = 0
+        let rows = 0
+        for (let at = 0; at < data.length; at += 4) {
+          if (data[at] < red || data[at + 1] < green[0] || data[at + 1] > green[1] || data[at + 2] > blue) continue
+          count += 1
+          rows += Math.floor(at / 4 / canvas.width)
+        }
+        return { count, middle: count ? rows / count / canvas.height : -1 }
+      }, AMBER)
+      assert.ok(amber.count > 200, `bursztynowych pikseli: ${amber.count}`)
+      assert.ok(Math.abs(amber.middle - 0.5) < 0.2, `trafienie stoi na wysokości ${amber.middle.toFixed(2)}`)
+      assert.match(await shell.locator('#hoverCard .hc-meta').textContent(), /1 z 2/)
+    })
+
+    await check('podgląd trafienia działa też dla wyrażenia regularnego', async () => {
+      // Wąski panel chowa przełączniki, więc zostaje skrót z pola.
+      const regex = () => panelField.press('Alt+r')
+      await regex()
+      await until(shell, () => document.querySelector('.find.wide .find-opt.regex')?.classList.contains('on'))
+      await panelField.fill('orkiest(ra|rze)')
+      // Stare wiersze stoją, dopóki nie przyjdą nowe, a nowe wyniki gaszą kartę.
+      await delay(600)
+      await until(shell,() => document.querySelector('.panel-head span')?.textContent === '2 wyniki w 1 dokumencie')
+      await hits.nth(1).hover()
+      await shell.locator('#hoverCard.on .hc-shot img').waitFor({ timeout: 12000 })
+      assert.match(await shell.locator('#hoverCard .hc-meta').textContent(), /2 z 2/)
+      await regex()
+    })
+
+    await check('wyczyszczone pole gasi kartę i znacznik wybranego wiersza', async () => {
+      await panelField.fill('')
+      await until(shell, () => document.querySelector('#panelItems .empty') !== null)
+      // Trzeci znacznik w panelu należy do wierszy trafień.
+      await until(shell, () => document.querySelectorAll('#panelScroll > i.sel-pill')[1]?.style.opacity === '0')
+      await until(shell, () => !document.querySelector('#hoverCard.on'))
     })
   } finally {
     await app.close()

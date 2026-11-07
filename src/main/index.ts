@@ -12,6 +12,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  screen,
   session,
   shell
 } from 'electron'
@@ -57,6 +58,7 @@ import { isExternalUrl } from './docPolicy'
 import { DockLayer } from './dockLayer'
 import { DocViewer, registerDocScheme } from './docViewer'
 import { commandRunner, readRepo } from './git'
+import { HitPreviewer } from './hitPreview'
 import type { LibraryConfig } from './library'
 import { LibraryClient } from './libraryClient'
 import { isInside } from './scanner'
@@ -83,6 +85,7 @@ let mainWindow: BrowserWindow | null = null
 let viewer: DocViewer | null = null
 let dockLayer: DockLayer | null = null
 let thumbnails: Thumbnailer | null = null
+let hitPreviews: HitPreviewer | null = null
 let library: LibraryClient | null = null
 let labeler: AutoLabeler | null = null
 let config: AppConfig = {
@@ -478,6 +481,11 @@ function registerIpc(): void {
     const parsed = parseTextQuery(query)
     return parsed ? searcher.search(parsed) : { docs: [] }
   })
+  handle('library:preview-hit', (docId: unknown, query: unknown, target: unknown) => {
+    const command = parseFindCommand({ type: 'set', query, target })
+    if (typeof docId !== 'string' || command?.type !== 'set' || !command.target || !library?.getEntry(docId)) return null
+    return hitPreviews?.preview(docId, command.query, command.target) ?? null
+  })
   handle('library:search', (query: unknown) =>
     typeof query === 'string' ? requireLibrary().search(query) : []
   )
@@ -768,6 +776,12 @@ function createWindow(): BrowserWindow {
     thumbnails?.close()
     thumbnails = null
     dockLayer?.close()
+  hitPreviews = new HitPreviewer({
+    viewer: () => viewer,
+    shaOf: (docId) => library?.getEntry(docId)?.sha ?? null,
+    isStatic: (docId) => library?.getEntry(docId)?.format === 'markdown',
+    scale: () => (window.isDestroyed() ? 1 : screen.getDisplayMatching(window.getBounds()).scaleFactor)
+  })
     dockLayer = null
     mainWindow = null
     viewer?.dispose()
@@ -779,6 +793,8 @@ function createWindow(): BrowserWindow {
 async function start(): Promise<void> {
   await app.whenReady()
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
+    hitPreviews?.close()
+    hitPreviews = null
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
   config = await loadConfig()

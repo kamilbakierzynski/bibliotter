@@ -256,14 +256,13 @@ export class DocViewer {
     })
     this.handleDoc('doc:open-link', (docId, href, peek) => this.options.openLink(docId, href, peek === true), 'none')
     this.handleSheet('doc:link-preview', (docId, href) => this.options.previewLink(docId, href), null)
-    this.handleDoc<TextSpan[] | 'pattern' | 'slow'>(
-      'doc:find-pattern',
-      async (_docId, text, query) => {
-        const parsed = parseTextQuery(query)
-        return parsed ? this.options.matchPage(text, parsed) : 'pattern'
-      },
-      'pattern'
-    )
+    // Wyrażenie liczy też ukrytemu oknu podglądu trafienia. Wynik to tylko pozycje w tekście, który strona sama przysłała.
+    ipcMain.removeHandler('doc:find-pattern')
+    ipcMain.handle('doc:find-pattern', (event, text: unknown, query: unknown): Promise<TextSpan[] | 'pattern' | 'slow'> | 'pattern' => {
+      const parsed = parseTextQuery(query)
+      if (!this.guests.has(event.sender.id) || typeof text !== 'string' || !parsed) return 'pattern'
+      return this.options.matchPage(text, parsed)
+    })
     // Widok powstaje, zanim wiadomo, co w nim zamieszka, więc strona pyta o to po wczytaniu.
     ipcMain.removeHandler('doc:is-sheet')
     ipcMain.handle('doc:is-sheet', (event) => {

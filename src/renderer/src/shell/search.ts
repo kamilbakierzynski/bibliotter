@@ -23,6 +23,8 @@ export const HIT_ROW = 28
 export const search = {
   query: emptyQuery(),
   docs: [] as ContentDoc[],
+  /** Zapytanie, na które odpowiadają wyniki. Pole może już mówić coś nowego. */
+  answeredQuery: emptyQuery(),
   busy: false,
   /** Lista dotyczy tego, co stoi w polu. */
   answered: false,
@@ -132,6 +134,7 @@ function run(): void {
     void window.api.searchContent(query).then(({ docs, failure }) => {
       if (own !== ticket) return
       search.docs = docs
+      search.answeredQuery = query
       search.failure = failure ?? null
       search.busy = false
       search.answered = true

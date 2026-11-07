@@ -27,6 +27,7 @@ const api: ShellApi = {
   copyText: (text) => ipcRenderer.send('app:copy-text', text),
   search: (query) => ipcRenderer.invoke('library:search', query),
   searchContent: (query) => ipcRenderer.invoke('library:search-content', query),
+  previewHit: (docId, query, target) => ipcRenderer.invoke('library:preview-hit', docId, query, target),
   findInDoc: (docId, command) => ipcRenderer.send('viewer:find', docId, command),
   setStatus: (docId, status) => ipcRenderer.invoke('doc:set-status', docId, status),
   setStatuses: (docIds, status) => ipcRenderer.invoke('doc:set-statuses', docIds, status),

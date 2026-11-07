@@ -62,7 +62,7 @@ function bringIntoBox(box: HTMLElement, range: Range): void {
   if (left < area.left || right > area.right) box.scrollLeft += left - area.left - area.width * LANDING
 }
 
-function reveal(range: Range): void {
+function reveal(range: Range, center: boolean): void {
   const start = range.startContainer.parentElement
   if (!start) return
   for (let current: Element | null = start; current; current = current.parentElement) {
@@ -70,6 +70,11 @@ function reveal(range: Range): void {
   }
   for (const box of scrollers(start)) bringIntoBox(box, range)
   const { top, bottom } = range.getBoundingClientRect()
+  if (center) {
+    // Podgląd trafienia to kawałek strony, więc trafienie staje na środku, nawet gdy już je widać.
+    window.scrollBy({ top: (top + bottom - innerHeight) / 2, behavior: 'instant' })
+    return
+  }
   const roomy = innerHeight - DOC_FOOT
   if (top < EDGE || bottom > roomy - EDGE) {
     window.scrollBy({ top: top - roomy * LANDING, behavior: 'instant' })
@@ -98,6 +103,7 @@ export function startFind({ send, onCommand, matchPattern }: FindBridge): void {
   let query: TextQuery | null = null
   /** Trafienie z panelu czeka na swój tekst, bo dokument może go dopiero zbudować. */
   let target: TextSnippet | null = null
+  let center = false
   let page: PageText<Text> = { text: '', runs: [] }
   /** Czytanie strony jest najdroższe, a każda litera zapytania trafia na ten sam tekst. */
   let latest = page
@@ -153,7 +159,7 @@ export function startFind({ send, onCommand, matchPattern }: FindBridge): void {
 
   const present = (): void => {
     if (active < 0) return
-    reveal(rangeOf(active))
+    reveal(rangeOf(active), center)
     settling = document.readyState !== 'complete'
   }
 
@@ -244,6 +250,7 @@ export function startFind({ send, onCommand, matchPattern }: FindBridge): void {
       case 'set':
         query = command.query
         target = command.target ?? null
+        center = command.center === true
         watch()
         void run(true)
         break

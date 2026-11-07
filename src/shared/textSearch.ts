@@ -53,8 +53,11 @@ export interface FindState {
 export const NO_FIND: FindState = { count: 0, active: 0, capped: false, failure: null }
 
 export type FindCommand =
-  /** `target` to konkretne trafienie z panelu. */
-  | { type: 'set'; query: TextQuery; target?: TextSnippet }
+  /**
+   * `target` to konkretne trafienie z panelu. `center` stawia je na środku strony, nawet gdy już je
+   * widać. Używa go tylko ukryte okno podglądu trafienia, więc powłoka go nie wysyła.
+   */
+  | { type: 'set'; query: TextQuery; target?: TextSnippet; center?: boolean }
   | { type: 'step'; forward: boolean }
   | { type: 'clear' }
   /** Prosi dokument o zaznaczony tekst, który staje się zapytaniem. */

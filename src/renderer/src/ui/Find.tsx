@@ -2,6 +2,8 @@ import { type KeyboardEvent, type MouseEvent, useLayoutEffect, useRef } from 're
 import { plural, t } from '../../../shared/i18n'
 import type { SearchFailure, TextQuery, TextSnippet } from '../../../shared/textSearch'
 import { closeFind, find, findLabel, type QueryOption, setFindText, stepFind, toggleFindOption } from '../shell/find'
+import { aimHit } from '../shell/hitPreview'
+import { card, hideCard } from '../shell/hoverCard'
 import { openRowMenu } from '../shell/menu'
 import {
   allFolded,
@@ -221,6 +223,11 @@ function HitRow({ row }: { row: Extract<SearchRow, { type: 'hit' }> }): React.JS
   return (
     <button
       className={now ? 'row hit now' : 'row hit'}
+      data-hit={row.at}
+      onPointerEnter={() => aimHit(row.at)}
+      onPointerLeave={() => aimHit(null)}
+      // Kliknięty wiersz otwiera dokument, więc zrzut nie jest już potrzebny.
+      onPointerDown={() => aimHit(null)}
       onClick={(e) => openHit(row.at, e.ctrlKey || e.metaKey)}
       onContextMenu={(e) => openRowMenu(e, { kind: 'doc', doc: row.doc })}
     >
@@ -257,6 +264,13 @@ function failureText(failure: SearchFailure): string {
 export function SearchList(): React.JSX.Element {
   useShell()
   useLayoutEffect(() => () => hitPill.hide(), [])
+  // Wyczyszczone pole, nowe wyniki albo zwinięty dokument zabierają wybrany wiersz, a znacznik
+  // zostawał wtedy na pustym miejscu. Wiersz dorysowany później sam go przywoła.
+  useLayoutEffect(syncHitPill)
+  // Karta trafienia wskazuje wiersz po numerze, a nowe wyniki dają pod tym numerem coś innego.
+  useLayoutEffect(() => {
+    if (card.target?.kind === 'hit') hideCard()
+  }, [search.docs])
   const { rows, height } = searchModel()
   if (search.failure) return <p className="empty rv">{failureText(search.failure)}</p>
   if (rows.length > 0) return <Windowed rows={rows} height={height} render={(row) => <Row key={row.key} row={row} />} />

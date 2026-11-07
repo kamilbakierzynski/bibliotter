@@ -11,7 +11,12 @@ import { ui } from './state'
  * w powłoce nad zrzutem dokumentu. Myszy nie łapie, bo to tylko podpowiedź.
  */
 
-export type CardTarget = { kind: 'doc'; id: string } | { kind: 'folder'; key: string } | { kind: 'project'; key: string }
+export type CardTarget =
+  | { kind: 'doc'; id: string }
+  | { kind: 'folder'; key: string }
+  | { kind: 'project'; key: string }
+  /** Trafienie z panelu szukania, jako numer w `searchModel().hits`. */
+  | { kind: 'hit'; at: number }
 
 /** Tyle kursor musi postać na wierszu, zanim karta pojawi się pierwszy raz. */
 const SHOW_MS = 520
@@ -55,15 +60,15 @@ export function useCard(): number {
 }
 
 function targetOf(row: HTMLElement): CardTarget | null {
-  const { doc, folder, project } = row.dataset
+  const { doc, folder, project, hit } = row.dataset
+  if (hit) return { kind: 'hit', at: Number(hit) }
   if (doc) return { kind: 'doc', id: doc }
   if (folder) return { kind: 'folder', key: folder }
   if (project) return { kind: 'project', key: project }
   return null
 }
 
-const sameTarget = (a: CardTarget | null, b: CardTarget): boolean =>
-  a !== null && a.kind === b.kind && (a.kind === 'doc' ? a.id === (b as { id: string }).id : a.key === (b as { key: string }).key)
+const sameTarget = (a: CardTarget | null, b: CardTarget): boolean => a !== null && JSON.stringify(a) === JSON.stringify(b)
 
 function show(row: HTMLElement, target: CardTarget): void {
   if (!row.isConnected || menu.on || ui.cmd || !ui.nav) return

@@ -15,7 +15,7 @@ import type { LabelColors, LabelTone } from './labels'
 import type { DocLinks, DocPair, FollowLink, LinkOutcome } from './links'
 import type { OutlineCommand } from './outline'
 import type { PickKind, Presentation, PresentState, RouteFrame } from './presentation'
-import type { ContentSearch, FindCommand, TextQuery } from './textSearch'
+import type { ContentSearch, FindCommand, TextQuery, TextSnippet } from './textSearch'
 import type { Language } from './i18n'
 import type { AgentSetup, AppInfo } from './options'
 
@@ -196,6 +196,11 @@ export interface ShellApi {
   /** Przeszukuje treść wszystkich dokumentów. Nowe zapytanie unieważnia poprzednie. */
   searchContent(query: TextQuery): Promise<ContentSearch>
   /** Wynik wraca jako zdarzenie warstwy dokumentu. */
+  /**
+   * Zrzut miejsca trafienia z podświetleniem, jako adres `data:`. `null` znaczy, że strona go nie dała,
+   * a `later`, że nowsze zamówienie wyprzedziło to w kolejce.
+   */
+  previewHit(docId: string, query: TextQuery, target: TextSnippet): Promise<string | null | 'later'>
   findInDoc(docId: string, command: FindCommand): void
   setStatus(docId: string, status: DocStatus): Promise<void>
   /** Zmienia status wielu dokumentów jedną migawką biblioteki. */
