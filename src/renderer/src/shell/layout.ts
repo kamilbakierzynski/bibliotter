@@ -1,4 +1,4 @@
-import { Pill, rectIn, renderPills } from '../motion/pill'
+import { laneIn, Pill, rectIn, renderPills } from '../motion/pill'
 import { Rope } from '../motion/rope'
 import { clamp, connectLoop, lerp, Spring, type SpringOptions, wake } from '../motion/spring'
 import { fitHome, renderMorph, renderZoom } from './home'
@@ -7,6 +7,7 @@ import { inLayer, placeLayer } from './layer'
 import { alignShots, noteQuiet, releaseUnused, touch, trackQuiet } from './native'
 import { onWall, renderHangs, syncPanelMode } from './notes'
 import { canAnnotate, focusedDoc, isOpen, MAX_SHEETS, notify, type PanelView, pinned, ui } from './state'
+import { renderTerminal, sB, syncTerminalChrome, term, termRoom, termShown, tR } from './terminalLayout'
 
 /*
  * Geometria powłoki i rysowanie klatki. Układ jest zawsze prawdą: `sheetRects` mówi, gdzie
@@ -219,7 +220,7 @@ export const spisPill = new Pill()
 
 /** Ciała, które ruszają dopiero, gdy arkusze staną się zrzutami. */
 export function sheetBodies(): Spring[] {
-  return [sL, sR, camX, ratio, ...sheets.flatMap((s) => [s.dl, s.dw, s.o])]
+  return [sL, sR, tR, sB, camX, ratio, ...sheets.flatMap((s) => [s.dl, s.dw, s.o])]
 }
 
 export function measure(): void {
@@ -262,10 +263,19 @@ export function measure(): void {
 /** W prezentacji szyna chowa się w lewą krawędź, a arkusz bierze całą szerokość okna. */
 const navEdge = (): number => (ui.presenting ? G.shapeLeft : ui.nav ? G.open : G.closed)
 
-const stageEdges = (): { left: number; right: number; base: number } => {
+/**
+ * Terminal z prawej stoi przy brzegu okna, a panel uwag i linków między nim a dokumentem.
+ * `edge` to prawy brzeg panelu i zarazem lewy brzeg terminala, a `right` i `bottom` to brzegi arkuszy.
+ */
+const stageEdges = (): { left: number; right: number; base: number; edge: number; bottom: number } => {
   const base = G.W - G.stageRight
-  if (ui.presenting) return { left: G.stageGap, right: base, base }
-  return { left: navEdge() + G.stageGap, right: base - (ui.insp && !G.overlay ? G.insW + G.stageGap : 0), base }
+  term.applied = termShown()
+  if (ui.presenting) return { left: G.stageGap, right: base, base, edge: base, bottom: G.stageBot }
+  const left = navEdge() + G.stageGap
+  const panel = ui.insp && !G.overlay ? G.insW + G.stageGap : 0
+  const room = termRoom(base - panel - left, G.H - G.stageTop - G.stageBot, G.stageGap)
+  const edge = base - room.right
+  return { left, right: edge - panel, base, edge, bottom: G.stageBot + room.bottom }
 }
 
 export function applyLayout(pullY?: number): void {
@@ -275,14 +285,16 @@ export function applyLayout(pullY?: number): void {
   navT.to(G.navTop)
   navB.to(G.H - G.navBot)
   navR.to(G.r)
-  const { left, right, base } = stageEdges()
+  const { left, right, base, edge, bottom } = stageEdges()
   rope.to(navEdge(), pullY)
-  insB.to(base)
+  insB.to(edge)
   insT.to(G.insTop)
   insE.to(G.H - G.insBot)
-  insRope.to(ui.insp && !onWall() ? base - G.insW : base)
+  insRope.to(ui.insp && !onWall() ? edge - G.insW : edge)
   sL.to(left)
   sR.to(right)
+  tR.to(edge)
+  sB.to(bottom)
   dockC.to((sL.t + sR.t) / 2)
   syncChrome()
   syncCam()
@@ -298,14 +310,16 @@ export function applyResize(): void {
   navT.set(G.navTop)
   navB.set(G.H - G.navBot)
   navR.set(G.r)
-  const { left, right, base } = stageEdges()
+  const { left, right, base, edge, bottom } = stageEdges()
   rope.place(navEdge())
-  insB.set(base)
+  insB.set(edge)
   insT.set(G.insTop)
   insE.set(G.H - G.insBot)
-  insRope.place(ui.insp && !onWall() ? base - G.insW : base)
+  insRope.place(ui.insp && !onWall() ? edge - G.insW : edge)
   sL.set(left)
   sR.set(right)
+  tR.set(edge)
+  sB.set(bottom)
   dockC.set((sL.t + sR.t) / 2)
   syncChrome()
   syncCam()
@@ -328,6 +342,8 @@ export function placeInitial(): void {
   insRope.place(base)
   sL.set(G.closed + G.stageGap)
   sR.set(base)
+  tR.set(base)
+  sB.set(G.stageBot)
   dockC.set((G.open + G.stageGap + base) / 2)
   rope.T = navT.x
   rope.B = navB.x
@@ -502,6 +518,11 @@ export function syncChrome(): void {
   stage.classList.toggle('split', many)
   stage.classList.toggle('peeking', ui.peek !== null)
   root.classList.toggle('split-dim', many)
+  const terminal = termShown()
+  stage.classList.toggle('term-right', terminal && term.side === 'right')
+  syncTerminalChrome(true)
+  // Dokument z terminalem zszedł albo wrócił na scenę, więc scena musi zrobić mu miejsce.
+  if (terminal !== term.applied) queueMicrotask(() => applyLayout())
 }
 
 function settle(): void {
@@ -592,6 +613,11 @@ export function render(): void {
   const { stage } = els
   stage.style.left = `${sL.x}px`
   stage.style.width = `${w}px`
+  // Terminal pod spodem podnosi dół sceny sprężyną, a przejście z CSS spóźniałoby się o pół sekundy.
+  const lifted = sB.t !== G.stageBot || Math.abs(sB.x - G.stageBot) > 0.5
+  stage.style.bottom = lifted ? `${sB.x}px` : ''
+  stage.style.transitionProperty = lifted ? 'top' : ''
+  renderTerminal(sL.x, sR.x, G.W - G.stageRight, G.H, G.stageBot, G.stageGap)
   // Szyna w prezentacji zeszła, więc arkusz nie ma czego omijać.
   stage.style.clipPath = `inset(-80px -4000px -80px ${ui.presenting ? -80 : G.shapeLeft + 8 - sL.x}px)`
   const m = clamp(mH.x)
@@ -657,9 +683,12 @@ export function render(): void {
   cmd.style.visibility = c <= 0.01 && !ui.cmd ? 'hidden' : 'visible'
   els.scrim.style.opacity = String(m)
 
-  const ip = Math.max(clamp((insB.x - sR.x - G.stageGap) / G.insW), clamp((insB.x - insRope.mean) / G.insW))
+  // Miejsce na panel liczy się od krawędzi sceny z terminalem, bo terminal z prawej też odsuwa arkusze.
+  const ip = Math.max(clamp((insB.x - tR.x - G.stageGap) / G.insW), clamp((insB.x - insRope.mean) / G.insW))
   els.inspIn.style.opacity = String(clamp(ip * 1.7 - 0.6))
   els.inspIn.style.transform = `translateX(${(1 - ip) * 16}px)`
+  // Panel stoi przy lewym brzegu terminala, a bez terminala przy brzegu okna.
+  els.inspIn.style.right = `${G.W - insB.x}px`
 
   renderHangs()
   renderPills()
@@ -683,7 +712,7 @@ export function syncSel(instant = false): void {
   const atHome = ui.home && ui.peek === null
   const row = !atHome && id ? scroll.querySelector<HTMLElement>(`.row[data-doc="${CSS.escape(id)}"]`) : null
   const shown = row !== null && row.getClientRects().length > 0 && row.getBoundingClientRect().height > 8
-  if (shown) selPill.to(rectIn(row, scroll), instant)
+  if (shown) selPill.to(laneIn(row, scroll), instant)
   else selPill.hide()
   for (const r of scroll.querySelectorAll('.row[data-doc]')) r.classList.toggle('on', shown && r === row)
 }

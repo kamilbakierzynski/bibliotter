@@ -1,6 +1,6 @@
 import type { ContentDoc, SearchFailure, TextSnippet } from '../../../shared/textSearch'
 import type { DocEntry } from '../../../shared/types'
-import { Pill, rectIn } from '../motion/pill'
+import { laneIn, Pill } from '../motion/pill'
 import { askSeed, closeFind, emptyQuery, find, openFind, presentFind, type QueryOption, stepFind } from './find'
 import type { KeyLike } from './keys'
 import { els, setView } from './layout'
@@ -181,7 +181,7 @@ export function leaveSearch(): void {
 
 export function syncHitPill(): void {
   const row = els.scroll.querySelector('.row.hit.now')
-  if (row) hitPill.to(rectIn(row, els.scroll))
+  if (row) hitPill.to(laneIn(row, els.scroll))
   else hitPill.hide()
 }
 

@@ -1,6 +1,6 @@
 import { ipcRenderer, type IpcRendererEvent, webFrame } from 'electron'
 import type { OverlayEvent, OverlayItem, OverlayMode, ShapeTool, StickyColor } from '../shared/annotations'
-import { isLocalHref, type LinkOutcome, type LinkPreview, type OpenMode, openModeOf } from '../shared/links'
+import { isLocalHref, type LinkOutcome, type OpenMode, openModeOf } from '../shared/links'
 import { type Language, setLanguage, t } from '../shared/i18n'
 import { startCamera } from './camera'
 import { startLightbox } from './lightbox'
@@ -181,10 +181,8 @@ window.addEventListener(
       onShaper: (listener) => subscribe<ShapeTool | null>('overlay:shaper', listener)
     })
     ipcRenderer.send('overlay:ready')
-    // Dokument HTML ma skrypty, więc karty z danymi innych dokumentów dostaje tylko arkusz.
-    linkPreview = startLinkPreview((href) =>
-      isSheet ? (ipcRenderer.invoke('doc:link-preview', href) as Promise<LinkPreview | null>) : Promise.resolve(null)
-    )
+    // Kartę rysuje powłoka nad dokumentem, więc dokument HTML też ją ma, choć danych celu nie widzi.
+    linkPreview = startLinkPreview((href, rect) => ipcRenderer.send('doc:link-hover', href, rect))
   },
   { once: true }
 )

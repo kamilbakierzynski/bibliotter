@@ -1,5 +1,6 @@
 import type { OpenMode } from '../../../shared/links'
 import { syncFind } from './find'
+import { recordVisit } from './history'
 import { goHome, openHome, thumbOf } from './home'
 import { applyLayout, paintGlow, reflow, SHUT, OFF, sheets, sL, sR, syncCam, syncChrome, syncSel } from './layout'
 import { clearFrames, dropView, ensureView, syncCurrent, viewIsOpen } from './native'
@@ -29,6 +30,7 @@ export function syncFocus(): void {
   afterFocusChange()
   syncFind()
   rememberLayout()
+  recordVisit()
   notify()
 }
 

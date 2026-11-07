@@ -4,7 +4,7 @@ import { cleanLabel, isTicket, type LabelCount, MAX_LABEL_LENGTH, type TicketRow
 import type { DocEntry, ProjectGroup } from '../../../shared/types'
 import { t } from '../../../shared/i18n'
 import { isOtterDay } from '../../../shared/otter'
-import { rectIn } from '../motion/pill'
+import { laneIn, rectIn } from '../motion/pill'
 import { isArranging, liftedKey, pressRow } from '../shell/arrange'
 import { gripDown, gripLeave, gripMove, gripUp } from '../shell/edge'
 import { dismissCard, hideCard, hoverRow } from '../shell/hoverCard'
@@ -305,7 +305,7 @@ const TreeRow = memoComponent(function TreeRow({ row, lifted }: { row: LibraryRo
         <i className="tg" key={x} style={{ left: x }} />
       ))}
       {row.elbow !== null && <i className="te" style={{ left: row.elbow }} />}
-      <span className="row-at" style={{ marginLeft: row.indent }}>
+      <span className="row-at" style={{ marginLeft: row.indent, '--indent': `${row.indent}px` } as React.CSSProperties}>
         {row.type === 'project' ? (
           <ProjectRow row={row} />
         ) : row.type === 'folder' ? (
@@ -344,10 +344,7 @@ function LibraryList(): React.JSX.Element {
   const { rows, height } = libraryRows()
   const lifted = liftedKey()
   return (
-    <>
-      <ListTools />
-      <Windowed rows={rows} height={height} render={(row) => <TreeRow key={row.key} row={row} lifted={row.key === lifted} />} />
-    </>
+    <Windowed rows={rows} height={height} render={(row) => <TreeRow key={row.key} row={row} lifted={row.key === lifted} />} />
   )
 }
 
@@ -819,13 +816,7 @@ const SKELETON_SHAPES: Partial<Record<PanelView, SkeletonShape>> = { inbox: 'two
 
 function PanelItems(): React.JSX.Element {
   if (awaitsLibrary()) {
-    if (ui.view !== 'library') return <SkeletonList shape={SKELETON_SHAPES[ui.view]} />
-    return (
-      <>
-        <ListTools />
-        <SkeletonList shape="tree" />
-      </>
-    )
+    return <SkeletonList shape={ui.view === 'library' ? 'tree' : SKELETON_SHAPES[ui.view]} />
   }
   switch (ui.view) {
     case 'library':
@@ -865,7 +856,7 @@ function Panel(): React.JSX.Element {
   const moved = (e: PointerEvent<HTMLElement>): void => {
     if (isArranging()) return
     const row = (e.target as HTMLElement).closest<HTMLElement>('.row')
-    if (row) hoverPill.to(rectIn(row, e.currentTarget))
+    if (row) hoverPill.to(laneIn(row, e.currentTarget))
     else hoverPill.hide()
     aimAt(row?.dataset.doc ?? null)
     hoverRow(row)
@@ -886,6 +877,8 @@ function Panel(): React.JSX.Element {
           )}
         </div>
         {ui.view === 'search' && <SearchField />}
+        {/* Filtr i sortowanie stoją nad przewijaną listą, żeby nie uciekały z widoku. */}
+        {ui.view === 'library' && <ListTools />}
         <div
           className="panel-scroll"
           id="panelScroll"

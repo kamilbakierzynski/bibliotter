@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { extractLinks, LinkGraph, linkTarget } from '../src/main/docLinks'
+import { extractLinks, LinkGraph, type LinkReader, linkTarget, readLinks } from '../src/main/docLinks'
 import { isLocalHref } from '../src/shared/links'
 import type { DocEntry, LibrarySnapshot } from '../src/shared/types'
 
@@ -337,5 +337,24 @@ describe('LinkGraph', () => {
 
     expect((await graph.links(doc('zrodlo'))).outgoing.map(({ docId }) => docId)).toEqual(['pozny'])
     expect((await graph.links(doc('pozny'))).incoming).toEqual(['zrodlo'])
+  })
+
+  it('składa dokumenty czytnikiem z zewnątrz, a nieczytelnego pliku nie zapamiętuje', async () => {
+    const read: string[] = []
+    let failing = true
+    const reader: LinkReader = (path, format) => {
+      read.push(path)
+      return failing && path.endsWith('kopia.md') ? Promise.resolve(null) : readLinks(path, format)
+    }
+    const outside = new LinkGraph(() => snapshot, reader)
+
+    expect((await outside.links(doc('cel'))).incoming.sort()).toEqual(['plan', 'wiki'])
+    expect(read).toContain(doc('plan').path)
+    expect((await outside.links(doc('kopia'))).outgoing).toEqual([])
+
+    failing = false
+    read.length = 0
+    await outside.links(doc('kopia'))
+    expect(read).toEqual([doc('kopia').path])
   })
 })

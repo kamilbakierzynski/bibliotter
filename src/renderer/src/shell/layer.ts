@@ -28,7 +28,7 @@ export const typesInField = (): boolean =>
   [page.document, document].some((doc) => doc.hasFocus() && ['INPUT', 'TEXTAREA'].includes(doc.activeElement?.tagName ?? ''))
 
 /** Atrybuty korzenia niosą motyw i stan powłoki, od których zależą style doku. */
-function mirrorRoot(): void {
+function mirrorRoot(page: Window): void {
   const from = document.documentElement
   const to = page.document.documentElement
   const copy = (): void => {
@@ -38,7 +38,7 @@ function mirrorRoot(): void {
   new MutationObserver(copy).observe(from, { attributes: true })
 }
 
-function copyStyle(node: Element): Promise<void> | null {
+function copyStyle(page: Window, node: Element): Promise<void> | null {
   const copy = page.document.importNode(node, true) as HTMLStyleElement | HTMLLinkElement
   if (!(node instanceof HTMLLinkElement)) {
     page.document.head.append(copy)
@@ -55,33 +55,39 @@ function copyStyle(node: Element): Promise<void> | null {
 }
 
 /** Vite podmienia style w miejscu, więc w trybie dev warstwa idzie za powłoką. */
-function followStyles(): void {
+function followStyles(page: Window): void {
   const id = 'data-vite-dev-id'
   new MutationObserver(() => {
     for (const style of document.head.querySelectorAll(`style[${id}]`)) {
       const twin = page.document.head.querySelector(`style[${id}="${CSS.escape(style.getAttribute(id) ?? '')}"]`)
-      if (!twin) copyStyle(style)
+      if (!twin) copyStyle(page, style)
       else if (twin.textContent !== style.textContent) twin.textContent = style.textContent
     }
   }).observe(document.head, { childList: true, characterData: true, subtree: true })
 }
 
+/** Otwiera pustą stronę warstwy z motywem i stylami powłoki. Proces główny wpuszcza tylko znane nazwy. */
+export async function openLayerPage(name: string, url = ''): Promise<Window & typeof globalThis> {
+  const opened = window.open(url, name)
+  if (!opened) throw new Error(`Nie można otworzyć warstwy ${name}`)
+  const layer = opened as Window & typeof globalThis
+  layer.document.head.replaceChildren()
+  layer.document.body.replaceChildren()
+  mirrorRoot(layer)
+  const styles = [...document.head.querySelectorAll('style, link[rel="stylesheet"]')]
+  await Promise.all(styles.map((style) => copyStyle(layer, style)))
+  if (import.meta.hot) followStyles(layer)
+  return layer
+}
+
 /** Otwiera stronę warstwy. Dok mierzy się przy starcie, więc style muszą już być wczytane. */
 export async function openLayer(): Promise<void> {
-  const opened = window.open('', PAGE_NAME)
-  if (!opened) throw new Error('Nie można otworzyć warstwy doku')
-  page = opened as Window & typeof globalThis
+  page = await openLayerPage(PAGE_NAME)
   const { document: doc } = page
-  doc.head.replaceChildren()
-  doc.body.replaceChildren()
   doc.body.className = 'dock-page'
   host = doc.createElement('div')
   host.className = 'dock-room'
   doc.body.append(host)
-  mirrorRoot()
-  const styles = [...document.head.querySelectorAll('style, link[rel="stylesheet"]')]
-  await Promise.all(styles.map(copyStyle))
-  if (import.meta.hot) followStyles()
 }
 
 const same = (a: ViewerBounds, b: ViewerBounds): boolean =>

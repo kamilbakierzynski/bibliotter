@@ -26,6 +26,18 @@ export function rectIn(element: Element, box: Element): Box {
   return { x: a.left - b.left + box.scrollLeft, y: a.top - b.top + box.scrollTop, w: a.width, h: a.height }
 }
 
+/**
+ * Pozycja wiersza listy na całą szerokość pasa. Wiersz drzewa zaczyna się za wcięciem,
+ * a zaznaczenie ma obejmować też linie drzewa, jak w Claude Code.
+ */
+export function laneIn(row: Element, box: Element): Box {
+  const lane = row.closest('.vr')
+  const at = rectIn(row, box)
+  if (!lane) return at
+  const { x, w } = rectIn(lane, box)
+  return { ...at, x, w }
+}
+
 /** Znacznik wyboru: krawędź w stronę ruchu jest szybka, tylna wolna, więc w ruchu się rozciąga. */
 export class Pill {
   el: HTMLElement | null = null

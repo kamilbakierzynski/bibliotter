@@ -39,6 +39,18 @@ export function extractLinks(format: DocFormat, source: string): RawLink[] {
   }))
 }
 
+/** Czyta linki prosto z pliku. Null znaczy, że pliku nie da się teraz odczytać. */
+export async function readLinks(path: string, format: DocFormat): Promise<RawLink[] | null> {
+  try {
+    return extractLinks(format, await readFile(path, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** Składanie Markdownu to czysty procesor, więc apka podaje tu wątek spoza głównego. */
+export type LinkReader = typeof readLinks
+
 function decoded(path: string): string {
   try {
     return decodeURIComponent(path)
@@ -252,7 +264,10 @@ export class LinkGraph {
   private readonly roots = new Map<string, Promise<string>>()
   private warmTimer: NodeJS.Timeout | null = null
 
-  constructor(private readonly snapshot: () => LibrarySnapshot | null) {}
+  constructor(
+    private readonly snapshot: () => LibrarySnapshot | null,
+    private readonly read: LinkReader = readLinks
+  ) {}
 
   private currentCatalog(): Catalog | null {
     const snapshot = this.snapshot()
@@ -337,13 +352,10 @@ export class LinkGraph {
     const key = normalizePath(doc.path)
     const cached = this.parsed.get(key)
     if (cached?.mtimeMs === doc.mtimeMs && cached.size === doc.size) return cached.links
-    try {
-      const links = extractLinks(doc.format, await readFile(doc.path, 'utf8'))
-      this.parsed.set(key, { mtimeMs: doc.mtimeMs, size: doc.size, links })
-      return links
-    } catch {
-      return [] // Plik mógł zniknąć po skanie.
-    }
+    const links = await this.read(doc.path, doc.format)
+    if (!links) return [] // Plik mógł zniknąć po skanie.
+    this.parsed.set(key, { mtimeMs: doc.mtimeMs, size: doc.size, links })
+    return links
   }
 
   /** Cele lokalnych linków dokumentu. Liczy je od nowa tylko zmieniony plik albo zmieniony układ biblioteki. */

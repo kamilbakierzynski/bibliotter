@@ -13,6 +13,7 @@ import { Flyout, Nav } from './ui/Nav'
 import { Insp } from './ui/Notes'
 import { RowMenu } from './ui/RowMenu'
 import { Stage } from './ui/Stage'
+import { TerminalPanel } from './ui/Terminal'
 
 function Scrim(): React.JSX.Element {
   useShell()
@@ -35,6 +36,7 @@ export function App(): React.JSX.Element {
       </div>
       <div className="titlebar" aria-hidden="true" />
       <Stage />
+      <TerminalPanel />
       <Nav />
       <Insp />
       <Scrim />

@@ -6,6 +6,7 @@ import { find, toggleFind } from '../shell/find'
 import { closeSheet, pinPeek, splitKey } from '../shell/sheets'
 import { pinned, ui } from '../shell/state'
 import { FindBar } from './Find'
+import { HistoryNav } from './HistoryNav'
 import { Icon } from './icons'
 
 const modes = (): { id: FileMode; label: string }[] => [
@@ -41,6 +42,7 @@ export function FilePlacard({ i, doc }: { i: number; doc: DocEntry }): React.JSX
   const folder = doc.relPath.includes('/') ? doc.relPath.slice(0, doc.relPath.lastIndexOf('/')) : null
   return (
     <header className="placard" data-kind="file">
+      <HistoryNav />
       <div className="pl-text">
         <span className="pl-title" title={doc.path}>
           {doc.name}

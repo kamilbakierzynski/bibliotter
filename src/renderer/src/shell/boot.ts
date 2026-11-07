@@ -36,6 +36,7 @@ import { followFileLink } from './files'
 import { applyGlow, focusPane } from './sheets'
 import { data, findNote, notify, ui } from './state'
 import { applyMode } from './theme'
+import { startingLibrary } from './prefetch'
 
 let booted = false
 let thumbFrame = 0
@@ -161,13 +162,15 @@ function connectKeyboard(page: Window): void {
   )
   page.addEventListener('blur', () => hideCaps())
   page.addEventListener('keydown', (event) => {
+    // Terminal ma klawiaturę dla siebie, a swój skrót obsługuje sam.
+    if ((event.target as Element).closest?.('.term')) return
     if (!event.repeat) handleKey(event)
   })
   page.addEventListener('click', (event) => {
     if (isPopOpen() && !(event.target as HTMLElement).closest('#statusPop')) togglePop(false)
     if (ui.labelPop && !(event.target as HTMLElement).closest('#labelPop')) closeLabelPop()
     // Kliknięcie obok dokumentu nie zabiera mu klawiatury, więc strzałki dalej go przewijają.
-    focusLive()
+    if (!(event.target as HTMLElement).closest('.term')) focusLive()
   })
 }
 
@@ -221,7 +224,7 @@ export function boot(): void {
   void Promise.all([document.fonts.ready, layerDocument().fonts.ready]).then(resync)
 
   keepLayout()
-  void window.api.getLibrary().then((json) => {
+  void startingLibrary().then((json) => {
     setLibrary(json)
     if (!reopenLayout()) resumeLast()
   })

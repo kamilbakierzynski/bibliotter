@@ -5,6 +5,7 @@ import { t } from '../../../shared/i18n'
 import { rectIn } from '../motion/pill'
 import { clamp } from '../motion/spring'
 import { goHome, toggleHomeView } from './home'
+import { walkHistory } from './history'
 import { hideCard } from './hoverCard'
 import { hideCaps, hideFly, hideTip, jumpToPair, stepNotes, togglePop } from './keys'
 import { autoLabelDoc, closeLabelPop, toggleLabel, toggleLabelPop } from './labels'
@@ -24,6 +25,7 @@ import { closeSheet, openDoc, openNote, peekDoc, splitKey } from './sheets'
 import { canAnnotate, data, focusedDoc, labelCatalog, libraryDocs, MOD, noteText, notify, plural, STATUS, ticketHref, ui } from './state'
 import { displayName, relativeTime } from '../tree'
 import { classifyDoc, rescan, setDocStatus } from './library'
+import { showTerminal, toggleTerminalKey, togglePin } from './terminal'
 import { toggleMode } from './theme'
 
 /*
@@ -169,6 +171,10 @@ const actInputEl = (): HTMLInputElement | null => inLayer<HTMLInputElement>('act
 
 export const actions = (): PaletteAction[] => [
   { id: 'a-split', title: t('Podziel lub złóż widok'), sub: t('Przypina zerknięcie, a kilka arkuszy składa do jednego.'), icon: 'split', keys: [MOD, '\\'], run: () => splitKey() },
+  { id: 'a-term', title: t('Pokaż lub schowaj terminal'), sub: t('Terminal staje w folderze dokumentu, a schowany dalej działa.'), icon: 'term', keys: [MOD, '`'], run: () => toggleTerminalKey() },
+  { id: 'a-term-right', title: t('Terminal obok dokumentu'), sub: t('Dzieli widok w pionie: terminal staje z prawej.'), icon: 'split', keys: [], run: () => showTerminal('right') },
+  { id: 'a-term-bottom', title: t('Terminal pod dokumentem'), sub: t('Dzieli widok w poziomie: terminal staje pod spodem.'), icon: 'split-row', keys: [], run: () => showTerminal('bottom') },
+  { id: 'a-term-pin', title: t('Przypnij lub odepnij terminal'), sub: t('Przypięty zostaje na miejscu, gdy zmieniasz dokumenty.'), icon: 'pin', keys: [], run: () => togglePin() },
   { id: 'a-close', title: t('Zamknij arkusz'), sub: t('Pozostałe arkusze przejmują jego miejsce.'), icon: 'x', keys: ['X'], run: () => closeSheet(ui.focus) },
   { id: 'a-nav', title: t('Zwiń lub rozwiń nawigację'), sub: t('Zostawia sam pasek ikon.'), icon: 'left', keys: [MOD, 'B'], run: () => setNav(!ui.nav) },
   { id: 'a-comment', title: t('Dodaj komentarz'), sub: t('Kliknij miejsce w dokumencie.'), icon: 'comment', keys: ['C'], run: () => setTool('comment') },
@@ -183,6 +189,8 @@ export const actions = (): PaletteAction[] => [
   { id: 'a-pointer', title: t('Wskaźnik prezentera'), sub: t('Kliknięcie stuka w ekran, przytrzymanie rysuje, a prawy przycisk kasuje linie.'), icon: 'point', keys: ['P'], run: () => { if (focusedDoc()) setTool('pointer') } },
   { id: 'a-notes', title: t('Pokaż lub ukryj uwagi'), sub: t('Wątki zawisną obok dokumentu.'), icon: 'bubble', keys: ['I'], run: () => togglePanel('notes') },
   { id: 'a-links', title: t('Pokaż lub ukryj linki'), sub: t('Linki z dokumentu i do niego.'), icon: 'link', keys: ['O'], run: () => togglePanel('links') },
+  { id: 'a-back', title: t('Poprzedni dokument'), sub: t('Wraca do dokumentu oglądanego wcześniej, jak wstecz w przeglądarce.'), icon: 'back', keys: ['Alt', '←'], run: () => walkHistory(-1) },
+  { id: 'a-forward', title: t('Następny dokument'), sub: t('Idzie z powrotem do przodu po cofnięciu.'), icon: 'forward', keys: ['Alt', '→'], run: () => walkHistory(1) },
   { id: 'a-pair', title: t('Plan lub jego objaśnienie'), sub: t('Przeskakuje między planem w Markdownie a objaśnieniem zrobionym przez explain-plan.'), icon: 'file', keys: ['Shift', 'O'], run: () => { const doc = focusedDoc(); if (doc) jumpToPair(doc.id) } },
   { id: 'a-outline', title: t('Pokaż lub ukryj spis treści'), sub: t('Nagłówki dokumentu. Kliknięcie przenosi do rozdziału.'), icon: 'toc', keys: ['G'], run: () => togglePanel('outline') },
   { id: 'a-route', title: t('Trasa prezentacji'), sub: t('Kroki prezentacji dokumentu: kadr kamery, reszta strony i uwagi do pokazania.'), icon: 'route', keys: ['Shift', 'P'], run: () => togglePanel('route') },
@@ -250,6 +258,8 @@ export const keymap = (): { group: string; items: { keys: string[]; title: strin
     { keys: [MOD, '\\'], title: t('Przypnij, złóż lub rozłóż'), icon: 'split' },
     { keys: [MOD, '←'], title: t('Poprzedni arkusz'), icon: 'prev' },
     { keys: [MOD, '→'], title: t('Następny arkusz'), icon: 'chev' },
+    { keys: ['Alt', '←'], title: t('Poprzedni dokument'), icon: 'back' },
+    { keys: ['Alt', '→'], title: t('Następny dokument'), icon: 'forward' },
     { keys: ['X'], title: t('Zamknij arkusz'), icon: 'x' },
     { keys: ['K'], title: t('Włóż do kieszeni lub wyjmij'), icon: 'pocket' },
     { keys: [MOD, '1–9'], title: t('Otwórz dokument z kieszeni'), icon: 'pocket' }

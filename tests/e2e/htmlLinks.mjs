@@ -69,6 +69,18 @@ async function pointAt(view, selector) {
   }, selector)
 }
 
+/** Tytuł karty linku z warstwy nad dokumentami albo `null`, gdy karty nie widać. */
+async function linkCardTitle(app, wait = 3000) {
+  const deadline = Date.now() + wait
+  while (Date.now() < deadline) {
+    const layer = app.windows().find((page) => page.url() === 'about:blank#card-layer')
+    const title = await layer?.evaluate(() => document.querySelector('.lh.on .lh-title')?.textContent ?? null).catch(() => null)
+    if (title) return title
+    await delay(50)
+  }
+  return null
+}
+
 async function hover(view, selector) {
   const { x, y } = await pointAt(view, selector)
   await view.mouse.move(x, y)
@@ -186,19 +198,21 @@ export async function htmlLinkFlow(workspace, { check, entry = projectRoot }) {
       assert.deepEqual(await outside(), [])
     })
 
-    await check('dokument HTML nie dostaje kart z danymi innych dokumentów', async () => {
+    await check('dokument HTML ma kartę linku w warstwie powłoki, a nie w sobie', async () => {
       await page.mouse.move(4, 400)
       const baseline = await page.screenshot()
       await hover(page, '#dokument')
-      await delay(800)
-      assert.ok((await page.screenshot()).equals(baseline), 'nad linkiem pojawiła się karta')
+      assert.equal(await linkCardTitle(app), TARGET)
+      assert.ok((await page.screenshot()).equals(baseline), 'karta z danymi celu trafiła do dokumentu')
+      await page.mouse.move(4, 400)
+      assert.equal(await linkCardTitle(app, 600).then((title) => (title === null ? null : 'stoi')), null)
       const answers = await app.evaluate(async ({ BrowserWindow, ipcMain }) => {
         const main = BrowserWindow.getAllWindows().find((window) => window.isVisible())
         const view = main.contentView.children.find((child) => child.webContents?.getURL().startsWith('htmldoc://'))
         const ask = (channel, href) => ipcMain._invokeHandlers.get(channel)({ sender: view.webContents }, href)
-        return [await ask('doc:link-preview', 'cel.html'), await ask('doc:open-link', 'nie-ma.html')]
+        return [ipcMain._invokeHandlers.has('doc:link-preview'), await ask('doc:open-link', 'nie-ma.html')]
       })
-      assert.deepEqual(answers, [null, 'missing'])
+      assert.deepEqual(answers, [false, 'missing'])
     })
 
     await check('własny router dokumentu zachowuje kliknięcie dla siebie', async () => {

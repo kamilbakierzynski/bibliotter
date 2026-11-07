@@ -20,12 +20,14 @@ import { fileSheetFlow } from './fileSheet.mjs'
 import { htmlLinkFlow } from './htmlLinks.mjs'
 import { imageZoomFlow } from './imageZoom.mjs'
 import { linksPanelFlow } from './linksPanel.mjs'
+import { historyFlow } from './history.mjs'
 import { pairFlow } from './pair.mjs'
 import { languageFlow } from './language.mjs'
 import { mathFlow } from './math.mjs'
 import { optionsFlow } from './options.mjs'
 import { outlineFlow } from './outline.mjs'
 import { rowMenuFlow } from './rowMenu.mjs'
+import { terminalFlow } from './terminal.mjs'
 import { presentFlow } from './present.mjs'
 import { routeFlow } from './route.mjs'
 import { shapesFlow } from './shapes.mjs'
@@ -159,6 +161,18 @@ async function dockLayer(app, shell) {
     await delay(50)
   }
   throw new Error('Nie znaleziono warstwy doku')
+}
+
+/** Tytuł karty linku z warstwy nad dokumentami albo `null`, gdy karty nie widać. */
+async function linkCardTitle(app, wait = 3000) {
+  const deadline = Date.now() + wait
+  while (Date.now() < deadline) {
+    const layer = app.windows().find((page) => page.url() === 'about:blank#card-layer')
+    const title = await layer?.evaluate(() => document.querySelector('.lh.on .lh-title')?.textContent ?? null).catch(() => null)
+    if (title) return title
+    await delay(50)
+  }
+  return null
 }
 
 const docRow = (shell, name) => shell.locator('.row[data-doc]', { hasText: name })
@@ -1339,11 +1353,8 @@ async function linkFlow(workspace) {
     })
 
     await check('najechanie na link do dokumentu pokazuje kartę', async () => {
-      const baseline = await page.screenshot()
       await page.hover(link('cel.md#sekcja-dalej'))
-      await delay(800)
-      const shot = await page.screenshot({ path: join(artifacts, 'link-preview.png') })
-      assert.ok(!shot.equals(baseline))
+      assert.equal(await linkCardTitle(app), 'Cel linków')
       await page.mouse.move(4, 400)
       await delay(200)
     })
@@ -1581,6 +1592,8 @@ async function main() {
   await check('scenariusz powiększania obrazków dobiega końca', () => imageZoomFlow(workspace, { check }))
   await check('scenariusz panelu Linki dobiega końca', () => linksPanelFlow(workspace, { check }))
   await check('scenariusz pary planu i objaśnienia dobiega końca', () => pairFlow(workspace, { check }))
+  await check('scenariusz historii dokumentów dobiega końca', () => historyFlow(workspace, { check }))
+  await check('scenariusz terminala dobiega końca', () => terminalFlow(workspace, { check }))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
 
   const app = await electron.launch({

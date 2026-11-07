@@ -144,8 +144,9 @@ export async function undoFlow(workspace, { check, entry = projectRoot }) {
             const { left, top, right, bottom } = element.getBoundingClientRect()
             return { left, top, right, bottom, on: element.classList.contains('on') }
           })
+          // Nad dokiem leży jeszcze wycięcie kart linków, ale bez karty jest schowane.
           const room = await app.evaluate(({ BrowserWindow }) =>
-            BrowserWindow.getAllWindows()[0].contentView.children.at(-1).getBounds()
+            BrowserWindow.getAllWindows()[0].contentView.children.filter((child) => child.getVisible()).at(-1).getBounds()
           )
           const fits =
             room.y <= tipBox.top &&

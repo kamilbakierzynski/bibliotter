@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'electron'
 import type { Annotation, OverlayEvent } from '../shared/annotations'
 import type { AutoLabelState } from '../shared/autoLabel'
-import type { FollowLink } from '../shared/links'
+import type { FollowLink, LinkHoverCard } from '../shared/links'
+import type { TerminalOutput } from '../shared/terminal'
 import type { DocThumb, ScanProgress, ShellApi, ViewerKey, ViewerState } from '../shared/types'
 
 function subscribe<Payload>(channel: string, listener: (payload: Payload) => void): () => void {
@@ -55,6 +56,7 @@ const api: ShellApi = {
   focusDoc: (docId) => ipcRenderer.send('viewer:focus', docId),
   wheelDoc: (docId, wheel) => ipcRenderer.send('viewer:wheel', docId, wheel),
   placeLayer: (bounds) => ipcRenderer.send('layer:place', bounds),
+  placeCardLayer: (bounds) => ipcRenderer.send('card-layer:place', bounds),
   focusLayer: () => ipcRenderer.send('layer:focus'),
   revealDoc: (docId) => ipcRenderer.invoke('doc:reveal', docId),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
@@ -103,13 +105,21 @@ const api: ShellApi = {
   onAutoLabelState: (listener) => subscribe<AutoLabelState>('labels:auto-state', listener),
   onAnnotationsChanged: (listener) => subscribe<Annotation[]>('annotations:changed', listener),
   onPresentationChanged: (listener) => subscribe<null>('presentation:changed', () => listener()),
+  onLinkHover: (listener) => subscribe<LinkHoverCard | null>('link-hover:card', listener),
   onOverlayEvent: (listener) =>
     subscribe<{ docId: string; event: OverlayEvent }>('viewer:overlay-event', ({ docId, event }) =>
       listener(docId, event)
     ),
   onViewerKey: (listener) => subscribe<ViewerKey>('viewer:key', listener),
   onViewerFocus: (listener) => subscribe<string>('viewer:focus', listener),
-  onThumb: (listener) => subscribe<DocThumb>('thumbs:ready', listener)
+  onThumb: (listener) => subscribe<DocThumb>('thumbs:ready', listener),
+  startTerminal: (docId, cols, rows) => ipcRenderer.invoke('terminal:start', docId, cols, rows),
+  attachTerminal: (id) => ipcRenderer.invoke('terminal:attach', id),
+  writeTerminal: (id, data) => ipcRenderer.send('terminal:input', id, data),
+  resizeTerminal: (id, cols, rows) => ipcRenderer.send('terminal:resize', id, cols, rows),
+  killTerminal: (id) => ipcRenderer.send('terminal:kill', id),
+  onTerminalData: (listener) => subscribe<TerminalOutput>('terminal:data', listener),
+  onTerminalExit: (listener) => subscribe<number>('terminal:exit', listener)
 }
 
 contextBridge.exposeInMainWorld('api', api)

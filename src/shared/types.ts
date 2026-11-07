@@ -10,9 +10,10 @@ import type {
   StickyColor
 } from './annotations'
 import type { AutoLabelOptions, AutoLabelResult, AutoLabelState } from './autoLabel'
+import type { TerminalApi } from './terminal'
 import type { CameraLeg, CameraMove, CameraPlan, CameraShot } from './camera'
 import type { LabelColors, LabelTone } from './labels'
-import type { DocLinks, DocPair, FollowLink, LinkOutcome, LinkShotRequest, OpenMode } from './links'
+import type { DocLinks, DocPair, FollowLink, LinkHoverCard, LinkOutcome, LinkShotRequest, OpenMode } from './links'
 import type { OutlineCommand } from './outline'
 import type { PickKind, Presentation, PresentState, RouteFrame } from './presentation'
 import type { ContentSearch, FindCommand, TextQuery, TextSnippet } from './textSearch'
@@ -176,7 +177,7 @@ export type ThemeMode = 'light' | 'dark'
 /** Co wybrał użytkownik. `ThemeMode` to wynik tego wyboru. */
 export type ThemeChoice = ThemeMode | 'system'
 
-export interface ShellApi {
+export interface ShellApi extends TerminalApi {
   /** Migawka biblioteki jako JSON. Zmiany i ich efekty przychodzą przez `onLibraryChanged`. */
   getLibrary(): Promise<string>
   rescan(): Promise<void>
@@ -241,6 +242,8 @@ export interface ShellApi {
   wheelDoc(docId: string, wheel: ViewerWheel): void
   /** Ustawia wycięcie, przez które widać dok. */
   placeLayer(bounds: ViewerBounds): void
+  /** Ustawia wycięcie warstwy kart linków. `null` je chowa. */
+  placeCardLayer(bounds: ViewerBounds | null): void
   /** Klawiatura trafia do doku, np. do pola palety. */
   focusLayer(): void
   revealDoc(docId: string): Promise<void>
@@ -311,6 +314,8 @@ export interface ShellApi {
   onAnnotationsChanged(listener: (annotations: Annotation[]) => void): () => void
   /** Któraś trasa zmieniła się na dysku, np. zapisana przez agenta. */
   onPresentationChanged(listener: () => void): () => void
+  /** Wskaźnik stoi nad linkiem w dokumencie albo z niego zszedł (`null`). */
+  onLinkHover(listener: (card: LinkHoverCard | null) => void): () => void
   onOverlayEvent(listener: (docId: string, event: OverlayEvent) => void): () => void
   onViewerKey(listener: (key: ViewerKey) => void): () => void
   onViewerFocus(listener: (docId: string) => void): () => void

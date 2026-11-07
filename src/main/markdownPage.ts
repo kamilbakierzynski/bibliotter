@@ -32,15 +32,16 @@ const SHEET = `
 }
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; color: var(--ink); background: var(--paper); font: 400 15.5px/1.68 Geist, 'Segoe UI', system-ui, sans-serif; overflow-wrap: break-word; transition: background-color .42s ease, color .42s ease; }
-main { max-width: 760px; margin: 0 auto; padding: 64px clamp(24px, 7vw, 72px) 96px; }
+body { margin: 0; color: var(--ink); background: var(--paper); font: 400 clamp(15.5px, .3vw + 11.6px, 16.5px)/1.68 Geist, 'Segoe UI', system-ui, sans-serif; overflow-wrap: break-word; transition: background-color .42s ease, color .42s ease; }
+/* Na szerokim ekranie kolumna rośnie razem z oknem, a pismo trochę z nią, żeby wiersz nie robił się za długi. */
+main { max-width: clamp(760px, 40vw + 260px, 1040px); margin: 0 auto; padding: 64px clamp(24px, 7vw, 72px) 96px; }
 main > :first-child { margin-top: 0; }
 main > :last-child { margin-bottom: 0; }
 h1, h2, h3, h4, h5, h6 { margin: 2em 0 .6em; font-weight: 600; line-height: 1.22; letter-spacing: -.012em; scroll-margin-top: 24px; }
 h1 { margin-bottom: .8em; font-size: 32px; letter-spacing: -.022em; }
 h2 { padding-bottom: .35em; font-size: 22px; border-bottom: 1px solid var(--hair); }
 h3 { font-size: 18px; }
-h4 { font-size: 15.5px; }
+h4 { font-size: 1em; }
 h5, h6 { color: var(--ink-2); font-size: 14px; }
 p, ul, ol, dl, table, pre, blockquote, details { margin: 0 0 1.1em; }
 ul, ol { padding-left: 1.5em; }
@@ -62,7 +63,7 @@ code, kbd, samp, pre { font-family: 'Geist Mono', Consolas, monospace; font-size
 :not(pre) > code { padding: .14em .36em; background: var(--tint); border-radius: 5px; }
 kbd { padding: .1em .4em; background: var(--tint); border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair); }
 pre { padding: 16px 18px; overflow-x: auto; line-height: 1.55; background: var(--tint); border-radius: 10px; }
-pre code { font-size: 13px; }
+pre code { font-size: .96em; }
 table { display: block; width: fit-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; font-size: 14px; }
 th, td { padding: 8px 14px 8px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--hair); }
 th { font-weight: 600; border-bottom-color: var(--hair-2); }

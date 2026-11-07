@@ -5,6 +5,7 @@ import { typesInField } from './layer'
 import { camX, G, insRope, mH, PLACARD, ratio, rope, sheetBodies, sheetRects, sheets, sL, sR } from './layout'
 import { onWall, sheetHoldsNote } from './notes'
 import { data, focusedId, isOpen, notify, ui } from './state'
+import { sB, termHasKeyboard } from './terminalLayout'
 
 /*
  * Dokument to natywny widok, który zawsze leży nad powłoką. Wszystko, co rusza arkusz albo na
@@ -141,7 +142,7 @@ function targetBounds(i: number): ViewerBounds {
     x: Math.round(sL.t + r.l),
     y: Math.round(G.stageTop + PLACARD),
     width: Math.max(1, Math.round(r.w)),
-    height: Math.max(1, Math.round(G.H - G.stageTop - G.stageBot - PLACARD))
+    height: Math.max(1, Math.round(G.H - G.stageTop - sB.t - PLACARD))
   }
 }
 
@@ -231,6 +232,7 @@ async function sendPlacements(): Promise<void> {
 function computeQuiet(): boolean {
   if (held || zoomBusy()) return false
   if (Math.abs(sL.x - sL.t) > 0.6 || Math.abs(sR.x - sR.t) > 0.6 || Math.abs(camX.x - camX.t) > 0.6) return false
+  if (Math.abs(sB.x - sB.t) > 0.6) return false
   if (Math.abs(ratio.x - ratio.t) > 0.002) return false
   if (mH.x > 0.004) return false
   if (rope.reach > sL.x - 0.5) return false
@@ -333,7 +335,7 @@ function scheduleRefresh(): void {
 }
 
 /** Pole tekstowe w powłoce zachowuje klawiaturę, dopóki ktoś w nim pisze. */
-const shellKeepsKeyboard = (): boolean => ui.cmd || ui.labelPop || typesInField()
+const shellKeepsKeyboard = (): boolean => ui.cmd || ui.labelPop || typesInField() || termHasKeyboard()
 
 /** Widoki stają na arkuszach w jednym poleceniu, a zrzuty znikają dopiero, gdy są już pod nimi. */
 async function enter(going: number[]): Promise<void> {

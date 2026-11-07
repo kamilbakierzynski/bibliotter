@@ -27,7 +27,9 @@ import { toggleDrawings } from './drawings'
 import { copyReference } from './reference'
 import { endPick } from './route'
 import { escapeFind, searchKey } from './search'
+import { walkHistory } from './history'
 import { closePeek, closeSheet, focusPane, splitKey } from './sheets'
+import { toggleTerminalKey } from './terminal'
 import { toggleMode } from './theme'
 import { canAnnotate, data, focusedDoc, focusedId, MOD, notify, pinned, ui } from './state'
 
@@ -81,6 +83,7 @@ const holdSpots = (): CapSpot[] => [
   { sel: '#cmdBtn', keys: ['?'], label: t('Wszystkie skróty'), side: 'top' },
   { sel: '.pane.focused [data-moved="find"]', keys: [MOD, 'F'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="split"]', keys: [MOD, '\\'], side: 'bottom', end: true },
+  { sel: '.pane.focused [data-moved="term"]', keys: [MOD, '`'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="insp"]', keys: ['I'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="links"]', keys: ['O'], side: 'bottom' },
   { sel: '.pane.focused .pl-pair', keys: ['Shift', 'O'], side: 'bottom' },
@@ -379,10 +382,22 @@ export function handleKey(e: KeyLike): void {
     splitKey()
     return
   }
+  if (mod && (e.code === 'Backquote' || k === '`') && !ui.cmd) {
+    e.preventDefault()
+    toggleTerminalKey()
+    return
+  }
   if (mod && pinned() > 1 && ui.peek === null && !typing && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault()
     const at = ui.order.indexOf(ui.focus) + (e.key === 'ArrowRight' ? 1 : -1)
     focusPane(ui.order[clamp(at, 0, pinned() - 1)] as number)
+    return
+  }
+  // Alt ← i Alt → jak w przeglądarce, a boczne przyciski myszy przychodzą z okna jako BrowserBack i BrowserForward.
+  const walk = e.key === 'BrowserBack' || (e.altKey && !mod && e.key === 'ArrowLeft') ? -1 : e.key === 'BrowserForward' || (e.altKey && !mod && e.key === 'ArrowRight') ? 1 : 0
+  if (walk && !typing && !ui.cmd) {
+    e.preventDefault()
+    walkHistory(walk)
     return
   }
   if (ui.cmd) {

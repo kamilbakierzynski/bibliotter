@@ -46,6 +46,7 @@ import { type AppInfo, cleanHosts } from '../shared/options'
 import { parseFindCommand, parseTextQuery } from '../shared/textSearch'
 import { currentDocumentPath, writeCurrentDocument } from './agentApi'
 import { readAgentSetup } from './agentSetup'
+import { AnalysisPool } from './analysisPool'
 import { AnnotationHistory } from './annotationHistory'
 import {
   AnnotationStore,
@@ -75,6 +76,7 @@ import { fileFragment, lineSuffix, parseFileFragment } from '../shared/fileView'
 import { PresentationStore, readPresentation, watchPresentation } from './presentationStore'
 import { watchSignal } from './signals'
 import { Thumbnailer } from './thumbnails'
+import { terminalDir, Terminals } from './terminals'
 // Windows bierze z ICO ramkę narysowaną dla danego rozmiaru, a nie zmniejszony wzorzec.
 import iconIco from '../../resources/icon.ico?asset'
 import iconPng from '../../resources/icon.png?asset'
@@ -94,6 +96,10 @@ const locate = commandRunner(process.platform === 'win32' ? 'where' : 'which')
 let mainWindow: BrowserWindow | null = null
 let viewer: DocViewer | null = null
 let dockLayer: DockLayer | null = null
+/** Warstwa kart linków nad dokumentami. */
+let cardLayer: DockLayer | null = null
+/** Ostatnie najechanie na link. Starsza odpowiedź nie może zasłonić nowszej. */
+let linkHoverTurn = 0
 let thumbnails: Thumbnailer | null = null
 let hitPreviews: HitPreviewer | null = null
 let library: LibraryClient | null = null
@@ -121,8 +127,11 @@ const ignore = (): void => {}
 const annotations = new AnnotationStore(join(dataDir(), 'library'))
 const presentations = new PresentationStore(join(dataDir(), 'library'))
 const searcher = new ContentSearcher(join(__dirname, 'searchWorker.js'), join(dataDir(), 'cache', 'index.sqlite'))
-const links = new LinkGraph(() => library?.getSnapshot() ?? null)
+/** Linki zwrotne wymagają złożenia każdego dokumentu, a ten wątek ma obsługiwać okno. */
+const linkReaders = new AnalysisPool(join(__dirname, 'analysisWorker.js'))
+const links = new LinkGraph(() => library?.getSnapshot() ?? null, linkReaders.readLinks)
 const files = new FileSheets()
+const terminals = new Terminals((channel, payload) => sendToShell(channel, payload))
 
 /** Wysyła uwagi do panelu i do warstw otwartych dokumentów. Działa też po zmianach agenta. */
 async function pushAnnotations(): Promise<void> {
@@ -223,6 +232,21 @@ async function followLinkFrom(docId: string, href: string, mode: OpenMode): Prom
 async function previewLink(docId: string, href: string): Promise<LinkPreview | null> {
   const doc = library?.getEntry(docId)
   return doc ? links.preview(doc, href, (target) => thumbnails?.stored(target) ?? Promise.resolve(null)) : null
+}
+
+/** Kartę dostaje powłoka, nie dokument, więc działa ona też w dokumentach HTML ze skryptami. */
+function hoverLink(hover: { docId: string; href: string; rect: ViewerBounds } | null): void {
+  const turn = ++linkHoverTurn
+  if (!hover) {
+    sendToShell('link-hover:card', null)
+    return
+  }
+  previewLink(hover.docId, hover.href)
+    .catch(() => null)
+    .then((preview) => {
+      if (turn === linkHoverTurn) sendToShell('link-hover:card', preview && { preview, link: hover.rect })
+    })
+    .catch(ignore)
 }
 
 /** Agent widzi jako bieżący dokument z fokusem w powłoce. */
@@ -616,6 +640,11 @@ function registerIpc(): void {
     return entry ?? null
   })
   handle('viewer:close', (docId: unknown) => viewer?.close(String(docId)))
+  handle('viewer:reload', async (docId: unknown) => {
+    // Arkusz pliku czyta plik i HEAD od nowa, zanim strona przeładuje się z nowymi danymi.
+    if (files.has(String(docId))) await files.refresh(String(docId))
+    viewer?.reload(String(docId))
+  })
   handle('viewer:layout', (placements: unknown) => viewer?.setLayout(parsePlacements(placements)))
   handle('viewer:capture', (docId: unknown) => viewer?.capture(String(docId)) ?? null)
   handle('viewer:camera', (docId: unknown, shot: unknown) =>
@@ -683,6 +712,11 @@ function registerIpc(): void {
   ipcMain.on('layer:place', (event, bounds: unknown) => {
     assertShell(event)
     if (isValidBounds(bounds)) dockLayer?.place(bounds)
+  })
+  ipcMain.on('card-layer:place', (event, bounds: unknown) => {
+    assertShell(event)
+    if (isValidBounds(bounds)) cardLayer?.place(bounds)
+    else cardLayer?.hide()
   })
   ipcMain.on('layer:focus', (event) => {
     assertShell(event)
@@ -767,6 +801,23 @@ function registerIpc(): void {
     assertShell(event)
     if (mode === 'light' || mode === 'dark' || mode === 'system') applyTheme(mode)
   })
+  handle('terminal:start', (docId: unknown, cols: unknown, rows: unknown) => {
+    const doc = typeof docId === 'string' ? library?.getEntry(docId) : undefined
+    return terminals.start(terminalDir(doc && !doc.missing ? doc.path : null), cols, rows)
+  })
+  handle('terminal:attach', (id: unknown) => terminals.attach(id))
+  ipcMain.on('terminal:input', (event, id: unknown, data: unknown) => {
+    assertShell(event)
+    terminals.write(id, data)
+  })
+  ipcMain.on('terminal:resize', (event, id: unknown, cols: unknown, rows: unknown) => {
+    assertShell(event)
+    terminals.resize(id, cols, rows)
+  })
+  ipcMain.on('terminal:kill', (event, id: unknown) => {
+    assertShell(event)
+    terminals.kill(id)
+  })
 }
 
 function createWindow(): BrowserWindow {
@@ -790,10 +841,25 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  window.once('ready-to-show', () => window.show())
+  window.once('ready-to-show', () => {
+    window.show()
+    viewer?.warmUp()
+  })
   const layer = new DockLayer(window)
   dockLayer = layer
-  window.webContents.setWindowOpenHandler((details) => layer.open(details))
+  const cards = new DockLayer(window, 'card-layer')
+  cards.hide()
+  cardLayer = cards
+  window.webContents.setWindowOpenHandler((details) => {
+    const dock = layer.open(details)
+    return dock.action === 'allow' ? dock : cards.open(details)
+  })
+  window.on('blur', () => hoverLink(null))
+  // Boczne przyciski myszy i klawisze multimedialne cofają po historii dokumentów w powłoce.
+  window.on('app-command', (_event, command) => {
+    const key = command === 'browser-backward' ? 'BrowserBack' : command === 'browser-forward' ? 'BrowserForward' : null
+    if (key) sendToShell('viewer:key', { type: 'down', key, code: key, ctrl: false, shift: false, alt: false })
+  })
   // Vite przeładowuje stronę pod tym samym adresem. Każda inna nawigacja opuściłaby powłokę.
   window.webContents.on('will-navigate', (event) => {
     if (event.url !== window.webContents.getURL()) event.preventDefault()
@@ -819,9 +885,12 @@ function createWindow(): BrowserWindow {
     onOverlayReady: (docId) => void pushDocAnnotations(docId),
     onKey: (key) => sendToShell('viewer:key', key),
     onFocus: (docId) => sendToShell('viewer:focus', docId),
-    onStacked: () => layer.raise(),
+    onStacked: () => {
+      layer.raise()
+      cards.raise()
+    },
     openLink: followLinkFrom,
-    previewLink,
+    onLinkHover: hoverLink,
     matchPage: (text, query) => searcher.matchPage(text, query)
   })
 
@@ -853,6 +922,8 @@ function createWindow(): BrowserWindow {
     hitPreviews = null
     dockLayer?.close()
     dockLayer = null
+    cardLayer?.close()
+    cardLayer = null
     mainWindow = null
     viewer?.dispose()
     viewer = null
@@ -861,10 +932,7 @@ function createWindow(): BrowserWindow {
 }
 
 async function start(): Promise<void> {
-  await app.whenReady()
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
-  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
-
+  // Biblioteka nie potrzebuje okna, więc wczytuje ostatnią migawkę, zanim Electron skończy start.
   config = await loadConfig()
   setLanguage(config.language)
   lastScanAt = Date.now()
@@ -886,6 +954,9 @@ async function start(): Promise<void> {
     () => sendToShell('labels:auto-state', autoLabelState()),
     () => config.autoLabelTickets
   )
+  await app.whenReady()
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
   registerIpc()
   stopWatchingAnnotations = watchAnnotations(join(dataDir(), 'library'), () => void pushAnnotations())
   stopWatchingLabels = watchSignal(join(dataDir(), 'library'), 'labels', () => library?.reloadLabels().catch(ignore))
@@ -907,6 +978,8 @@ if (app.requestSingleInstanceLock()) {
   })
   app.on('will-quit', (event) => {
     searcher.close()
+    linkReaders.close()
+    terminals.killAll()
     const closing = library?.close()
     if (!closing) return
     library = null

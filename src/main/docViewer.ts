@@ -24,7 +24,7 @@ import {
 import type { CameraLeg, CameraMove, CameraPlan, CameraShot } from '../shared/camera'
 import { MAX_STEP_TITLE, type PickKind, parseStepCamera, type PresentState, type RouteFrame } from '../shared/presentation'
 import { type Language, language, t } from '../shared/i18n'
-import { type LinkOutcome, type LinkPreview, type OpenMode, parseOpenMode } from '../shared/links'
+import { type LinkOutcome, type OpenMode, parseOpenMode } from '../shared/links'
 import { type OutlineCommand, parseOutline } from '../shared/outline'
 import { type FindCommand, parseTextQuery, type TextQuery, type TextSpan } from '../shared/textSearch'
 import type { ViewerBounds, ViewerFrame, ViewerKey, ViewerPlacement, ViewerState, ViewerWheel } from '../shared/types'
@@ -58,6 +58,10 @@ const PAINT_FALLBACK_MS = 120
 /** Zapasowy widok powstaje chwilę po otwarciu, a przy starcie ustępuje miejsca powłoce. */
 const SPARE_DELAY_MS = 100
 const SPARE_START_DELAY_MS = 1000
+/** Po pierwszym rysowaniu powłoka czeka już tylko na dane, więc zapas może ruszyć wcześniej. */
+const SPARE_AFTER_SHOW_MS = 300
+/** Dłuższy adres w linku to nie link do pliku. */
+const MAX_HOVER_HREF = 4096
 /** Pusta strona nie przypisuje procesu do żadnego adresu, więc dokument może w nim zamieszkać. */
 const SPARE_URL = 'about:blank#zapas'
 
@@ -90,7 +94,8 @@ interface DocViewerOptions {
   onStacked: () => void
   /** Prawdziwie kliknięty link do pliku w dokumencie. */
   openLink: (docId: string, href: string, mode: OpenMode) => Promise<LinkOutcome>
-  previewLink: (docId: string, href: string) => Promise<LinkPreview | null>
+  /** Wskaźnik stoi nad linkiem w dokumencie, a prostokąt linku jest już w układzie okna. `null` chowa kartę. */
+  onLinkHover: (hover: { docId: string; href: string; rect: ViewerBounds } | null) => void
   /** Liczy wyrażenie regularne poza stroną dokumentu. */
   matchPage: (text: string, query: TextQuery) => Promise<TextSpan[] | 'pattern' | 'slow'>
 }
@@ -211,7 +216,9 @@ function parseOverlayEvent(value: unknown): OverlayEvent | null {
 }
 
 /** Skróty apki, które dokument ma oddać, zanim je zobaczą jego skrypty. */
-function isAppChord(key: string, ctrl: boolean): boolean {
+function isAppChord(key: string, ctrl: boolean, alt = false): boolean {
+  // Alt ← i Alt → chodzą po historii dokumentów w powłoce.
+  if (alt && !ctrl && (key === 'ArrowLeft' || key === 'ArrowRight')) return true
   return (ctrl && ['k', 'b', 'f', ',', '\\'].includes(key.toLowerCase())) || key === 'F3' || key === 'F4'
 }
 
@@ -257,6 +264,8 @@ export class DocViewer {
   /** Rozmiar, z jakim rodzi się nowy widok. Układ strony od razu jest prawie właściwy. */
   private restingSize: ViewerBounds = { x: 0, y: 0, width: 800, height: 600 }
   private readonly camera = new DocCamera()
+  /** Dokument, nad którego linkiem stoi teraz karta. */
+  private hovered: string | null = null
 
   constructor(private readonly options: DocViewerOptions) {
     this.documents = session.fromPartition(DOC_PARTITION)
@@ -268,7 +277,20 @@ export class DocViewer {
       }
     })
     this.handleDoc('doc:open-link', (docId, href, mode) => this.options.openLink(docId, href, parseOpenMode(mode)), 'none')
-    this.handleSheet('doc:link-preview', (docId, href) => this.options.previewLink(docId, href), null)
+    // Dokument mówi tylko, gdzie stoi link. Dane celu idą do powłoki, a dokument ich nie dostaje.
+    ipcMain.on('doc:link-hover', (event, href: unknown, rect: unknown) => {
+      const open = this.viewOf(event.sender)
+      if (!open) return
+      const parsed = parseRect(rect)
+      if (typeof href !== 'string' || href.length > MAX_HOVER_HREF || !parsed) {
+        if (this.hovered === open.docId) this.dropHover()
+        return
+      }
+      const origin = open.view.getBounds()
+      this.hovered = open.docId
+      const box = { x: origin.x + parsed.x, y: origin.y + parsed.y, width: parsed.width, height: parsed.height }
+      this.options.onLinkHover({ docId: open.docId, href, rect: box })
+    })
     // Wyrażenie liczy też ukrytemu oknu podglądu trafienia. Wynik to tylko pozycje w tekście, który strona sama przysłała.
     ipcMain.removeHandler('doc:find-pattern')
     ipcMain.handle('doc:find-pattern', (event, text: unknown, query: unknown): Promise<TextSpan[] | 'pattern' | 'slow'> | 'pattern' => {
@@ -336,13 +358,11 @@ export class DocViewer {
     })
   }
 
-  /** Dane innych dokumentów dostaje tylko arkusz Markdownu. Nie ma skryptów, które mogłyby je czytać. */
-  private handleSheet<Result>(
-    channel: string,
-    listener: (docId: string, href: string, flag: unknown) => Promise<Result>,
-    refused: Result
-  ): void {
-    this.handleDoc(channel, async (docId, href, flag) => (this.isSheet(docId) ? listener(docId, href, flag) : refused), refused)
+  /** Karta stoi przy linku, więc znika, gdy widok się przesunie albo zamknie. */
+  private dropHover(): void {
+    if (this.hovered === null) return
+    this.hovered = null
+    this.options.onLinkHover(null)
   }
 
   private isSheet(docId: string): boolean {
@@ -538,6 +558,11 @@ export class DocViewer {
     }, delay)
   }
 
+  /** Okno jest już na ekranie. Pierwszy dokument otwiera się zwykle zaraz po nim. */
+  warmUp(): void {
+    if (!this.spare) this.scheduleSpare(SPARE_AFTER_SHOW_MS)
+  }
+
   /** Okno zniknęło, więc zapasowy widok nie ma już gdzie stanąć. */
   dispose(): void {
     if (this.spareTimer) clearTimeout(this.spareTimer)
@@ -596,7 +621,7 @@ export class DocViewer {
       const type = input.type === 'keyDown' ? 'down' : 'up'
       const ctrl = input.control || input.meta
       const alone = input.key === 'Control' || input.key === 'Meta'
-      const chord = isAppChord(input.key, ctrl)
+      const chord = isAppChord(input.key, ctrl, input.alt)
       if (chord) event.preventDefault()
       if (input.isAutoRepeat) return
       if (alone || chord || (ctrl && type === 'down')) {
@@ -638,6 +663,7 @@ export class DocViewer {
   close(docId: string): void {
     const open = this.views.get(docId)
     if (!open) return
+    if (this.hovered === docId) this.dropHover()
     this.views.delete(docId)
     this.stack = this.stack.filter((id) => id !== docId)
     this.finds.delete(docId)
@@ -676,6 +702,7 @@ export class DocViewer {
 
   /** Ustawia widoki od spodu do góry. Widok nieżywy zostaje odstawiony i tylko zmienia rozmiar. */
   setLayout(placements: ViewerPlacement[]): void {
+    this.dropHover()
     const resting = placements.at(-1)?.bounds
     if (resting) this.restingSize = resting
     for (const { docId, bounds, live } of placements) {

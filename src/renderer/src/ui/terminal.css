@@ -1,0 +1,31 @@
+/* Terminal obok dokumentów. Pozycję i rozmiar co klatkę ustawia `renderTerminal`. */
+:root { --term-bg: #ffffff; }
+[data-mode="dark"] { --term-bg: #141417; }
+
+.term { position: absolute; top: var(--stage-top); bottom: var(--stage-bot); z-index: 11; display: flex; flex-direction: column; min-width: 0; visibility: hidden; }
+.term[data-side="bottom"] { bottom: auto; }
+.term-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; height: 36px; padding: 0 2px 0 4px; }
+.term-title { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; font: var(--pl-w) var(--pl-s)/1.25 var(--title); letter-spacing: var(--title-ls); }
+.term-title .ic { flex: none; width: 15px; height: 15px; color: var(--ink-2); }
+.term-cwd { min-width: 0; overflow: hidden; color: var(--ink-3); font: 400 var(--meta-s)/1.25 var(--meta); letter-spacing: var(--meta-ls); text-overflow: ellipsis; }
+.term-actions { display: flex; flex: none; align-items: center; gap: 1px; transition: margin-right .5s var(--spring); }
+/* Z prawej terminal stoi pod przyciskami okna, więc to on robi im miejsce, a nie ostatni arkusz. */
+.term.under-caption .term-actions { margin-right: 124px; }
+.stage.term-right.under-caption .pane.last .pl-actions { margin-right: 0; }
+
+.term-body { position: relative; flex: 1; min-height: 0; overflow: clip; background: var(--term-bg); border-radius: var(--r-sheet); box-shadow: var(--sh-sheet); }
+.term-screen { position: absolute; inset: 10px 4px 8px 12px; }
+/* Pod spodem dok leży na dole terminala, więc ostatni wiersz stoi nad nim. */
+.term[data-side="bottom"] .term-screen { bottom: calc(var(--dock-zone) - var(--stage-bot) + 6px); }
+.term-screen .xterm { height: 100%; }
+.term-screen .xterm-viewport { background: transparent !important; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+.term-grip { position: absolute; z-index: 2; display: grid; place-items: center; touch-action: none; }
+.term[data-side="right"] .term-grip { top: 44px; bottom: 8px; left: calc(-1 * var(--stage-gap)); width: var(--stage-gap); cursor: ew-resize; }
+.term[data-side="bottom"] .term-grip { top: calc(-1 * var(--stage-gap)); left: 8px; right: 8px; height: var(--stage-gap); cursor: ns-resize; }
+.term-grip i { display: block; background: var(--line); border-radius: 4px; opacity: 0; transition: opacity .2s, width .34s var(--spring-pop), height .34s var(--spring-pop), background-color .2s; }
+.term[data-side="right"] .term-grip i { width: 4px; height: 36px; }
+.term[data-side="bottom"] .term-grip i { width: 36px; height: 4px; }
+.term-grip:hover i { opacity: 1; background: var(--ink-2); }
+.term[data-side="right"] .term-grip:hover i { height: 64px; }
+.term[data-side="bottom"] .term-grip:hover i { width: 64px; }

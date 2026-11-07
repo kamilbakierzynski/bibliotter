@@ -1,7 +1,6 @@
 import { type BaseWindow, type HandlerDetails, View, WebContentsView, type WindowOpenHandlerResponse } from 'electron'
 import type { ViewerBounds } from '../shared/types'
 
-const LAYER_NAME = 'dock-layer'
 const TRANSPARENT = '#00000000'
 
 /**
@@ -12,20 +11,26 @@ const TRANSPARENT = '#00000000'
  * Strona ma zawsze rozmiar okna, a widać ją tylko przez wycięcie, czyli zewnętrzny `View`. Tylko
  * w wycięciu warstwa rysuje i łapie mysz, a reszta trafia do dokumentów pod nią. Przesunięcie
  * wycięcia nie zmienia rozmiaru strony, więc dok nie drgnie, gdy wycięcie idzie za nim.
+ *
+ * Tak samo działa warstwa kart linków. Ma własne wycięcie, bo karta stoi przy linku, a nie przy doku.
  */
 export class DockLayer {
   private readonly cutout = new View()
   private page: WebContentsView | null = null
   private box: ViewerBounds = { x: 0, y: 0, width: 0, height: 0 }
 
-  constructor(private readonly window: BaseWindow) {
+  constructor(
+    private readonly window: BaseWindow,
+    private readonly name = 'dock-layer'
+  ) {
     window.contentView.addChildView(this.cutout)
     window.on('resize', () => this.alignPage())
   }
 
-  /** To jedyne okno, które powłoka może otworzyć. */
+  /** Powłoka może otworzyć tylko okna warstw, każde raz. */
   open({ frameName, url }: HandlerDetails): WindowOpenHandlerResponse {
-    if (frameName !== LAYER_NAME || this.page || !['', 'about:blank'].includes(url)) return { action: 'deny' }
+    // Pusta strona może nieść nazwę warstwy we fragmencie, żeby testy odróżniły warstwy od siebie.
+    if (frameName !== this.name || this.page || !['', 'about:blank', `about:blank#${this.name}`].includes(url)) return { action: 'deny' }
     return {
       action: 'allow',
       createWindow: (options) => {
@@ -52,7 +57,13 @@ export class DockLayer {
   place(box: ViewerBounds): void {
     this.box = box
     this.cutout.setBounds(box)
+    this.cutout.setVisible(true)
     this.alignPage()
+  }
+
+  /** Schowane wycięcie nie łapie myszy. Strona zostaje na miejscu do następnego `place`. */
+  hide(): void {
+    this.cutout.setVisible(false)
   }
 
   /** Nowy widok dokumentu ląduje na wierzchu, a dok musi zostać nad nim. */

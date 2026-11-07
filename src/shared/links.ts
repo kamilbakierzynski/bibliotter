@@ -43,6 +43,16 @@ export interface LinkPreview {
 }
 
 /**
+ * Karta linku rysowana przez powłokę w warstwie nad dokumentami. Dane innego dokumentu
+ * nie trafiają więc do procesu dokumentu, a karta działa też w dokumentach HTML.
+ */
+export interface LinkHoverCard {
+  preview: LinkPreview
+  /** Wiersz linku pod wskaźnikiem w układzie okna. */
+  link: { x: number; y: number; width: number; height: number }
+}
+
+/**
  * Podgląd wiersza z panelu Linki. Link wychodzący pokazuje cel, ustawiony na kotwicy, jeśli ją ma,
  * a link zwrotny pokazuje dokument `from` w miejscu, z którego linkuje do `docId`.
  */

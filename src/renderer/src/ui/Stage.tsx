@@ -10,15 +10,19 @@ import { classifyDoc } from '../shell/library'
 import { touch } from '../shell/native'
 import { find, toggleFind } from '../shell/find'
 import { closePeek, closeSheet, focusPane, pinPeek, reloadSheet, splitKey } from '../shell/sheets'
+import { toggleTerminal } from '../shell/terminal'
+import { termShown } from '../shell/terminalLayout'
 import { colorAttr, data, findNote, pinned, ticketHref, ui, useShell } from '../shell/state'
 import { blockedLabel, displayName, relativeTime } from '../tree'
 import { FilePlacard } from './FilePlacard'
 import { FindBar } from './Find'
+import { HistoryNav } from './HistoryNav'
 import { Home } from './Home'
 import { Icon } from './icons'
 import { DraftBubble, ThreadPop } from './Notes'
 import { PairLink } from './Pair'
 import { SkeletonSheet } from './Skeleton'
+import { sheetTipLeave, sheetTipOver, sheetTipPress } from '../shell/sheetTips'
 
 const pullRequestOf = (doc: DocEntry): { number: number; title: string; url: string } | undefined =>
   doc.branch ? data.library?.projects.find((project) => project.name === doc.projectName)?.pullRequests[doc.branch] : undefined
@@ -67,6 +71,7 @@ function Placard({ i, doc }: { i: number; doc: DocEntry | undefined }): React.JS
   const hidden = drawingsHidden(doc.id)
   return (
     <header className="placard">
+      <HistoryNav />
       <div className="pl-text">
         <span className="pl-title" title={doc.path}>
           {displayName(doc)}
@@ -80,7 +85,12 @@ function Placard({ i, doc }: { i: number; doc: DocEntry | undefined }): React.JS
         )}
       </div>
       {find.open && find.docId === doc.id && ui.panes[ui.focus] === doc.id && <FindBar />}
-      <div className="pl-actions">
+      <div
+        className="pl-actions"
+        onPointerOver={(e) => sheetTipOver(e.target)}
+        onPointerLeave={sheetTipLeave}
+        onPointerDown={sheetTipPress}
+      >
         <span className="pl-moved">
           {(hidden || hasDrawings(doc.id)) && (
             <button
@@ -88,25 +98,37 @@ function Placard({ i, doc }: { i: number; doc: DocEntry | undefined }): React.JS
               data-moved="drawings"
               aria-pressed={hidden}
               aria-label={hidden ? t('Pokaż rysunki') : t('Schowaj rysunki')}
+              data-tip={hidden ? t('Pokaż rysunki na dokumencie') : t('Schowaj rysunki z dokumentu')}
+              data-keys="D"
               onClick={() => toggleDrawings(doc.id)}
             >
               <Icon name={hidden ? 'eye-off' : 'shape'} />
             </button>
           )}
-          <button className="mini" data-moved="find" aria-label={t('Szukaj w dokumencie')} onClick={toggleFind}>
+          <button className="mini" data-moved="find" aria-label={t('Szukaj w dokumencie')} data-tip={t('Szukaj w tekście dokumentu')} data-keys="MOD F" onClick={toggleFind}>
             <Icon name="textsearch" />
           </button>
-          <button className={pinned() > 1 ? 'mini on' : 'mini'} data-moved="split" aria-label={t('Podziel widok')} onClick={splitKey}>
+          <button className={pinned() > 1 ? 'mini on' : 'mini'} data-moved="split" aria-label={t('Podziel widok')} data-tip={pinned() > 1 ? t('Zostaw sam ten dokument') : t('Otwórz drugi dokument obok')} data-keys={'MOD \\'} onClick={splitKey}>
             <Icon name="split" />
           </button>
-          <button className={ui.insp && ui.inspView === 'notes' ? 'mini on' : 'mini'} data-moved="insp" aria-label={t('Uwagi')} onClick={() => togglePanel('notes')}>
+          <button
+            className={termShown() ? 'mini on' : 'mini'}
+            data-moved="term"
+            aria-label={t('Terminal')}
+            data-tip={termShown() ? t('Schowaj terminal') : t('Otwórz terminal obok dokumentu')}
+            data-keys="MOD `"
+            onClick={() => toggleTerminal(doc.id)}
+          >
+            <Icon name="term" />
+          </button>
+          <button className={ui.insp && ui.inspView === 'notes' ? 'mini on' : 'mini'} data-moved="insp" aria-label={t('Uwagi')} data-tip={t('Uwagi do dokumentu')} data-keys="I" onClick={() => togglePanel('notes')}>
             <Icon name="bubble" />
             {notes > 0 && <em>{notes}</em>}
           </button>
-          <button className={ui.insp && ui.inspView === 'links' ? 'mini on' : 'mini'} data-moved="links" aria-label={t('Linki')} onClick={() => togglePanel('links')}>
+          <button className={ui.insp && ui.inspView === 'links' ? 'mini on' : 'mini'} data-moved="links" aria-label={t('Linki')} data-tip={t('Linki z dokumentu i do niego')} data-keys="O" onClick={() => togglePanel('links')}>
             <Icon name="link" />
           </button>
-          <button className={ui.insp && ui.inspView === 'outline' ? 'mini on' : 'mini'} data-moved="outline" aria-label={t('Spis treści')} onClick={() => togglePanel('outline')}>
+          <button className={ui.insp && ui.inspView === 'outline' ? 'mini on' : 'mini'} data-moved="outline" aria-label={t('Spis treści')} data-tip={t('Spis treści dokumentu')} data-keys="G" onClick={() => togglePanel('outline')}>
             <Icon name="toc" />
           </button>
         </span>
@@ -126,20 +148,26 @@ function Placard({ i, doc }: { i: number; doc: DocEntry | undefined }): React.JS
             <span>{t('Pokaż nową wersję')}</span>
           </button>
         ) : (
-          <button className="mini" data-act="refresh" aria-label={t('Odśwież dokument')} onClick={() => reloadSheet(doc.id)}>
+          <button className="mini" data-act="refresh" aria-label={t('Odśwież dokument')} data-tip={t('Wczytaj dokument od nowa')} onClick={() => reloadSheet(doc.id)}>
             <Icon name="refresh" />
           </button>
         )}
         {!doc.missing && (
-          <button className="mini" data-act="reveal" aria-label={t('Pokaż w folderze')} onClick={() => void window.api.revealDoc(doc.id)}>
+          <button className="mini" data-act="reveal" aria-label={t('Pokaż w folderze')} data-tip={t('Pokaż plik w folderze')} onClick={() => void window.api.revealDoc(doc.id)}>
             <Icon name="reveal" />
           </button>
         )}
-        <button className="ask pl-pin" onClick={pinPeek}>
+        <button className="ask pl-pin" data-tip={t('Zostaw ten dokument obok otwartego')} data-keys={'MOD \\'} onClick={pinPeek}>
           <Icon name="split" />
           <span>{t('Przypnij obok')}</span>
         </button>
-        <button className="mini pl-close" aria-label={t('Zamknij arkusz')} onClick={() => closeSheet(i)}>
+        <button
+          className="mini pl-close"
+          aria-label={t('Zamknij arkusz')}
+          data-tip={ui.peek === i ? t('Zamknij podgląd') : t('Zamknij dokument')}
+          data-keys="X"
+          onClick={() => closeSheet(i)}
+        >
           <Icon name="x" />
         </button>
       </div>

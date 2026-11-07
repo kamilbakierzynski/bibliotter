@@ -75,6 +75,25 @@ export function glowOf(image: NativeImage): DocThumb['glow'] {
   return [css(first), css(second ?? first), css(third ?? first)]
 }
 
+/** Poświata leży obok miniatury, bo policzenie jej od nowa to dekodowanie obrazu na głównym wątku. */
+const glowPath = (file: string): string => `${file}.glow`
+
+function parseGlow(json: string): DocThumb['glow'] | null {
+  try {
+    const glow: unknown = JSON.parse(json)
+    return Array.isArray(glow) && glow.length === 3 && glow.every((color) => typeof color === 'string')
+      ? (glow as DocThumb['glow'])
+      : null
+  } catch {
+    return null
+  }
+}
+
+interface ReadyThumb {
+  jpeg: Buffer
+  glow: DocThumb['glow']
+}
+
 interface ThumbnailerOptions {
   dir: string
   viewer: () => DocViewer | null
@@ -174,17 +193,22 @@ export class Thumbnailer {
     if (!stamp) return
     const file = join(this.options.dir, `${docId}-${stamp}.jpg`)
     const stored = await readFile(file).catch(() => null)
-    const jpeg = stored ?? (await this.freshJpeg(docId, stamp, file, slot))
-    if (!jpeg || this.closed) return
+    const thumb = stored ? { jpeg: stored, glow: await this.storedGlow(file, stored) } : await this.freshJpeg(docId, stamp, file, slot)
+    if (!thumb || this.closed) return
     this.sent.set(docId, stamp)
-    this.options.send({
-      docId,
-      url: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
-      glow: glowOf(nativeImage.createFromBuffer(jpeg))
-    })
+    this.options.send({ docId, url: `data:image/jpeg;base64,${thumb.jpeg.toString('base64')}`, glow: thumb.glow })
   }
 
-  private async freshJpeg(docId: string, stamp: string, file: string, slot: Slot): Promise<Buffer | null> {
+  /** Miniatura sprzed zapisywania poświaty dostaje ją raz, a potem już tylko z dysku. */
+  private async storedGlow(file: string, jpeg: Buffer): Promise<DocThumb['glow']> {
+    const saved = await readFile(glowPath(file), 'utf8').then(parseGlow, () => null)
+    if (saved) return saved
+    const glow = glowOf(nativeImage.createFromBuffer(jpeg))
+    await writeFile(glowPath(file), JSON.stringify(glow)).catch(() => {})
+    return glow
+  }
+
+  private async freshJpeg(docId: string, stamp: string, file: string, slot: Slot): Promise<ReadyThumb | null> {
     const page = await this.render(docId, slot)
     if (!page) return null
     if (this.stampOf(docId) !== stamp) {
@@ -192,15 +216,16 @@ export class Thumbnailer {
       this.request([docId])
       return null
     }
-    const jpeg = page.toJPEG(JPEG_QUALITY)
-    await this.store(docId, file, jpeg)
-    return jpeg
+    const thumb = { jpeg: page.toJPEG(JPEG_QUALITY), glow: glowOf(page) }
+    await this.store(docId, file, thumb)
+    return thumb
   }
 
-  private async store(docId: string, file: string, jpeg: Buffer): Promise<void> {
+  private async store(docId: string, file: string, { jpeg, glow }: ReadyThumb): Promise<void> {
     const { dir } = this.options
     await mkdir(dir, { recursive: true })
     await writeFile(file, jpeg)
+    await writeFile(glowPath(file), JSON.stringify(glow)).catch(() => {})
     const current = `${docId}-${this.options.shaOf(docId)}`
     const stale = (await readdir(dir)).filter((name) => name.startsWith(`${docId}-`) && !name.startsWith(current))
     await Promise.all(stale.map((name) => unlink(join(dir, name)).catch(() => {})))
