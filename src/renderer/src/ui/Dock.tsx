@@ -8,7 +8,7 @@ import { dockHover, dockLeave, togglePop } from '../shell/keys'
 import { toggleLabelPop } from '../shell/labels'
 import { camW, els, popPill, toolPill } from '../shell/layout'
 import { setDocStatus } from '../shell/library'
-import { cancelDraft, chooseShape, selectionAction, setAudience, setColor, setTool, submitDraft } from '../shell/notes'
+import { cancelDraft, chooseShape, setAudience, setColor, setTool, submitDraft, togglePanel } from '../shell/notes'
 import { openCmd } from '../shell/palette'
 import { focusLive } from '../shell/native'
 import {
@@ -19,7 +19,6 @@ import {
   presentTool,
   show,
   startNote,
-  startPresentation,
   stepBy,
   stopPresentation
 } from '../shell/present'
@@ -54,12 +53,6 @@ const shapeLabels = (): Record<ShapeType, string> => ({
   ellipse: t('Elipsa'),
   line: t('Linia')
 })
-
-const selectionActions = (): { id: 'comment' | 'sticky' | 'copy'; label: string; icon: string }[] => [
-  { id: 'comment', label: t('Skomentuj'), icon: 'comment' },
-  { id: 'sticky', label: t('Karteczka'), icon: 'sticky' },
-  { id: 'copy', label: t('Kopiuj'), icon: 'file' }
-]
 
 function Tray(): React.JSX.Element {
   return (
@@ -99,19 +92,6 @@ function Tray(): React.JSX.Element {
               </button>
             ))}
           </div>
-        </div>
-        <div className="tray-s">
-          {selectionActions().map((action) => (
-            <button
-              key={action.id}
-              className="ask"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => selectionAction(action.id)}
-            >
-              <Icon name={action.icon} />
-              <span>{action.label}</span>
-            </button>
-          ))}
         </div>
       </div>
     </div>
@@ -326,6 +306,7 @@ export function Dock(): React.JSX.Element {
   const doc = focusedDoc()
   const at = ui.peek === null ? ui.focus : ui.back
   const status = doc ? STATUS[doc.status] : null
+  const routeOpen = ui.insp && ui.inspView === 'route'
 
   useSynced(() => {
     camW.to(pinned() > 2 ? els.camIn.offsetWidth : 0)
@@ -422,13 +403,14 @@ export function Dock(): React.JSX.Element {
               <Icon name={ui.refCopied ? 'check' : 'link'} />
             </button>
             <button
-              className="tb"
+              className={routeOpen ? 'tb lit' : 'tb'}
               id="presentBtn"
-              data-tip={t('Prezentuj')}
-              data-keys="F5"
-              aria-label={t('Prezentuj')}
+              data-tip={t('Prezentacja')}
+              data-keys="Shift P"
+              aria-label={t('Prezentacja')}
+              aria-pressed={routeOpen}
               disabled={!doc}
-              onClick={() => void startPresentation()}
+              onClick={() => togglePanel('route')}
             >
               <Icon name="play" />
             </button>

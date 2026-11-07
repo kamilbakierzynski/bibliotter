@@ -18,14 +18,13 @@ import {
   type OverlayKey,
   type OverlayMode,
   type OverlayRect,
-  type SelectionAction,
   type ShapeTool,
   type StickyColor
 } from '../shared/annotations'
-import type { CameraMove, CameraShot } from '../shared/camera'
-import { type PickKind, parseStepCamera, type PresentState, type RouteFrame } from '../shared/presentation'
+import type { CameraLeg, CameraMove, CameraPlan, CameraShot } from '../shared/camera'
+import { MAX_STEP_TITLE, type PickKind, parseStepCamera, type PresentState, type RouteFrame } from '../shared/presentation'
 import { type Language, language, t } from '../shared/i18n'
-import type { LinkOutcome, LinkPreview } from '../shared/links'
+import { type LinkOutcome, type LinkPreview, type OpenMode, parseOpenMode } from '../shared/links'
 import { type OutlineCommand, parseOutline } from '../shared/outline'
 import { type FindCommand, parseTextQuery, type TextQuery, type TextSpan } from '../shared/textSearch'
 import type { ViewerBounds, ViewerFrame, ViewerKey, ViewerPlacement, ViewerState, ViewerWheel } from '../shared/types'
@@ -87,7 +86,7 @@ interface DocViewerOptions {
   /** Kolejność widoków się zmieniła, więc to, co ma leżeć nad nimi, wraca na wierzch. */
   onStacked: () => void
   /** Prawdziwie kliknięty link do pliku w dokumencie. */
-  openLink: (docId: string, href: string, peek: boolean) => Promise<LinkOutcome>
+  openLink: (docId: string, href: string, mode: OpenMode) => Promise<LinkOutcome>
   previewLink: (docId: string, href: string) => Promise<LinkPreview | null>
   /** Liczy wyrażenie regularne poza stroną dokumentu. */
   matchPage: (text: string, query: TextQuery) => Promise<TextSpan[] | 'pattern' | 'slow'>
@@ -173,12 +172,17 @@ function parseOverlayEvent(value: unknown): OverlayEvent | null {
       return Array.isArray(event.ids)
         ? { type: 'route-missing', ids: event.ids.filter((id): id is string => typeof id === 'string') }
         : null
+    case 'add-step': {
+      const camera = parseStepCamera(event.camera, (value) => parseAnchor(value))
+      const title = typeof event.title === 'string' ? event.title.trim().slice(0, MAX_STEP_TITLE) : ''
+      return camera && camera.kind !== 'hold' ? { type: 'add-step', camera, title } : null
+    }
+    case 'selection-find':
+      return event.scope === 'doc' || event.scope === 'library' ? { type: 'selection-find', scope: event.scope } : null
     case 'shortcut':
       return OVERLAY_KEYS.includes(event.key as OverlayKey)
         ? { type: 'shortcut', key: event.key as OverlayKey, shift: event.shift === true, ctrl: event.ctrl === true }
         : null
-    case 'selection':
-      return { type: 'selection', active: event.active === true }
     case 'find':
       return parseFindEvent(event.state)
     case 'find-seed':
@@ -260,7 +264,7 @@ export class DocViewer {
         void shell.openExternal(url)
       }
     })
-    this.handleDoc('doc:open-link', (docId, href, peek) => this.options.openLink(docId, href, peek === true), 'none')
+    this.handleDoc('doc:open-link', (docId, href, mode) => this.options.openLink(docId, href, parseOpenMode(mode)), 'none')
     this.handleSheet('doc:link-preview', (docId, href) => this.options.previewLink(docId, href), null)
     // Wyrażenie liczy też ukrytemu oknu podglądu trafienia. Wynik to tylko pozycje w tekście, który strona sama przysłała.
     ipcMain.removeHandler('doc:find-pattern')
@@ -453,11 +457,6 @@ export class DocViewer {
     this.send(docId, 'overlay:track', on)
   }
 
-  runSelectionAction(docId: string, action: SelectionAction): void {
-    if (action === 'copy') this.views.get(docId)?.view.webContents.copy()
-    this.send(docId, 'overlay:selection', action)
-  }
-
   /** Minimapa przy krawędzi arkusza, wspólna dla wszystkich dokumentów. */
   setMinimap(on: boolean): void {
     this.minimap = on
@@ -484,6 +483,16 @@ export class DocViewer {
   aimCamera(docId: string, shot: CameraShot | null): Promise<CameraMove | null> {
     const open = this.views.get(docId)
     return open ? this.camera.aim(open.view.webContents, shot) : Promise.resolve(null)
+  }
+
+  planCamera(docId: string, shot: CameraShot): Promise<CameraPlan | null> {
+    const open = this.views.get(docId)
+    return open ? this.camera.plan(open.view.webContents, shot) : Promise.resolve(null)
+  }
+
+  steerCamera(docId: string, leg: CameraLeg): Promise<CameraMove | null> {
+    const open = this.views.get(docId)
+    return open ? this.camera.steer(open.view.webContents, leg) : Promise.resolve(null)
   }
 
   /** Dok leży nad dokumentem, więc kółko nad nim trafia tu z powłoki. */

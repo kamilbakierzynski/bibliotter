@@ -229,7 +229,7 @@ export async function moveNoteFlow(workspace, { check, entry = projectRoot }) {
         const { right, top } = range.getBoundingClientRect()
         return { right, top }
       })
-      await layer.locator('.tray-s .ask', { hasText: 'Skomentuj' }).click()
+      await page.keyboard.press('c')
       await shell.locator('.draft .bubble').waitFor()
       await shell.getByLabel('Treść uwagi').fill('Cytat zostaje')
       await shell.getByLabel('Treść uwagi').press('Control+Enter')

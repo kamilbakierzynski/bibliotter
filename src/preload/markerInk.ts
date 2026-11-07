@@ -1,5 +1,5 @@
 import type { OverlayEvent, OverlayItem, StickyColor } from '../shared/annotations'
-import { clean, createAnchor, findRange } from './anchor'
+import { blockOf, clean, createAnchor, findRange } from './anchor'
 import { chiselPath, decodeLine, encodeLine, type Line, lineOf, nearLine, textBands } from './markerStroke'
 import { Trail } from './presenterTrail'
 
@@ -105,6 +105,8 @@ export interface Ink {
   /** Tło dokumentu mogło się zmienić razem z motywem. */
   retone(): void
   eraseAt(x: number, y: number): void
+  /** Zakreśla zaznaczony tekst wiersz po wierszu, bez rysowania. Zwraca `false`, gdy nie ma czego. */
+  fromRange(range: Range, color: StickyColor): boolean
 }
 
 function inkLayer(color: StickyColor | null): { element: SVGSVGElement; path: SVGPathElement } {
@@ -126,6 +128,23 @@ export function onDarkBackground(element: Element | null): boolean {
     return (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255 < PAPER_LUMINANCE
   }
   return false
+}
+
+/** Prostokąty samego tekstu w zakresie. Zakres obejmujący cały element podaje też jego ramkę. */
+function textRects(range: Range): DOMRect[] {
+  const container = range.commonAncestorContainer
+  if (container.nodeType === Node.TEXT_NODE) return [...range.getClientRects()]
+  const rects: DOMRect[] = []
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!range.intersectsNode(node) || !node.textContent?.trim()) continue
+    const part = document.createRange()
+    part.selectNodeContents(node)
+    if (node === range.startContainer) part.setStart(node, range.startOffset)
+    if (node === range.endContainer) part.setEnd(node, range.endOffset)
+    rects.push(...part.getClientRects())
+  }
+  return rects
 }
 
 function sharedAncestor(first: Element, second: Element): Element {
@@ -240,13 +259,13 @@ export function createInk(
   }
 
   /** Błysk biegnie raz po świeżej linii, jak światło po mokrym tuszu. */
-  const glint = (trail: Trail): void => {
+  const glint = (d: string): void => {
     const element = document.createElementNS(SVG, 'svg')
     const path = document.createElementNS(SVG, 'path')
     element.setAttribute('class', 'sheen')
     element.setAttribute('aria-hidden', 'true')
     path.setAttribute('pathLength', '1')
-    path.setAttribute('d', trail.d)
+    path.setAttribute('d', d)
     path.addEventListener('animationend', () => element.remove())
     element.append(path)
     root.append(element)
@@ -296,7 +315,7 @@ export function createInk(
         const points = lineOf(finished)
         open.lines.push(points)
         open.d += chiselPath(points)
-        glint(finished)
+        glint(finished.d)
       }
       open.path.setAttribute('d', open.d)
       open.element.classList.remove('wet')
@@ -305,6 +324,36 @@ export function createInk(
       else timer = window.setTimeout(flush, GROUP_MS)
     },
     flush,
+    fromRange(range, next) {
+      flush()
+      const bands = textBands(textRects(range))
+      const container = range.commonAncestorContainer
+      const scope = container instanceof Element ? container : container.parentElement
+      if (bands.length === 0 || !scope) return false
+      const block = blockOf(scope)
+      const element = block === document.documentElement ? document.body : block
+      const box = element.getBoundingClientRect()
+      // Linie w pamięci leżą w układzie strony, jak te rysowane ręką.
+      const lines = bands.map((band) => band.map((value, i) => value + (i % 2 === 0 ? scrollX : scrollY)))
+      const strokes = lines.map((points) =>
+        encodeLine(points, box.left + scrollX, box.top + scrollY, Math.max(box.width, 1), Math.max(box.height, 1))
+      )
+      const end = bands.at(-1) as Line
+      const sketch = inkLayer(next)
+      sketch.element.classList.toggle('night', onDarkBackground(element))
+      sketch.path.setAttribute('d', lines.map(chiselPath).join(''))
+      root.append(sketch.element)
+      saving.push(sketch.element)
+      for (const points of lines) glint(`M${points[0]} ${points[1]}L${points[2]} ${points[3]}`)
+      send({
+        type: 'highlight',
+        color: next,
+        anchor: { ...createAnchor(element, end[2] as number, end[3] as number), quote: clean(range.toString()).slice(0, MAX_QUOTE) },
+        strokes,
+        anchorWidth: box.width
+      })
+      return true
+    },
     show(items) {
       const highlights = items.filter((item) => item.kind === 'highlight')
       const fresh = highlights.filter((item) => !known.has(item.id)).length

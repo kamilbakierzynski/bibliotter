@@ -242,8 +242,7 @@ function trayKind(): string {
   if (ui.tool === 'sticky') return 'sticky'
   if (ui.tool === 'highlight') return 'highlight'
   if (ui.tool === 'shape') return 'shape'
-  if (ui.tool === 'comment') return 'comment'
-  return ui.sel ? 'sel' : ''
+  return ui.tool === 'comment' ? 'comment' : ''
 }
 
 export function syncTray(): void {
@@ -283,12 +282,6 @@ export function setTool(tool: Tool): void {
   notify()
 }
 
-export function setSelection(active: boolean): void {
-  if (ui.sel === active) return
-  ui.sel = active
-  syncTray()
-}
-
 export function setColor(color: StickyColor): void {
   ui.color = color
   if (ui.tool === 'highlight') window.api.setMarker(color)
@@ -309,11 +302,6 @@ export function chooseShape(type: ShapeType): void {
 export function setAudience(audience: Audience): void {
   ui.aud = audience
   notify()
-}
-
-export function selectionAction(action: 'comment' | 'sticky' | 'copy'): void {
-  const docId = focusedId()
-  if (docId) window.api.selectionAction(docId, action)
 }
 
 /**
@@ -459,9 +447,6 @@ export function handleOverlayEvent(docId: string, event: OverlayEvent): void {
     case 'orphans':
       data.orphans.set(docId, new Set(event.ids))
       notify()
-      break
-    case 'selection':
-      if (docId === focusedId()) setSelection(event.active)
       break
     case 'positions':
       data.positions.set(docId, new Map(event.items.map(({ id, rect }) => [id, rect])))

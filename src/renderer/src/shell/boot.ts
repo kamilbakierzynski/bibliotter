@@ -29,8 +29,9 @@ import { docReady, focusLive, touch, wheelUnderDock } from './native'
 import { closeThread, handleOverlayEvent, syncTools, syncViewSeg } from './notes'
 import { handleOutlineEvent, isOutlineEvent, syncMinimap } from './outline'
 import { notesChanged } from './present'
-import { handleRoutePick, reloadRoutes, setMissing } from './route'
+import { handleRoutePick, reloadRoutes, routeNotesChanged, setMissing } from './route'
 import { closeCmd, renderCmd } from './palette'
+import { handleSelectionMenu } from './selectionMenu'
 import { applyGlow, focusPane, followLink } from './sheets'
 import { data, findNote, notify, ui } from './state'
 import { applyMode } from './theme'
@@ -73,6 +74,7 @@ function onViewerKey({ type, key, code, ctrl, shift, alt }: ViewerKey): void {
 function setAnnotations(annotations: Annotation[]): void {
   data.annotations = splitShapes(annotations)
   notesChanged()
+  routeNotesChanged()
   // Zamknięty lub usunięty wątek przestaje trzymać arkusz w zrzucie.
   const selected = findNote(ui.selNote)
   if (ui.selNote && (!selected || (selected.status !== 'open' && !ui.showResolved))) closeThread()
@@ -106,13 +108,15 @@ function connectApi(): void {
       handleRoutePick(docId, event.camera)
     } else if (event.type === 'route-missing') {
       setMissing(docId, event.ids)
+    } else if (event.type === 'add-step' || event.type === 'selection-find') {
+      handleSelectionMenu(docId, event)
     } else {
       if (isOutlineEvent(event)) handleOutlineEvent(docId, event)
       else handleOverlayEvent(docId, event)
     }
   })
   window.api.onViewerKey(onViewerKey)
-  window.api.onFollowLink(({ from, docId, peek }) => followLink(from, docId, peek))
+  window.api.onFollowLink(({ from, docId, mode }) => followLink(from, docId, mode))
   window.api.onViewerFocus((docId) => {
     const slot = ui.panes.indexOf(docId)
     if (slot >= 0) focusPane(slot)

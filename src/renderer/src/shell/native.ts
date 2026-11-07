@@ -448,6 +448,14 @@ export async function coverAndWait(reason: string): Promise<void> {
   while (running) await nextPaint()
 }
 
+/** Zdejmuje zasłonę i czeka, aż żywy widok stanie w arkuszu. Wynik mówi, czy stanął. */
+export async function uncoverAndWait(reason: string, i: number): Promise<boolean> {
+  covers.delete(reason)
+  await reconcile()
+  while (running) await nextPaint()
+  return liveDocs.get(i) === ui.panes[i]
+}
+
 /** Zrzut dokumentu, który stoi teraz w arkuszu, albo `null`, gdy arkusz pokazuje coś innego. */
 export function shownFrame(i: number): HTMLCanvasElement | null {
   if (frames.get(i)?.docId !== ui.panes[i]) return null

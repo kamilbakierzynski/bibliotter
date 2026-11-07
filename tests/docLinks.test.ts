@@ -299,4 +299,43 @@ describe('LinkGraph', () => {
       expect(await graph.preview(doc('plan'), href, thumb)).toBeNull()
     }
   })
+
+  it('wycina link razem z tekstem wokół, żeby podgląd trafił w to miejsce', async () => {
+    const markdown = await graph.linkSnippet(doc('plan'), doc('cel'))
+    const html = await graph.linkSnippet(doc('strona'), doc('plan'))
+
+    expect(markdown).toMatchObject({ before: 'Plan', match: 'cel' })
+    expect(markdown?.after).toMatch(/^i znów cel oraz sam siebie/)
+    expect(html?.match).toBe('plan')
+    expect(html?.before).toContain('Treść')
+    expect(await graph.linkSnippet(doc('kopia'), doc('cel'))).toBeNull()
+  })
+
+  it('liczy przejście linkiem jako link przychodzący', async () => {
+    expect((await graph.links(doc('strona'))).incoming).not.toContain('sejf')
+    graph.noteFollow(doc('sejf'), 'strona')
+
+    expect((await graph.links(doc('strona'))).incoming).toContain('sejf')
+  })
+
+  it('nie liczy celów od nowa, gdy migawka zmienia tylko dane dokumentów', async () => {
+    const before = (await graph.links(doc('cel'))).incoming.sort()
+    snapshot = { ...snapshot, projects: [{ docs: [...snapshot.projects[0]!.docs] }] } as unknown as LibrarySnapshot
+
+    expect((await graph.links(doc('cel'))).incoming.sort()).toEqual(before)
+  })
+
+  it('szuka notatki Obsidiana od nowa, gdy w bibliotece przybędzie dokumentów', async () => {
+    await writeFile(join(root, 'docs', 'zrodlo.md'), '[[pozny]]\n')
+    await entry('zrodlo', 'docs/zrodlo.md', 'Źródło')
+    snapshot = { ...snapshot, projects: [{ docs: [...snapshot.projects[0]!.docs, doc('zrodlo')] }] } as unknown as LibrarySnapshot
+    expect((await graph.links(doc('zrodlo'))).outgoing.map(({ kind }) => kind)).toEqual(['missing'])
+
+    await writeFile(join(root, 'pozny.md'), '# Późny\n')
+    await entry('pozny', 'pozny.md', 'Późny')
+    snapshot = { ...snapshot, projects: [{ docs: [...snapshot.projects[0]!.docs, doc('pozny')] }] } as unknown as LibrarySnapshot
+
+    expect((await graph.links(doc('zrodlo'))).outgoing.map(({ docId }) => docId)).toEqual(['pozny'])
+    expect((await graph.links(doc('pozny'))).incoming).toEqual(['zrodlo'])
+  })
 })

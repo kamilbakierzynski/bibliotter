@@ -127,9 +127,6 @@ export type OverlayKey = (typeof OVERLAY_KEYS)[number]
  */
 export const STEP_KEYS: readonly OverlayKey[] = [' ', 'pageup', 'pagedown', 'home', 'end', 'arrowleft', 'arrowright']
 
-/** Co zrobić z tekstem zaznaczonym w dokumencie. */
-export type SelectionAction = 'comment' | 'sticky' | 'copy'
-
 export type OverlayEvent =
   | { type: 'place'; kind: NoteKind; anchor: Anchor; rect: OverlayRect }
   /** Skończone zakreślenie, gotowe do zapisania. */
@@ -146,7 +143,6 @@ export type OverlayEvent =
   | { type: 'focused'; id: string; rect: OverlayRect | null }
   | { type: 'orphans'; ids: string[] }
   | { type: 'shortcut'; key: OverlayKey; shift: boolean; ctrl: boolean }
-  | { type: 'selection'; active: boolean }
   | { type: 'positions'; items: { id: string; rect: OverlayRect }[] }
   | { type: 'find'; state: FindState }
   | { type: 'find-seed'; text: string }
@@ -158,3 +154,7 @@ export type OverlayEvent =
   | { type: 'route-pick'; camera: StepCamera }
   /** Kroki trasy, których kadru nie ma w dokumencie. */
   | { type: 'route-missing'; ids: string[] }
+  /** Nowy krok trasy z menu zaznaczonego tekstu. */
+  | { type: 'add-step'; camera: StepCamera; title: string }
+  /** Szukanie zaznaczonego tekstu w dokumencie albo w całej bibliotece. */
+  | { type: 'selection-find'; scope: 'doc' | 'library' }

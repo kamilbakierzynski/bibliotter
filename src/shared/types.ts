@@ -6,14 +6,13 @@ import type {
   NewAnnotation,
   OverlayEvent,
   OverlayMode,
-  SelectionAction,
   ShapeTool,
   StickyColor
 } from './annotations'
 import type { AutoLabelOptions, AutoLabelResult, AutoLabelState } from './autoLabel'
-import type { CameraMove, CameraShot } from './camera'
+import type { CameraLeg, CameraMove, CameraPlan, CameraShot } from './camera'
 import type { LabelColors, LabelTone } from './labels'
-import type { DocLinks, DocPair, FollowLink, LinkOutcome } from './links'
+import type { DocLinks, DocPair, FollowLink, LinkOutcome, LinkShotRequest, OpenMode } from './links'
 import type { OutlineCommand } from './outline'
 import type { PickKind, Presentation, PresentState, RouteFrame } from './presentation'
 import type { ContentSearch, FindCommand, TextQuery, TextSnippet } from './textSearch'
@@ -196,12 +195,12 @@ export interface ShellApi {
   search(query: string): Promise<SearchHit[]>
   /** Przeszukuje treść wszystkich dokumentów. Nowe zapytanie unieważnia poprzednie. */
   searchContent(query: TextQuery): Promise<ContentSearch>
-  /** Wynik wraca jako zdarzenie warstwy dokumentu. */
   /**
    * Zrzut miejsca trafienia z podświetleniem, jako adres `data:`. `null` znaczy, że strona go nie dała,
    * a `later`, że nowsze zamówienie wyprzedziło to w kolejce.
    */
   previewHit(docId: string, query: TextQuery, target: TextSnippet): Promise<string | null | 'later'>
+  /** Wynik wraca jako zdarzenie warstwy dokumentu. */
   findInDoc(docId: string, command: FindCommand): void
   setStatus(docId: string, status: DocStatus): Promise<void>
   /** Zmienia status wielu dokumentów jedną migawką biblioteki. */
@@ -228,6 +227,10 @@ export interface ShellApi {
   captureDoc(docId: string): Promise<ViewerFrame | null>
   /** Ustawia kamerę dokumentu na kadrze, a `null` wraca do całej strony. `null` w wyniku znaczy, że kamera nie ruszyła. */
   aimCamera(docId: string, shot: CameraShot | null): Promise<CameraMove | null>
+  /** Widok teraz i w kadrze, bez ruszania kamery. `null`, gdy kadru nie ma w dokumencie. */
+  planCamera(docId: string, shot: CameraShot): Promise<CameraPlan | null>
+  /** Odcinek podróży między odległymi kadrami. Wynik to widok przed odcinkiem i po nim. */
+  steerCamera(docId: string, leg: CameraLeg): Promise<CameraMove | null>
   /** Dokument, który agent widzi jako bieżący. */
   setCurrentDoc(docId: string | null): Promise<void>
   /** Oddaje klawiaturę dokumentowi. Bez dokumentu wraca ona do powłoki. */
@@ -242,7 +245,9 @@ export interface ShellApi {
   docLinks(docId: string): Promise<DocLinks>
   /** Plan albo objaśnienie, z którym dokument tworzy parę. */
   docPair(docId: string): Promise<DocPair | null>
-  followLink(docId: string, href: string, peek: boolean): Promise<LinkOutcome>
+  followLink(docId: string, href: string, mode: OpenMode): Promise<LinkOutcome>
+  /** Zrzut miejsca linku do karty w panelu Linki. `later` znaczy, że nowsze zamówienie je wyprzedziło. */
+  linkShot(request: LinkShotRequest): Promise<string | null | 'later'>
   onFollowLink(listener: (link: FollowLink) => void): () => void
   listAnnotations(): Promise<Annotation[]>
   createAnnotation(docId: string, input: NewAnnotation): Promise<void>
@@ -283,7 +288,6 @@ export interface ShellApi {
   focusAnnotation(docId: string, id: string | null): void
   /** Włącza zgłaszanie pozycji pinezek, potrzebne wątkom wiszącym na ścianie. */
   trackOverlay(docId: string, on: boolean): void
-  selectionAction(docId: string, action: SelectionAction): void
   setTheme(choice: ThemeChoice): void
   appInfo(): Promise<AppInfo>
   /** Sprawdza plugin i CLI, więc trwa około sekundy. */

@@ -364,9 +364,13 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .hc-quiet { color: var(--ink-3); }
 .hc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 2px; color: var(--ink-3); font: 400 var(--meta-s)/1.4 var(--meta); letter-spacing: var(--meta-ls); }
 .hc-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 2px; }
-
 /* Karta trafienia pokazuje kawałek strony, więc jest szersza. Proporcje to okno zrzutu w `main/hitPreview.ts`. */
 .hcard.wide { width: 520px; }
+/* Karta przy panelu po prawej wysuwa się w lewo, od jego krawędzi. */
+.hcard.before { transform: translateX(8px) scale(.97); transform-origin: 100% 24px; }
+.hcard.before.on { transform: none; }
+.hc-shot img.hc-top { object-fit: cover; object-position: top; }
+.hc-place { overflow-wrap: anywhere; }
 .hc-shot { position: relative; overflow: hidden; aspect-ratio: 680 / 400; margin-bottom: 2px; background: #fff; border-radius: 9px; box-shadow: 0 0 0 .5px var(--hair-2); }
 .hc-shot[data-format="markdown"] { background: var(--surface); }
 .hc-shot img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; animation: shot-in .2s ease-out both; }
@@ -377,6 +381,7 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .hc-shot.wait::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 32%) 50%, transparent 70%) 0 0 / 250% 100%; animation: shot-wait 1.3s ease-in-out infinite; }
 @keyframes shot-in { from { opacity: 0; } }
 @keyframes shot-wait { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
 /* Scena */
 .stage { position: absolute; top: var(--stage-top); bottom: var(--stage-bot); z-index: 10; transform-origin: 50% 100%; transition: top .5s var(--spring), bottom .5s var(--spring); }
 .pane { position: absolute; left: 0; top: 0; bottom: 0; display: flex; flex-direction: column; min-width: 0; border-radius: 14px; visibility: hidden; }
@@ -574,6 +579,8 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .rt-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 6px; color: var(--ink-2); font-size: 12.5px; line-height: 1.35; text-align: left; border-radius: var(--r-row); transition: color .16s, background-color .16s; }
 .rt-item:hover { color: var(--ink); background: var(--hover); }
 .rt-item[aria-checked="true"] { color: var(--ink); }
+.rt-play { margin-left: auto; }
+.rt-play:disabled { opacity: .45; pointer-events: none; }
 .rt-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rt-box { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair-2); transition: background-color .16s; }
 .rt-item[aria-checked="true"] .rt-box { color: var(--solid); background: var(--tool-on); box-shadow: none; }
@@ -688,14 +695,12 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 [data-mode="dark"] .green { --shape-ink: #8fd486; }
 [data-mode="dark"] .pink { --shape-ink: #f293bd; }
 .tray-in[data-tray="shape"] .swatch { width: 20px; height: 20px; background: var(--shape-ink); border-radius: 50%; }
-.tray-c, .tray-s { display: none; align-items: center; gap: 2px; }
-.tray-in[data-tray="comment"] .tray-c, .tray-in[data-tray="sel"] .tray-s { display: flex; }
+.tray-c { display: none; align-items: center; gap: 2px; }
+.tray-in[data-tray="comment"] .tray-c { display: flex; }
 .tray-c { gap: 8px; }
 .tray-hint { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .tray-c .seg { flex: none; margin: 0; }
 .tray-c .seg button { height: 24px; font-size: 11.5px; }
-.tray-s .ask { height: 32px; font-size: 12.5px; }
-.tray-s .ask .ic { width: 16px; height: 16px; }
 .tray { width: 0; overflow: clip; }
 .tray-in { display: flex; align-items: center; gap: 4px; width: max-content; height: 36px; padding: 0 2px 0 6px; }
 .swatch { width: 24px; height: 24px; border-radius: 7px 7px 11px 7px; box-shadow: inset 0 0 0 .5px rgb(0 0 0 / .1); opacity: 0; transform: scale(.4); transition: transform .42s var(--spring-pop), opacity .2s; }
@@ -779,6 +784,8 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 
 
 .cmd { position: absolute; left: 50%; bottom: 0; visibility: hidden; display: grid; grid-template-rows: 58px 38px minmax(0, 1fr) 46px; overflow: hidden; }
+/* Paleta z paska startowego rośnie w dół, więc trzyma się górnej krawędzi doku. */
+.dock[data-from="hero"] .cmd { top: 0; bottom: auto; }
 .cmd-top { display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--hair); }
 .cmd-top .ic { color: var(--ink-3); }
 .cmd-top input { flex: 1; min-width: 0; font: var(--pl-w) var(--input-s)/1.3 var(--title); letter-spacing: var(--title-ls); user-select: text; }
@@ -840,6 +847,15 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .h-head .format-seg { flex: none; align-self: center; margin: 0 0 0 auto; transition: opacity .3s; }
 .h-none { text-align: center; }
 .home.setup .h-head { visibility: hidden; }
+/* Ekran startowy: znak, nazwa i pasek, z którego wyrasta paleta */
+.h-hero { flex: none; display: flex; flex-direction: column; align-items: center; padding: 34px 16px 30px; }
+.h-hero .mark { display: block; width: 84px; height: 84px; border-radius: 19px; box-shadow: var(--sh-thumb); }
+.h-hero h1 { margin-top: 14px; font: 550 26px/1.2 var(--title); letter-spacing: -.02em; }
+.h-ask { display: flex; align-items: center; gap: 10px; width: min(760px, 100%); height: 58px; margin-top: 22px; padding: 0 14px 0 16px; color: var(--ink-3); text-align: left; background: var(--raised); border-radius: 16px; box-shadow: var(--sh-dock); transition: opacity .22s .1s, box-shadow .3s ease; }
+.h-ask:hover { box-shadow: var(--sh-pop); }
+.h-ask span { flex: 1; min-width: 0; overflow: hidden; font: var(--pl-w) var(--input-s)/1.3 var(--title); letter-spacing: var(--title-ls); text-overflow: ellipsis; white-space: nowrap; }
+.h-ask .keys { display: flex; gap: 3px; }
+.h-ask.away { opacity: 0; transition: opacity .06s; }
 .h-body { position: relative; flex: 1; min-height: 0; margin: -6px -12px 0; overflow: hidden auto; scrollbar-width: none; }
 
 /* Miniatura to ten sam dokument w szerokości arkusza, tylko pomniejszony */

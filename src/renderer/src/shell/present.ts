@@ -99,11 +99,15 @@ async function present(index: number): Promise<void> {
   // Ruch kamery czeka w kolejce, a prezentacja mogła się w tym czasie skończyć. Wtedy dokument
   // nie może dostać z powrotem maski. Stan liczy się w chwili wysyłki, bo w trakcie ruchu mogła
   // dojść nowa uwaga.
-  const send = (waiting: string[]): void => {
-    if (ui.presenting === docId) window.api.setPresent(docId, { ...stateFor(docId, index), pending: waiting })
+  const send = (waiting: string[], travel = false): void => {
+    if (ui.presenting !== docId) return
+    const state = stateFor(docId, index)
+    window.api.setPresent(docId, { ...state, rest: travel ? 'normal' : state.rest, pending: waiting })
   }
   // Maska i uwagi zmieniają się między zrzutami kamery, więc przenikają razem z jej przelotem.
+  // W drodze do dalekiego kadru maska schodzi, żeby widzowie widzieli, dokąd jedzie kamera.
   await aimCamera(pane, shotAt(steps, index, missing), {
+    travel: () => send(pending, true),
     before: () => send(pending),
     skip: () => ui.presenting !== docId
   })
@@ -266,7 +270,6 @@ export async function startPresentation(fromSelected = false): Promise<void> {
   known = new Set(allIds(docId))
   added.clear()
   shown = -1
-  route.preview = false
   document.documentElement.classList.add('presenting')
   if (ui.insp) setInsp(false)
   if (pinned() > 1) {

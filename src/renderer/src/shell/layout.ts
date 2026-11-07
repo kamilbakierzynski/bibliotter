@@ -156,6 +156,32 @@ export const ctxP = new Spring(0, 240, 0.84)
 /** Dok jako pilot prezentacji: 1 to pilot, 0 to zwykłe narzędzia i szukanie. */
 export const presP = new Spring(0, 240, 0.84)
 export const glowD = new Spring(0, 42, 1)
+/** Ekran startowy ma własny pasek szukania, więc dok chowa się pod krawędź: 1 to dok schowany. */
+export const homeOut = new Spring(0, 150, 0.84)
+
+interface Box {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/** Pasek ekranu startowego, z którego wyrasta paleta. Bez niego paleta rośnie z doku. */
+let hero: Box | null = null
+const HERO_R = 16
+
+/** Paleta wyrośnie z tego prostokąta zamiast z doku. Lot w toku zostaje przy swoim. */
+export function growFrom(box: Box | null): void {
+  if (box || mH.x < 0.01) hero = box
+}
+
+/** Paleta stoi nad paskiem, a jej górny brzeg trzyma się jego górnego brzegu. */
+function heroAim(from: Box): { l: number; t: number } {
+  return {
+    l: clamp(from.x + from.w / 2 - G.cmdW / 2, 16, Math.max(16, G.W - G.cmdW - 16)),
+    t: clamp(from.y, 20, Math.max(20, G.H - G.cmdH - 20))
+  }
+}
 
 export const sheets: Sheet[] = Array.from({ length: MAX_SHEETS }, (_, i) => ({
   i,
@@ -465,6 +491,7 @@ export function syncChrome(): void {
   root.classList.toggle('at-home', atHome)
   root.classList.toggle('no-lib', ui.setup !== null)
   ctxP.to(atHome || ui.presenting || !canAnnotate(focusedDoc()) ? 0 : 1)
+  homeOut.to(atHome && ui.setup === null ? 1 : 0)
   presP.to(ui.presenting ? 1 : 0)
   const many = (pinned() > 1 && !ui.home) || ui.peek !== null
   const last = ui.peek === null ? ui.order[pinned() - 1] : ui.peek
@@ -496,6 +523,21 @@ const dockLeft = (center: number, width: number): number =>
 
 /** Wycięcie obejmuje dok, a w ruchu także miejsce, do którego dok zmierza. */
 function fitLayer(left: number, cw: number, ch: number, barW: number, ctx: number, pres: number): void {
+  if (hero) {
+    // Wycięcie obejmuje całą drogę od paska do palety, a zwęża się dopiero po wylądowaniu.
+    const aim = heroAim(hero)
+    const x = Math.max(0, Math.floor(Math.min(left, aim.l, hero.x) - PALETTE_SIDE))
+    const y = Math.max(0, Math.floor(Math.min(hero.y, aim.t) - PALETTE_TOP))
+    const to = Math.max(left + cw, aim.l + G.cmdW, hero.x + hero.w) + PALETTE_SIDE
+    const width = Math.min(Math.round(G.W), Math.ceil(to)) - x
+    placeLayer({ x, y, width, height: Math.round(G.H) - y }, Math.abs(mH.x - mH.t) < 0.002)
+    return
+  }
+  // Schowany dok nie może zasłaniać ściany, a pusty prostokąt proces główny odrzuca.
+  if (homeOut.x > 0.98 && homeOut.t === 1 && mH.t === 0) {
+    placeLayer({ x: 0, y: Math.round(G.H) - 1, width: 1, height: 1 }, true)
+    return
+  }
   const swap = (presP.t - pres) * (els.presentIn.offsetWidth - els.cmdBtn.offsetWidth)
   const barAim = barW + trayW.t - trayW.x + camW.t - camW.x + (ctxP.t - ctx) * els.barCtxIn.offsetWidth + swap
   const aimW = mW.t > 0 ? G.cmdW : barAim
@@ -573,20 +615,39 @@ export function render(): void {
   els.present.style.opacity = String(clamp(pres * 1.4 - 0.4))
   els.cmdBox.style.width = pres < 0.001 ? '' : `${els.cmdBtn.offsetWidth * (1 - pres)}px`
   els.cmdBox.style.opacity = String(clamp((1 - pres) * 1.4 - 0.4))
-  const barW = els.bar.offsetWidth
-  const cw = lerp(barW, G.cmdW, mW.x)
-  const ch = lerp(DOCK_H, G.cmdH, mH.x)
   const { dock, bar, cmd } = els
-  const left = dockLeft(lerp(dockC.x, G.W / 2, clamp(mW.x)), cw)
+  // Paleta wróciła do paska startowego, więc dok wraca na dół. Poza startem wjeżdża od nowa.
+  if (hero && !ui.cmd && mH.t === 0 && mH.x < 0.004) {
+    hero = null
+    if (homeOut.t === 0) dockIn.set(0).to(1)
+  }
+  const barW = els.bar.offsetWidth
+  const cw = hero ? lerp(hero.w, G.cmdW, mW.x) : lerp(barW, G.cmdW, mW.x)
+  const ch = hero ? lerp(hero.h, G.cmdH, mH.x) : lerp(DOCK_H, G.cmdH, mH.x)
+  const left = hero ? lerp(hero.x, heroAim(hero).l, clamp(mW.x)) : dockLeft(lerp(dockC.x, G.W / 2, clamp(mW.x)), cw)
   els.presentNote.style.left = `${left + cw / 2}px`
   els.presentNote.style.bottom = `${G.dockBot + DOCK_H + NOTE_GAP}px`
   fitLayer(left, cw, ch, barW, ctx, pres)
   dock.style.width = `${cw}px`
   dock.style.height = `${ch}px`
   dock.style.left = `${left}px`
-  dock.style.borderRadius = `${lerp(G.rDock, 22, m)}px`
-  dock.style.transform = `translateY(${(1 - dockIn.x) * 84}px)`
-  const fade = clamp(1 - mH.x * 3.4)
+  if (hero) {
+    dock.dataset.from = 'hero'
+    dock.style.top = `${lerp(hero.y, heroAim(hero).t, clamp(mH.x))}px`
+    dock.style.bottom = 'auto'
+    dock.style.borderRadius = `${lerp(HERO_R, 22, m)}px`
+    dock.style.transform = ''
+    // Na starcie pasek z powłoki leży pod dokiem, więc dok pojawia się dopiero, gdy go przerośnie.
+    dock.style.opacity = String(clamp(mH.x * 6))
+  } else {
+    delete dock.dataset.from
+    dock.style.top = ''
+    dock.style.bottom = ''
+    dock.style.opacity = ''
+    dock.style.borderRadius = `${lerp(G.rDock, 22, m)}px`
+    dock.style.transform = `translateY(${((1 - dockIn.x) * 84 + homeOut.x * (1 - m) * 90).toFixed(2)}px)`
+  }
+  const fade = hero ? 0 : clamp(1 - mH.x * 3.4)
   bar.style.opacity = String(fade)
   bar.style.filter = fade < 1 ? `blur(${(1 - fade) * 5}px)` : ''
   bar.style.visibility = fade <= 0.01 ? 'hidden' : 'visible'

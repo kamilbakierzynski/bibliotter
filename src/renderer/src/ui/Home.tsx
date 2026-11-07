@@ -12,13 +12,16 @@ import {
 } from '../shell/home'
 import { homePill, spisPill } from '../shell/layout'
 import { dropFolders, load, scanLabel } from '../shell/library'
-import { openDoc, peekDoc } from '../shell/sheets'
-import { answered, countDocs, countWait, data, plural, STATUS, toneOf, ui, useShell, waiting } from '../shell/state'
+import { openCmd } from '../shell/palette'
+import { openAs } from '../shell/sheets'
+import { openModeOf } from '../../../shared/links'
+import { answered, countDocs, countWait, data, MOD, plural, STATUS, toneOf, ui, useShell, waiting } from '../shell/state'
 import { displayName, relativeTime } from '../tree'
 import { FormatSeg } from './FormatSeg'
 import { useSynced } from './hooks'
-import { Icon } from './icons'
+import { Icon, Keys } from './icons'
 import { LabelTags } from './Labels'
+import { LogoMark } from './LogoMark'
 import { Otter } from './Otter'
 import { SkeletonLine, SkeletonSheet, SkeletonWall } from './Skeleton'
 
@@ -162,6 +165,23 @@ function Setup(): React.JSX.Element {
   )
 }
 
+/** Znak, nazwa i pasek szukania. Paleta wyrasta z paska, więc na czas jej życia pasek znika. */
+function Hero(): React.JSX.Element {
+  return (
+    <div className="h-hero">
+      <LogoMark />
+      <h1>Bibliotter</h1>
+      <button className={ui.cmd ? 'h-ask away' : 'h-ask'} id="homeAsk" onClick={openCmd}>
+        <Icon name="search" />
+        <span>{t('Szukaj dokumentów, uwag i akcji')}</span>
+        <i className="keys">
+          <Keys keys={[MOD, 'K']} />
+        </i>
+      </button>
+    </div>
+  )
+}
+
 export function Home(): React.JSX.Element {
   useShell()
   const docs = homeDocs()
@@ -182,8 +202,7 @@ export function Home(): React.JSX.Element {
     const doc = (e.target as HTMLElement).closest<HTMLElement>('[data-doc]')?.dataset.doc
     if (!doc) return
     ui.kbd = false
-    if (e.ctrlKey || e.metaKey) peekDoc(doc)
-    else openDoc(doc)
+    openAs(doc, openModeOf(e))
   }
 
   const over = (e: PointerEvent<HTMLElement>): void => {
@@ -214,6 +233,7 @@ export function Home(): React.JSX.Element {
         leaveHomeHover()
       }}
     >
+      {!ui.setup && <Hero />}
       <div className="h-head">
         <b>{t('Ostatnie')}</b>
         <span>

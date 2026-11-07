@@ -20,7 +20,8 @@ import { openOptions, optionsHeading } from '../shell/options'
 import { clearPocket, pocket, pocketDocs } from '../shell/pocket'
 import { libraryRows, revealInTree, toggleFold, toggleSort } from '../shell/panel'
 import { hitPill, searchModel } from '../shell/search'
-import { openDoc, openNote, peekDoc } from '../shell/sheets'
+import { openAs, openDoc, openNote } from '../shell/sheets'
+import { openModeOf } from '../../../shared/links'
 import {
   colorAttr,
   countDocs,
@@ -86,8 +87,7 @@ const docTitle = (docId: string): string => {
 }
 
 function openFromRow(e: MouseEvent, docId: string): void {
-  if (e.ctrlKey || e.metaKey) peekDoc(docId)
-  else openDoc(docId)
+  openAs(docId, openModeOf(e))
 }
 
 function Rail(): React.JSX.Element {

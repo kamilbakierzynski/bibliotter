@@ -6,22 +6,27 @@ import {
   type PickKind,
   type Presentation,
   type PresentationStep,
+  type PresentState,
   shotAt,
   shotOwner,
   type StepCamera,
-  type StepRest
+  type StepRest,
+  stepState
 } from '../../../shared/presentation'
 import { aimCamera } from './camera'
+import { drawings } from './drawings'
 import { setTool } from './notes'
-import { focusedId, notify, ui } from './state'
+import { data, focusedId, notify, openPane, ui } from './state'
 
 /*
  * Trasa prezentacji w powłoce. Formularz zmienia trasę od razu na ekranie, a zapis idzie za nim:
  * tytuł po krótkiej przerwie w pisaniu, reszta od razu. Trasę może też zapisać agent, więc zmiana
  * na dysku wraca do formularza, o ile użytkownik nie ma właśnie niezapisanej zmiany.
  *
- * Przy otwartym formularzu dokument pokazuje przerywaną ramką kadr wybranego kroku, a podgląd
- * ustawia na nim kamerę, tak jak zrobi to prezentacja.
+ * Przy otwartym formularzu dokument pokazuje przerywaną ramką kadr wybranego kroku. Podgląd
+ * pokazuje krok tak, jak zobaczą go widzowie: kamera jedzie do kadru, maska kładzie się wokół
+ * niego, a dokument pokazuje tylko uwagi kroku. Nowa uwaga albo kształt narysowany przy otwartym
+ * podglądzie trafia do wybranego kroku, bo inaczej zniknąłby zaraz po narysowaniu.
  */
 
 /** Tyle czeka zapis tytułu, żeby nie pisać pliku przy każdej literze. */
@@ -39,7 +44,8 @@ export const route = {
   /** Kroki, których kadru nie ma w dokumencie. Zgłasza je warstwa dokumentu. */
   missing: new Map<string, Set<string>>(),
   picking: null as PickState | null,
-  preview: false,
+  /** Podgląd kroku jest włączony od startu i zostaje taki, jak go ustawił użytkownik. */
+  preview: true,
   /** Ostatnio usunięty krok, do cofnięcia przyciskiem w formularzu. */
   removed: null as { docId: string; step: PresentationStep; index: number } | null
 }
@@ -50,8 +56,6 @@ const timers = new Map<string, number>()
 const inFlight = new Map<string, number>()
 /** Dokument, który pokazuje teraz kadry. */
 let framed: string | null = null
-/** Arkusz i kadr, na które patrzy kamera podglądu. */
-let aimed: { pane: number; key: string } | null = null
 
 const newId = (): string => `s${crypto.randomUUID().replaceAll('-', '').slice(0, 10)}`
 const busy = (docId: string): boolean => timers.has(docId) || (inFlight.get(docId) ?? 0) > 0
@@ -160,6 +164,25 @@ export function addStep(docId: string): void {
   commit(docId, next)
 }
 
+/**
+ * Krok z menu zaznaczonego tekstu. Przy otwartym formularzu staje za wybranym, jak przycisk
+ * w formularzu, a bez formularza na końcu trasy, bo dokument czyta się wtedy od góry do dołu.
+ */
+export async function addStepAt(docId: string, camera: StepCamera, title: string): Promise<void> {
+  if (!route.docs.has(docId)) await loadRoute(docId)
+  // Trasa, której nie udało się wczytać, nie może zostać nadpisana jednym krokiem.
+  if (!route.docs.has(docId)) return
+  const steps = stepsOf(docId)
+  if (steps.length >= MAX_STEPS) return
+  const editing = ui.insp && ui.inspView === 'route' && focusedId() === docId
+  const at = editing ? selectedIndex(docId) : steps.length - 1
+  const step = { ...nextStep(steps[at], newId()), title, camera }
+  const next = [...steps]
+  next.splice(at + 1, 0, step)
+  route.selected.set(docId, step.id)
+  commit(docId, next)
+}
+
 export function removeStep(docId: string, id: string): void {
   const steps = stepsOf(docId)
   const index = steps.findIndex((step) => step.id === id)
@@ -259,7 +282,7 @@ export function syncFrames(): void {
     if (route.picking?.docId === framed) endPick()
   }
   framed = docId
-  syncPreview(presenting ? null : docId)
+  void settlePreview()
   if (!docId) return
   const steps = stepsOf(docId)
   const owner = shotOwner(steps, selectedIndex(docId))
@@ -269,22 +292,149 @@ export function syncFrames(): void {
   })
 }
 
-/** Podgląd ustawia kamerę na kadrze wybranego kroku, a wyłączenie podglądu wraca do całej strony. */
-function syncPreview(docId: string | null): void {
-  const on = route.preview && docId !== null
-  const shot = on ? shotAt(stepsOf(docId), selectedIndex(docId)) : null
-  const key = JSON.stringify(shot)
-  if (on && aimed?.pane === ui.focus && aimed.key === key) return
-  // Podgląd mógł patrzeć na inny arkusz, a ten musi wrócić do całej strony.
-  if (aimed && (!on || aimed.pane !== ui.focus)) void aimCamera(aimed.pane, null)
-  aimed = on ? { pane: ui.focus, key } : null
-  if (on) void aimCamera(ui.focus, shot)
+interface PreviewWant {
+  pane: number
+  docId: string
+  /** Kadr, maska i uwagi osobno, bo tylko ruch kamery i zmiana maski potrzebują przelotu. */
+  shot: string
+  rest: StepRest
+  state: Omit<PresentState, 'pending'>
 }
 
-/** Formularz zniknął z ekranu: dokument chowa kadry, a kamera wraca do całej strony. */
+/** Arkusz i krok, które pokazuje teraz podgląd. */
+let aimed: PreviewWant | null = null
+/** Kształty, które podgląd już pokazał. Kształt spoza tej listy rysuje się piórem po ruchu kamery. */
+let drawn = new Set<string>()
+/** Uwagi i kształty dokumentu znane podglądowi. Nowa uwaga to taka, której tu nie ma. */
+let seen: { docId: string; ids: Set<string> } | null = null
+let settling = false
+let again = false
+
+const shapeIds = (docId: string): string[] => drawings.shapes.filter((shape) => shape.docId === docId).map(({ id }) => id)
+const noteIds = (docId: string): string[] => [
+  ...data.annotations.filter((note) => note.docId === docId).map(({ id }) => id),
+  ...shapeIds(docId)
+]
+
+/**
+ * Krok, który podgląd powinien teraz pokazywać. Wskazywanie kadru potrzebuje całej strony bez
+ * maski, a prezentacja ustawia dokument sama.
+ */
+function previewWant(): PreviewWant | null {
+  if (!route.preview || ui.presenting || route.picking || !ui.insp || ui.inspView !== 'route') return null
+  const docId = focusedId()
+  if (!docId) return null
+  const pane = openPane(docId)
+  const steps = stepsOf(docId)
+  const index = selectedIndex(docId)
+  if (pane < 0 || index < 0) return null
+  const missing = route.missing.get(docId)
+  const state = stepState(steps, index, false, missing)
+  return { pane, docId, shot: JSON.stringify(shotAt(steps, index, missing)), rest: state.rest, state }
+}
+
+const sameWant = (a: PreviewWant | null, b: PreviewWant | null): boolean =>
+  a !== null && b !== null && a.pane === b.pane && a.docId === b.docId && a.shot === b.shot && JSON.stringify(a.state) === JSON.stringify(b.state)
+
+function sendLook(docId: string, state: Omit<PresentState, 'pending'> | null, pending: string[] = []): void {
+  // Prezentacja tego dokumentu sama mówi mu, co pokazać.
+  if (ui.presenting === docId) return
+  window.api.setPresent(docId, state ? { ...state, pending, edit: true } : null)
+}
+
+/**
+ * Ruch kamery ze zmianą w dokumencie. Zmiana przychodzi także wtedy, gdy kamera nie ruszyła.
+ * `travel` to stan na czas przejazdu do dalekiego kadru.
+ */
+async function aimWith(pane: number, shot: string, change: () => void, travel?: () => void): Promise<void> {
+  let done = false
+  const run = (): void => {
+    if (done) return
+    done = true
+    change()
+  }
+  await aimCamera(pane, JSON.parse(shot), travel ? { before: run, travel } : { before: run })
+  run()
+}
+
+const WHOLE_PAGE = 'null'
+
+/** Kamera i maska kroku. Bez kadru kamera pokazuje całą stronę, a maska nie ma wokół czego leżeć. */
+const cameraLook = (want: PreviewWant | null): string =>
+  want === null || want.shot === WHOLE_PAGE ? WHOLE_PAGE : `${want.shot} ${want.rest}`
+
+async function previewStep(): Promise<void> {
+  const want = previewWant()
+  if (aimed && (!want || aimed.pane !== want.pane || aimed.docId !== want.docId)) {
+    // Maska schodzi razem z oddaleniem kamery, a dokument wraca do wszystkich uwag.
+    const old = aimed
+    aimed = null
+    drawn = new Set()
+    seen = null
+    // Prezentacja sama jedzie do pierwszego kroku, więc kamera nie musi najpierw wracać do całej strony.
+    // Bez kadru kamera już pokazuje całą stronę, więc uwagi wracają od razu, bez zamrażania dokumentu.
+    if (cameraLook(old) === WHOLE_PAGE) sendLook(old.docId, null)
+    else if (ui.presenting !== old.docId) await aimWith(old.pane, WHOLE_PAGE, () => sendLook(old.docId, null))
+  }
+  if (!want || sameWant(aimed, want)) return
+  if (seen?.docId !== want.docId) seen = { docId: want.docId, ids: new Set(noteIds(want.docId)) }
+  const shapes = new Set(shapeIds(want.docId))
+  const pending = want.state.show.filter((id) => shapes.has(id) && !drawn.has(id))
+  drawn = new Set(want.state.show.filter((id) => shapes.has(id)))
+  const moves = cameraLook(aimed) !== cameraLook(want)
+  aimed = want
+  if (!moves) {
+    // Ta sama kamera i maska: uwagi pojawiają się od razu, a nowy kształt kroku rysuje się piórem.
+    sendLook(want.docId, want.state, pending)
+    if (pending.length > 0) sendLook(want.docId, want.state)
+    return
+  }
+  await aimWith(
+    want.pane,
+    want.shot,
+    () => sendLook(want.docId, want.state, pending),
+    () => sendLook(want.docId, { ...want.state, rest: 'normal' }, pending)
+  )
+  if (pending.length > 0 && sameWant(aimed, want)) sendLook(want.docId, want.state)
+}
+
+/** Podgląd idzie za stanem formularza. Szybkie zmiany nie tworzą kolejki ruchów kamery. */
+async function settlePreview(): Promise<void> {
+  if (settling) {
+    again = true
+    return
+  }
+  settling = true
+  try {
+    do {
+      again = false
+      await previewStep()
+    } while (again)
+  } finally {
+    settling = false
+  }
+}
+
+/**
+ * Lista uwag przyszła od nowa. Uwaga albo kształt, który powstał przy otwartym podglądzie, trafia
+ * do wybranego kroku i zostaje na ekranie bez ponownego rysowania.
+ */
+export function routeNotesChanged(): void {
+  const docId = seen?.docId
+  if (!seen || !docId || aimed?.docId !== docId || route.picking) return
+  const fresh = noteIds(docId).filter((id) => !(seen as { ids: Set<string> }).ids.has(id))
+  if (fresh.length === 0) return
+  for (const id of fresh) seen.ids.add(id)
+  const step = selectedStep(docId)
+  if (!step) return
+  const shapes = new Set(shapeIds(docId))
+  for (const id of fresh) if (shapes.has(id)) drawn.add(id)
+  update(docId, step.id, { show: [...new Set([...step.show, ...fresh])] })
+}
+
+/** Formularz zniknął z ekranu: dokument chowa kadry i maskę, a kamera wraca do całej strony. */
 export function leaveRoute(): void {
   flushRoute(framed)
   endPick()
-  route.preview = false
   syncFrames()
 }

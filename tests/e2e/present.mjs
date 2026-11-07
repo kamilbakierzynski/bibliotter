@@ -372,12 +372,22 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
       assert.ok(light > 230, `jasność po wyjściu: ${light}`)
     })
 
-    await check('przycisk Prezentuj zaczyna od pierwszego kroku, a Zakończ wychodzi', async () => {
+    const inspOpen = () => shell.evaluate(() => document.getElementById('insp').classList.contains('open'))
+
+    await check('przycisk w doku otwiera trasę, a Prezentuj w panelu zaczyna od pierwszego kroku', async () => {
       await layer.locator('#presentBtn').click()
+      await shell.locator('#routeForm .rt-step').first().waitFor()
+      assert.equal(await root(), false)
+      await shell.locator('#rtPresent').click()
       await until(root)
       await atStep('1 z 4', 'Wstęp')
       await layer.locator('#presentExit').click()
       await until(async () => !(await root()))
+      // Panel trasy wraca po wyjściu, a przycisk w doku go zamyka.
+      await until(inspOpen)
+      await layer.locator('#presentBtn').click()
+      await until(async () => !(await inspOpen()))
+      await delay(800)
     })
 
     await check('Shift+F5 zaczyna od kroku wybranego w trasie, a panel trasy wraca po wyjściu', async () => {
@@ -386,10 +396,13 @@ export async function presentFlow(workspace, { check, entry = projectRoot }) {
       await shell.locator('#routeForm [data-editing="s3"]').waitFor()
       await page.keyboard.press('Shift+F5')
       await atStep('3 z 4', 'Wykres z karteczką')
-      await until(async () => !(await shell.evaluate(() => document.getElementById('insp').classList.contains('open'))))
+      await until(async () => !(await inspOpen()))
       await page.keyboard.press('Escape')
       await until(async () => !(await root()))
-      await until(() => shell.evaluate(() => document.getElementById('insp').classList.contains('open')))
+      await until(inspOpen)
+      // Podgląd kroku jedzie po wyjściu do kroku wybranego w trasie, a kolejne sprawdzenie zaczyna od F5.
+      await delay(600)
+      await until(async () => (await shell.evaluate(() => document.querySelectorAll('canvas.sheet-frame').length)) === 0, 8000)
     })
 
     const field = layer.locator('#presentNote textarea')

@@ -227,7 +227,6 @@ export const ui = {
   tool: 'move' as Tool,
   color: 'yellow' as StickyColor,
   aud: (readStored(AUDIENCE_KEY) === 'me' ? 'me' : 'agent') as Audience,
-  sel: false,
   insp: false,
   /** Dokument, który właśnie jest prezentacją. Dok staje się wtedy pilotem. */
   presenting: null as string | null,

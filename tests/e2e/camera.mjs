@@ -389,11 +389,40 @@ export async function cameraFlow(workspace, { check, entry = projectRoot }) {
       await delay(300)
     })
 
-    await check('skok w odległe miejsce przenika obrazy bez pustej klatki', async () => {
+    await check('skok w odległe miejsce jedzie kamerą po stronie bez pustej klatki', async () => {
+      const start = await page.evaluate(() => {
+        const trail = []
+        window.__trail = trail
+        const tick = () => {
+          if (window.__trail !== trail) return
+          trail.push([visualViewport.pageTop, visualViewport.scale])
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+        return visualViewport.pageTop
+      })
       const { moved, frames } = await aim(shell, docId, { anchor: anchorOf('#daleko') })
+      const trail = await page.evaluate(() => {
+        const list = window.__trail
+        window.__trail = null
+        return list
+      })
       assert.equal(moved, true)
-      assertCovered(frames)
-      assertMonotonic(frames.map(([, end]) => end.opacity), 1, 'krycie nowego kadru')
+      // Oddalenie i zbliżenie idą na zrzutach, a przejazd po żywej stronie, więc zrzutów jest mniej.
+      assert.ok(frames.length >= 4, `za mało klatek ruchu: ${frames.length}`)
+      for (const [index, list] of frames.entries()) {
+        assert.ok(list.some(({ opacity }) => opacity >= 0.99), `pusta klatka ${index}: ${JSON.stringify(list)}`)
+      }
+      // W przejeździe widok przesuwa się co klatkę w jedną stronę, w stałej skali.
+      const end = trail[trail.length - 1][0]
+      const between = trail.filter(([top]) => (top - start) * (end - top) > 0)
+      const tops = [...new Set(between.map(([top]) => Math.round(top)))]
+      assert.ok(tops.length >= 10, `za mało klatek przejazdu: ${tops.length} (${start} → ${end})`)
+      assertMonotonic(
+        between.map(([top]) => top * Math.sign(end - start)),
+        1,
+        'przejazd'
+      )
       await documentIsLive(shell)
       const now = await metrics(page)
       const center = onScreen(now, now.far.x, now.far.y)

@@ -5,7 +5,8 @@ import { closeLabelPop } from './labels'
 import { els, glowD, homePill, paintGlow, reflow, sheets, SHUT, spisPill, sL, sR, syncChrome, OFF } from './layout'
 import { aimAt, clearFrames, touch } from './native'
 import { setInsp, setSelNote, setTool } from './notes'
-import { applyGlow, closePeek, openDoc, peekDoc, setPane, syncFocus } from './sheets'
+import { openModeOf } from '../../../shared/links'
+import { applyGlow, closePeek, openAs, openDoc, setPane, syncFocus } from './sheets'
 import { data, type FormatFilter, memo, notify, pinned, saveFormat, ui, visibleDocs, waiting } from './state'
 
 /*
@@ -22,6 +23,8 @@ const HOME_LIMIT = 36
 const HEAD_H = 36
 /** Odstępy ściany razem z miejscem na dok, który pływa nad jej dołem. */
 const WALL_PAD = 204
+/** Na ekranie startowym dok chowa się pod krawędź, więc jego miejsce wraca do ściany. */
+const DOCK_ROOM = 68
 
 export const zoomP = new Spring(1, 150, 0.84)
 export const viewP = new Spring(0, 165, 0.86)
@@ -96,7 +99,9 @@ export function fitHome(force = false): void {
   if (!box || (!force && key === homeFit)) return
   homeFit = key
   const width = box.offsetWidth
-  home.style.setProperty('--th', `${clamp((H - HEAD_H - WALL_PAD) / 2, width * 0.6, width * 1.34)}px`)
+  const hero = home.querySelector<HTMLElement>('.h-hero')?.offsetHeight ?? 0
+  const room = H - HEAD_H - WALL_PAD - hero + (hero ? DOCK_ROOM : 0)
+  home.style.setProperty('--th', `${clamp(room / 2, width * 0.6, width * 1.34)}px`)
 }
 
 export function thumbOf(id: string): HTMLElement | null {
@@ -146,8 +151,7 @@ export function homeKey(e: KeyLike): boolean {
     e.preventDefault()
     const id = homeItems()[homeIdx]?.dataset.doc
     if (!id) return false
-    if (e.ctrlKey || e.metaKey) peekDoc(id)
-    else openDoc(id)
+    openAs(id, openModeOf(e))
     ui.kbd = true
     return true
   }

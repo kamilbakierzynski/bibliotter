@@ -1,6 +1,6 @@
 import { ipcRenderer, type IpcRendererEvent, webFrame } from 'electron'
-import type { OverlayEvent, OverlayItem, OverlayMode, SelectionAction, ShapeTool, StickyColor } from '../shared/annotations'
-import { isLocalHref, type LinkOutcome, type LinkPreview } from '../shared/links'
+import type { OverlayEvent, OverlayItem, OverlayMode, ShapeTool, StickyColor } from '../shared/annotations'
+import { isLocalHref, type LinkOutcome, type LinkPreview, type OpenMode, openModeOf } from '../shared/links'
 import { type Language, setLanguage, t } from '../shared/i18n'
 import { startCamera } from './camera'
 import { type LinkPreviewHandle, startLinkPreview } from './linkPreview'
@@ -27,8 +27,8 @@ void ipcRenderer.invoke('doc:is-sheet').then((answer: boolean) => {
 })
 let linkPreview: LinkPreviewHandle | null = null
 
-function openLocalLink(link: HTMLAnchorElement, href: string, peek: boolean): void {
-  void ipcRenderer.invoke('doc:open-link', href, peek).then((outcome: LinkOutcome) => {
+function openLocalLink(link: HTMLAnchorElement, href: string, mode: OpenMode): void {
+  void ipcRenderer.invoke('doc:open-link', href, mode).then((outcome: LinkOutcome) => {
     if (outcome === 'missing') linkPreview?.say(link, t('Nie ma takiego pliku'))
   })
 }
@@ -50,7 +50,7 @@ function followHtmlLink(event: MouseEvent, link: HTMLAnchorElement): void {
     const href = (link.getAttribute('href') ?? '').trim()
     if (event.defaultPrevented || !isLocalHref(href) || staysInDocument(link)) return
     event.preventDefault()
-    openLocalLink(link, href, event.ctrlKey || event.metaKey)
+    openLocalLink(link, href, openModeOf(event))
   }
   window.addEventListener('click', decide)
   const timer = window.setTimeout(decide)
@@ -65,7 +65,7 @@ window.addEventListener(
     const href = link.getAttribute('href') ?? ''
     if (isSheet && isLocalHref(href)) {
       event.preventDefault()
-      openLocalLink(link, href, event.ctrlKey || event.metaKey)
+      openLocalLink(link, href, openModeOf(event))
       return
     }
     if (link.protocol === 'https:' || link.protocol === 'http:') {
@@ -125,7 +125,6 @@ window.addEventListener(
       onItems: (listener) => subscribe<OverlayItem[]>('overlay:items', listener),
       onFocus: (listener) => subscribe<string | null>('overlay:focus', listener),
       onTrack: (listener) => subscribe<boolean>('overlay:track', listener),
-      onSelection: (listener) => subscribe<SelectionAction>('overlay:selection', listener),
       onPointer: (listener) => subscribe<boolean>('overlay:pointer', listener),
       onMarker: (listener) => subscribe<StickyColor | null>('overlay:marker', listener),
       onPointerWithdraw: (listener) => subscribe<null>('overlay:pointer-withdraw', listener),

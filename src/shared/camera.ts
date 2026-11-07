@@ -48,6 +48,22 @@ export interface CameraViewport {
   foot: number
 }
 
+/** Widok teraz i widok, który kamera pokaże w kadrze, policzony, zanim kamera ruszy. */
+export interface CameraPlan {
+  from: CameraView
+  to: CameraView
+  viewport: CameraViewport
+}
+
+/** Najdłuższy przejazd po stronie. Dłuższy i tak zlewa się w smugę, a widzowie czekają. */
+export const MAX_PAN_MS = 1200
+
+/**
+ * Odcinek podróży kamery między odległymi kadrami. `pose` ustawia skalę wokół punktu strony,
+ * a `pan` przesuwa żywy widok w tej samej skali tak, że punkt staje w środku widoku.
+ */
+export type CameraLeg = { type: 'pose'; x: number; y: number; scale: number } | { type: 'pan'; x: number; y: number; ms: number }
+
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
 function parseBox(value: unknown): PageRect | null {
@@ -70,6 +86,16 @@ export function parseCameraShot(value: unknown, parseAnchor: (value: unknown) =>
   if (shot.box === undefined) return { anchor }
   const box = parseBox(shot.box)
   return box ? { anchor, box } : null
+}
+
+/** Odcinek przychodzi z powłoki, a potem idzie do dokumentu, więc sprawdzamy jego kształt. */
+export function parseCameraLeg(value: unknown): CameraLeg | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { type, x, y, scale, ms } = value as Record<string, unknown>
+  if (!finite(x) || !finite(y)) return null
+  if (type === 'pose' && finite(scale)) return { type, x, y, scale: Math.min(MAX_CAMERA_SCALE, Math.max(1, scale)) }
+  if (type === 'pan' && finite(ms)) return { type, x, y, ms: Math.min(MAX_PAN_MS, Math.max(0, ms)) }
+  return null
 }
 
 export function parseCameraView(value: unknown): CameraView | null {

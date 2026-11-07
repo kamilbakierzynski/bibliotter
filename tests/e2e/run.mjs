@@ -17,6 +17,7 @@ import { cameraFlow } from './camera.mjs'
 import { ticketsFlow } from './tickets.mjs'
 import { findFlow } from './find.mjs'
 import { htmlLinkFlow } from './htmlLinks.mjs'
+import { linksPanelFlow } from './linksPanel.mjs'
 import { pairFlow } from './pair.mjs'
 import { languageFlow } from './language.mjs'
 import { mathFlow } from './math.mjs'
@@ -29,6 +30,7 @@ import { shapesFlow } from './shapes.mjs'
 import { skeletonFlow } from './skeleton.mjs'
 import { undoFlow } from './undo.mjs'
 import { moveNoteFlow } from './moveNote.mjs'
+import { selectionMenuFlow } from './selectionMenu.mjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const artifacts = join(projectRoot, 'tests/e2e/artifacts')
@@ -429,8 +431,18 @@ const overlayCovers = (page, point) =>
     { timeout: 5000 }
   )
 
+/**
+ * Zrzut dokumentu bez pasa minimapy przy prawej krawędzi. Włączone narzędzie chowa uchwyt minimapy,
+ * więc ten pas zmienia się razem z narzędziem, a nie z ręką.
+ */
+const MINIMAP_BAND = 64
+const handShot = async (page) => {
+  const { width, height } = await page.evaluate(() => ({ width: document.documentElement.clientWidth, height: innerHeight }))
+  return page.screenshot({ clip: { x: 0, y: 0, width: width - MINIMAP_BAND, height } })
+}
+
 /** Ręka leży w zamkniętym Shadow DOM, więc jej obecność widać tylko na obrazie strony. */
-const handOn = async (page, baseline) => !(await page.screenshot()).equals(baseline)
+const handOn = async (page, baseline) => !(await handShot(page)).equals(baseline)
 
 const leaveDocument = (app, url) =>
   app.evaluate(({ webContents }, target) => {
@@ -487,7 +499,7 @@ async function pointerFlow(workspace) {
     await delay(400)
     page.on('pageerror', (error) => errors.push(String(error)))
     const target = await centerOf(page, '#akcja')
-    const baseline = await page.screenshot()
+    const baseline = await handShot(page)
 
     await check('skrót P włącza wskaźnik i chowa kursor tylko w dokumencie', async () => {
       await page.keyboard.press('p')
@@ -702,7 +714,7 @@ async function markerFlow(workspace) {
     const box = await page.locator('#temat').boundingBox()
     const line = box.y + 14
     const wide = await page.evaluate(() => innerWidth)
-    const clean = await page.screenshot()
+    const clean = await handShot(page)
 
     await check('skrót M włącza zakreślacz, kolory w tacy i chowa kursor', async () => {
       await page.keyboard.press('m')
@@ -979,7 +991,22 @@ async function annotationFlow(workspace) {
 
     await check('prawdziwy klient MCP czyta dokument i odpowiada w wątku', async () => {
       const { tools } = await mcp.listTools()
-      assert.equal(tools.length, 9)
+      assert.deepEqual(
+        tools.map((item) => item.name).sort(),
+        [
+          'current_document',
+          'get_presentation',
+          'label_document',
+          'list_comments',
+          'list_documents',
+          'list_labels',
+          'read_document',
+          'reply_comment',
+          'resolve_comment',
+          'search_documents',
+          'set_presentation'
+        ]
+      )
       assert.equal((await tool('current_document')).title, 'Dokument z uwagami')
       const read = await tool('read_document', { document: 'current', limit: 20 })
       assert.equal(read.content.length, 20)
@@ -1045,7 +1072,7 @@ async function annotationFlow(workspace) {
         range.selectNodeContents(document.getElementById('cel'))
         getSelection().addRange(range)
       })
-      await layer.locator('.tray-s .ask', { hasText: 'Skomentuj' }).click()
+      await page.keyboard.press('c')
       await shell.locator('.draft .bubble').waitFor()
       await shell.getByLabel('Treść uwagi').fill('Cytat zostaje przy uwadze')
       await save()
@@ -1532,6 +1559,7 @@ async function main() {
   await check('scenariusz motywu Markdownu dobiega końca', () => markdownTheme(workspace))
   await check('scenariusz cofania dobiega końca', () => undoFlow(workspace, { check }))
   await check('scenariusz przenoszenia uwag dobiega końca', () => moveNoteFlow(workspace, { check }))
+  await check('scenariusz menu zaznaczenia dobiega końca', () => selectionMenuFlow(workspace, { check }))
   await check('scenariusz menu wiersza dobiega końca', () => rowMenuFlow(workspace, { check }))
   await check('scenariusz szkieletów dobiega końca', () => skeletonFlow(workspace, { check }))
   await check('scenariusz opcji dobiega końca', () => optionsFlow(workspace, { check }))
@@ -1547,6 +1575,7 @@ async function main() {
   await check('scenariusz minimapy i spisu treści dobiega końca', () => outlineFlow(workspace, { check }))
   await check('scenariusz linków dobiega końca', () => linkFlow(workspace))
   await check('scenariusz linków HTML dobiega końca', () => htmlLinkFlow(workspace, { check }))
+  await check('scenariusz panelu Linki dobiega końca', () => linksPanelFlow(workspace, { check }))
   await check('scenariusz pary planu i objaśnienia dobiega końca', () => pairFlow(workspace, { check }))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
 

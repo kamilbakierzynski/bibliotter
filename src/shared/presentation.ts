@@ -55,6 +55,11 @@ export interface PresentState {
   rest: StepRest
   camera: StepCamera | null
   pending: string[]
+  /**
+   * Podgląd kroku w formularzu trasy, a nie prezentacja. Dokument pokazuje krok tak samo, ale klawisze
+   * i nowe uwagi działają jak zwykle.
+   */
+  edit?: boolean
 }
 
 export const MAX_STEPS = 200
@@ -198,7 +203,8 @@ export function parsePresentState(value: unknown, parseAnchor: (value: unknown) 
     reveal: state.reveal === true,
     rest: STEP_RESTS.includes(state.rest as StepRest) ? (state.rest as StepRest) : 'normal',
     camera: camera?.kind === 'hold' ? null : camera,
-    pending: ids(state.pending)
+    pending: ids(state.pending),
+    ...(state.edit === true ? { edit: true } : {})
   }
 }
 

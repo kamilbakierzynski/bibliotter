@@ -1,4 +1,4 @@
-import type { DocPair } from '../../../shared/links'
+import type { DocPair, OpenMode } from '../../../shared/links'
 import { followLink } from './sheets'
 import { data } from './state'
 
@@ -14,10 +14,10 @@ export function pairOf(docId: string): Promise<DocPair | null> {
   return pair
 }
 
-/** Przeskok jak link: na miejscu arkusza, a z Ctrl zerknięcie obok. */
-export async function openPair(docId: string, peek = false): Promise<boolean> {
+/** Przeskok jak link: na miejscu arkusza, z Ctrl zerknięcie, a z Ctrl Shift od razu obok. */
+export async function openPair(docId: string, mode: OpenMode = 'open'): Promise<boolean> {
   const pair = await pairOf(docId)
   if (!pair || !data.entries.has(pair.docId)) return false
-  followLink(docId, pair.docId, peek)
+  followLink(docId, pair.docId, mode)
   return true
 }

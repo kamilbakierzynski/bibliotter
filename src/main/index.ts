@@ -26,12 +26,20 @@ import {
   type ViewerPlacement,
   type ViewerWheel
 } from '../shared/types'
-import type { Audience, NewAnnotation, OverlayEvent, OverlayMode, SelectionAction } from '../shared/annotations'
+import type { Audience, NewAnnotation, OverlayEvent, OverlayMode } from '../shared/annotations'
 import type { AutoLabelOptions, AutoLabelState } from '../shared/autoLabel'
-import { parseCameraShot } from '../shared/camera'
+import { parseCameraLeg, parseCameraShot } from '../shared/camera'
 import { MAX_STEPS, parsePresentState, parseStepCamera, type RouteFrame, STEP_ID } from '../shared/presentation'
 import { cleanLabel, hasLabel, isLabelTone, moveLabelColor, parseLabels, sameLabel, ticketTemplate, withLabelColor } from '../shared/labels'
-import type { LinkOutcome, LinkPreview } from '../shared/links'
+import {
+  type FollowLink,
+  type LinkOutcome,
+  type LinkPreview,
+  type LinkShotRequest,
+  type OpenMode,
+  parseLinkShot,
+  parseOpenMode
+} from '../shared/links'
 import { parseOutlineCommand } from '../shared/outline'
 import { DEFAULT_LANGUAGE, isLanguage, setLanguage, t } from '../shared/i18n'
 import { type AppInfo, cleanHosts } from '../shared/options'
@@ -151,7 +159,7 @@ function warmDocument(doc: DocEntry): void {
 }
 
 /** Link prowadzi tam, gdzie wskazuje: dokument otwiera się w apce, a inny plik w Eksploratorze. */
-async function followLink(from: DocEntry, href: string, peek: boolean): Promise<LinkOutcome> {
+async function followLink(from: DocEntry, href: string, mode: OpenMode): Promise<LinkOutcome> {
   const link = await links.resolve(from, href)
   if (!link) return 'none'
   if (link.kind === 'external') {
@@ -164,13 +172,34 @@ async function followLink(from: DocEntry, href: string, peek: boolean): Promise<
     return 'revealed'
   }
   if (link.fragment) viewer?.aim(link.docId, link.fragment)
-  if (link.docId !== from.id) sendToShell('viewer:follow-link', { from: from.id, docId: link.docId, peek })
+  if (link.docId !== from.id) {
+    links.noteFollow(from, link.docId)
+    sendToShell('viewer:follow-link', { from: from.id, docId: link.docId, mode } satisfies FollowLink)
+  }
   return 'opened'
 }
 
-async function followLinkFrom(docId: string, href: string, peek: boolean): Promise<LinkOutcome> {
+const PLAIN_QUERY = { matchCase: false, wholeWord: false, regex: false }
+
+/** Zrzut do karty wiersza w panelu Linki. `null` to brak zrzutu, a `later` zamówienie wyprzedzone przez nowsze. */
+async function linkShot(request: LinkShotRequest | null): Promise<string | null | 'later'> {
+  const previews = hitPreviews
+  if (!request || !previews) return null
+  const doc = requireDoc(request.docId)
+  if (request.kind === 'outgoing') {
+    const link = await links.resolve(doc, request.href)
+    return link?.kind === 'doc' && link.docId && link.docId !== doc.id ? previews.place(link.docId, link.fragment) : null
+  }
+  const source = requireDoc(request.from)
+  const snippet = await links.linkSnippet(source, doc)
+  const shot = snippet ? await previews.preview(source.id, { text: snippet.match, ...PLAIN_QUERY }, snippet) : null
+  // Gdy miejsca nie widać, np. link dorysował skrypt strony, zostaje początek dokumentu.
+  return shot ?? previews.place(source.id, '')
+}
+
+async function followLinkFrom(docId: string, href: string, mode: OpenMode): Promise<LinkOutcome> {
   const doc = library?.getEntry(docId)
-  return doc ? followLink(doc, href, peek) : 'none'
+  return doc ? followLink(doc, href, mode) : 'none'
 }
 
 async function previewLink(docId: string, href: string): Promise<LinkPreview | null> {
@@ -415,10 +444,6 @@ function parsePlacements(value: unknown): ViewerPlacement[] {
   })
 }
 
-function isSelectionAction(value: unknown): value is SelectionAction {
-  return value === 'comment' || value === 'sticky' || value === 'copy'
-}
-
 function assertShell(event: IpcMainInvokeEvent | IpcMainEvent): void {
   if (event.sender !== mainWindow?.webContents) throw new Error('Niedozwolony nadawca IPC')
 }
@@ -562,9 +587,10 @@ function registerIpc(): void {
   handle('viewer:warm', (docId: unknown) => warmDocument(requireDoc(docId)))
   handle('links:list', (docId: unknown) => links.links(requireDoc(docId)))
   handle('links:pair', (docId: unknown) => links.pair(requireDoc(docId)))
-  handle('links:follow', (docId: unknown, href: unknown, peek: unknown) =>
-    followLink(requireDoc(docId), String(href), peek === true)
+  handle('links:follow', (docId: unknown, href: unknown, mode: unknown) =>
+    followLink(requireDoc(docId), String(href), parseOpenMode(mode))
   )
+  handle('links:shot', (request: unknown) => linkShot(parseLinkShot(request)))
   handle('viewer:close', (docId: unknown) => viewer?.close(String(docId)))
   handle('viewer:reload', (docId: unknown) => viewer?.reload(String(docId)))
   handle('viewer:layout', (placements: unknown) => viewer?.setLayout(parsePlacements(placements)))
@@ -572,6 +598,14 @@ function registerIpc(): void {
   handle('viewer:camera', (docId: unknown, shot: unknown) =>
     viewer?.aimCamera(String(docId), shot === null ? null : parseCameraShot(shot, (value) => parseAnchor(value))) ?? null
   )
+  handle('viewer:camera-plan', (docId: unknown, shot: unknown) => {
+    const parsed = parseCameraShot(shot, (value) => parseAnchor(value))
+    return parsed ? (viewer?.planCamera(String(docId), parsed) ?? null) : null
+  })
+  handle('viewer:camera-leg', (docId: unknown, leg: unknown) => {
+    const parsed = parseCameraLeg(leg)
+    return parsed ? (viewer?.steerCamera(String(docId), parsed) ?? null) : null
+  })
   handle('viewer:set-current', (docId: unknown) => setCurrentDocument(docId === null ? null : requireDoc(docId)))
 
   handle('presentation:get', (docId: unknown) => presentations.read(requireDoc(docId).id))
@@ -700,10 +734,6 @@ function registerIpc(): void {
     assertShell(event)
     viewer?.trackOverlay(String(docId), on === true)
   })
-  ipcMain.on('viewer:selection', (event, docId: unknown, action: unknown) => {
-    assertShell(event)
-    if (isSelectionAction(action)) viewer?.runSelectionAction(String(docId), action)
-  })
   ipcMain.on('thumbs:request', (event, docIds: unknown) => {
     assertShell(event)
     if (Array.isArray(docIds)) thumbnails?.request(docIds.filter((id): id is string => typeof id === 'string'))
@@ -776,6 +806,12 @@ function createWindow(): BrowserWindow {
     themed: (docId) => library?.getEntry(docId)?.format === 'markdown',
     send: (thumb) => sendToShell('thumbs:ready', thumb)
   })
+  hitPreviews = new HitPreviewer({
+    viewer: () => viewer,
+    shaOf: (docId) => library?.getEntry(docId)?.sha ?? null,
+    isStatic: (docId) => library?.getEntry(docId)?.format === 'markdown',
+    scale: () => (window.isDestroyed() ? 1 : screen.getDisplayMatching(window.getBounds()).scaleFactor)
+  })
 
   const devServer = process.env.ELECTRON_RENDERER_URL
   if (devServer) {
@@ -787,13 +823,9 @@ function createWindow(): BrowserWindow {
   window.on('closed', () => {
     thumbnails?.close()
     thumbnails = null
+    hitPreviews?.close()
+    hitPreviews = null
     dockLayer?.close()
-  hitPreviews = new HitPreviewer({
-    viewer: () => viewer,
-    shaOf: (docId) => library?.getEntry(docId)?.sha ?? null,
-    isStatic: (docId) => library?.getEntry(docId)?.format === 'markdown',
-    scale: () => (window.isDestroyed() ? 1 : screen.getDisplayMatching(window.getBounds()).scaleFactor)
-  })
     dockLayer = null
     mainWindow = null
     viewer?.dispose()
@@ -805,8 +837,6 @@ function createWindow(): BrowserWindow {
 async function start(): Promise<void> {
   await app.whenReady()
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
-    hitPreviews?.close()
-    hitPreviews = null
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
   config = await loadConfig()
@@ -815,7 +845,10 @@ async function start(): Promise<void> {
   library = new LibraryClient({
     script: join(__dirname, 'libraryWorker.js'),
     init: () => ({ dataDir: dataDir(), config: libraryConfig() }),
-    onChange: (json) => sendToShell('library:changed', json),
+    onChange: (json) => {
+      sendToShell('library:changed', json)
+      links.warmSoon()
+    },
     onProgress: (progress) => sendToShell('library:progress', progress),
     onNewDocs: (docIds) => {
       if (config.autoLabelNew) labeler?.enqueue(docIds)

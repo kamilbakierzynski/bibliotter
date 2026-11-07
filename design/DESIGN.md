@@ -147,7 +147,7 @@ Biblioteka ma się czytać tak samo przy 50 i przy 5000 dokumentów:
 
 ### Dok
 
-Pływa nad arkuszami, wyśrodkowany względem sceny. Szeroka taca dosuwa go do krawędzi okna, ale nigdy za nią nie wychodzi. Taca pokazuje kolor karteczki, odbiorcę komentarza albo akcje zaznaczonego tekstu. Przy co najmniej trzech arkuszach dochodzi mapka szeregu. Dok i paleta to jeden element, który rośnie, a nie dwa okna.
+Pływa nad arkuszami, wyśrodkowany względem sceny. Szeroka taca dosuwa go do krawędzi okna, ale nigdy za nią nie wychodzi. Taca pokazuje kolor karteczki albo odbiorcę komentarza. Akcje zaznaczonego tekstu ma menu przy zaznaczeniu (sekcja Uwagi). Przy co najmniej trzech arkuszach dochodzi mapka szeregu. Dok i paleta to jeden element, który rośnie, a nie dwa okna.
 
 Dok nie może zasłaniać treści, więc każdy dokument dostaje u dołu 84 px zapasu i po przewinięciu do końca ostatnia linia stoi nad dokiem. Dymek i wątek przy dole arkusza odchylają się ponad dok, a panel uwag w wąskim oknie kończy się nad nim. Kółko nad dokiem przewija dokument pod spodem, a po kliknięciu w dok klawiatura wraca do dokumentu.
 
@@ -196,6 +196,7 @@ Widać go po uruchomieniu i po zamknięciu ostatniego arkusza. `H` przechodzi na
 - Komentarz i karteczkę można przenieść. Przeciągnięcie znacznika o więcej niż 4 px przenosi go, a krótsze to zwykłe kliknięcie, które otwiera wątek. Przycisk Przenieś w wątku odkleja uwagę, która idzie za kursorem do kliknięcia, także wtedy, gdy jej miejsca nie ma w tej wersji dokumentu. Kursor wskazuje róg karteczki i czubek pinezki, jak przy stawianiu nowej. Obrys pokazuje element, na który uwaga spadnie, a przy górnej i dolnej krawędzi strona przewija się sama. `Esc` odkłada uwagę tam, gdzie była, a `Ctrl Z` cofa przeniesienie.
 - Ruch karteczki naśladuje prawdziwą. Klej jest u góry, więc pierwszy odchodzi dolny róg: zawija się, pokazując odwrotną stronę papieru, a kartka unosi się z większym cieniem i kołysze za ręką wokół punktu chwytu. Przy przyklejaniu najpierw siada góra, a róg dociska się chwilę później. Pinezka unosi się z przechyleniem i wbija z małym odbiciem. Nowa uwaga pojawia się w ten sam sposób, już uniesiona.
 - Przeniesiona uwaga dostaje nową kotwicę, a rozmowa i wersja dokumentu zostają. Komentarz do zaznaczonego tekstu przesunięty w obrębie swojego akapitu zachowuje cytat, bo dalej mówi o tym samym. Zakreślenia i kształty się nie przenoszą, bo ich geometria leży na tekście.
+- Menu zaznaczenia (`src/preload/selectionMenu.ts`) wyrasta przy końcu zaznaczonego tekstu po puszczeniu myszy, a prawy przycisk w zaznaczeniu stawia je pod kursorem. Wiersze: Kopiuj, Skomentuj, Karteczka, Zakreśl z czterema kolorami, Dodaj krok prezentacji, Znajdź w dokumencie i Szukaj w bibliotece. Żyje w warstwie dokumentu, bo przewija się z tekstem, a kliknięcie w nie nie kasuje zaznaczenia. Zakreślenie z menu kładzie tusz zakreślacza wiersz po wierszu, a krok kadruje akapit z tekstem (Miejsce) i bierze początek cytatu jako tytuł. Bez otwartego formularza trasy krok staje na końcu, z formularzem za wybranym. Menu milczy, gdy mysz należy do narzędzia i w prezentacji. `Esc`, klawisz albo kliknięcie obok je chowają.
 
 ### Linki
 

@@ -9,7 +9,7 @@ import { hideCard } from './hoverCard'
 import { hideCaps, hideFly, hideTip, jumpToPair, stepNotes, togglePop } from './keys'
 import { autoLabelDoc, closeLabelPop, toggleLabel, toggleLabelPop } from './labels'
 import { inLayer } from './layer'
-import { actPill, cmdPill, mH, mW, setNav, setView } from './layout'
+import { actPill, cmdPill, growFrom, mH, mW, setNav, setView } from './layout'
 import { aimAt, cover, uncover } from './native'
 import { toggleDrawings } from './drawings'
 import { setTool, toggleNotesView, togglePanel } from './notes'
@@ -721,6 +721,13 @@ export function closeActs(): void {
   if (ui.cmd) inputEl()?.focus()
 }
 
+/** Na ekranie startowym paleta wyrasta z paska pod logo, a nie z doku. */
+function heroBox(): { x: number; y: number; w: number; h: number } | null {
+  if (!ui.home || ui.peek !== null || ui.setup !== null) return null
+  const box = document.getElementById('homeAsk')?.getBoundingClientRect()
+  return box && box.width > 0 ? { x: box.left, y: box.top, w: box.width, h: box.height } : null
+}
+
 export function openCmd(): void {
   if (ui.cmd) return
   ui.cmd = true
@@ -733,6 +740,7 @@ export function openCmd(): void {
   ui.map = false
   resetSearch()
   renderCmd()
+  growFrom(heroBox())
   mW.to(1, { k: 250, z: 0.8 })
   mH.to(1, { k: 190, z: 0.74 })
   cover('palette')

@@ -4,6 +4,7 @@ import { clamp } from '../motion/spring'
 import { askHitShot, hitShot } from '../shell/hitPreview'
 import { card, useCard } from '../shell/hoverCard'
 import { els } from '../shell/layout'
+import { askLinkShot, linkCardRow, linkShot } from '../shell/linkShots'
 import { libraryRows } from '../shell/panel'
 import { search, searchModel } from '../shell/search'
 import { countDocs, data, STATUS, toneOf, useShell } from '../shell/state'
@@ -131,10 +132,41 @@ function HitCard({ at }: { at: number }): React.JSX.Element | null {
   )
 }
 
+/**
+ * Wiersz panelu Linki: cel na kotwicy albo miejsce, z którego inny dokument tu linkuje.
+ * Zanim przyjdzie zrzut, link na początek dokumentu pokazuje miniaturę, bo to ten sam kadr.
+ */
+function LinkCard({ id }: { id: string }): React.JSX.Element | null {
+  useEffect(() => askLinkShot(id))
+  const row = linkCardRow(id)
+  const doc = row && data.entries.get(row.docId)
+  if (!row || !doc) return null
+  const shot = linkShot(id)
+  const thumb = row.request.kind === 'outgoing' && !row.fragment ? data.thumbs.get(doc.id) : undefined
+  const place =
+    row.request.kind === 'incoming' ? t('Linkuje tutaj') : row.fragment ? `#${row.fragment}` : relativeTime(doc.mtimeMs)
+  return (
+    <>
+      {(shot !== null || thumb) && (
+        <div className={shot === undefined ? 'hc-shot wait' : 'hc-shot'} data-format={doc.format}>
+          {shot ? <img src={shot} alt="" draggable={false} /> : thumb && <img className="hc-top" src={thumb.url} alt="" draggable={false} />}
+        </div>
+      )}
+      <p className="hc-title">{displayName(doc)}</p>
+      <p className="hc-meta">
+        <span>{doc.projectName}</span>
+        <span>·</span>
+        <span className="hc-place">{place}</span>
+      </p>
+    </>
+  )
+}
+
 function CardBody(): React.JSX.Element | null {
   const target = card.target
   if (!target) return null
   if (target.kind === 'doc') return <DocCard id={target.id} />
+  if (target.kind === 'link') return <LinkCard id={target.key} />
   if (target.kind === 'hit') return <HitCard at={target.at} />
   const row = rowOf(target.key)
   if (row?.type === 'folder') return <FolderCard row={row} />
@@ -151,15 +183,16 @@ export function HoverCard(): React.JSX.Element {
   useLayoutEffect(() => {
     const el = box.current
     if (!el || !card.on) return
-    // Szeroka karta trafienia nie może wyjść za prawą krawędź wąskiego okna.
-    el.style.maxWidth = `${Math.max(0, els.app.clientWidth - card.left - EDGE)}px`
+    // Szeroka karta trafienia nie może wyjść za krawędź wąskiego okna.
+    el.style.maxWidth = `${Math.max(0, card.before ? card.left - EDGE : els.app.clientWidth - card.left - EDGE)}px`
+    el.style.left = `${card.before ? Math.max(EDGE, card.left - el.offsetWidth) : card.left}px`
     const height = els.app.clientHeight
     el.style.top = `${clamp(card.rowTop - LIFT, EDGE, Math.max(EDGE, height - el.offsetHeight - EDGE))}px`
   })
-  const wide = card.target?.kind === 'hit'
-  const className = `hcard${wide ? ' wide' : ''}${card.on ? ' on' : ''}${card.on && card.glide ? ' glide' : ''}`
+  const wide = card.target?.kind === 'hit' || card.target?.kind === 'link'
+  const className = `hcard${wide ? ' wide' : ''}${card.before ? ' before' : ''}${card.on ? ' on' : ''}${card.on && card.glide ? ' glide' : ''}`
   return (
-    <div className={className} id="hoverCard" ref={box} style={{ left: card.left }} aria-hidden="true">
+    <div className={className} id="hoverCard" ref={box} aria-hidden="true">
       <CardBody />
     </div>
   )

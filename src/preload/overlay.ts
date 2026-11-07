@@ -8,17 +8,17 @@ import {
   type OverlayKey,
   type OverlayMode,
   type OverlayRect,
-  type SelectionAction,
   type ShapeTool,
   type StickyColor
 } from '../shared/annotations'
 import type { PickKind, PresentState, RouteFrame } from '../shared/presentation'
-import { createAnchor, findRange, resolveAnchor } from './anchor'
+import { blockOf, createAnchor, findRange, resolveAnchor } from './anchor'
 import { createMarker, MARKER_STYLE } from './marker'
 import { createInk } from './markerInk'
 import { createNoteLift, type Point } from './noteLift'
 import { createPresenter, PRESENTER_STYLE } from './presenter'
 import { createRouteFrames, ROUTE_STYLE } from './routeFrames'
+import { createSelectionMenu, SELECTION_MENU_STYLE } from './selectionMenu'
 import { createShapes, SHAPE_STYLE } from './shapes'
 import { onScreen, onZoom, zoom } from './zoom'
 
@@ -34,6 +34,8 @@ const DRAFT_ROOM = 14
 const PIN_SIZE = 24
 const NOTE_W = 148
 const NOTE_H = 40
+/** Tytuł kroku z zaznaczenia to początek cytatu. */
+const STEP_TITLE = 60
 
 /*
  * Pinezki i karteczki należą do języka apki, a nie dokumentu. Dokument ma własne fonty,
@@ -199,7 +201,6 @@ export interface OverlayBridge {
   onItems(listener: (items: OverlayItem[]) => void): void
   onFocus(listener: (id: string | null) => void): void
   onTrack(listener: (on: boolean) => void): void
-  onSelection(listener: (action: SelectionAction) => void): void
   onPointer(listener: (on: boolean) => void): void
   /** Kolor włącza zakreślacz, a `null` go wyłącza. */
   onMarker(listener: (color: StickyColor | null) => void): void
@@ -269,7 +270,7 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   const root = host.attachShadow({ mode: 'closed' })
 
   const style = document.createElement('style')
-  style.textContent = STYLE + SHAPE_STYLE + ROUTE_STYLE + MARKER_STYLE + PRESENTER_STYLE
+  style.textContent = STYLE + SHAPE_STYLE + ROUTE_STYLE + MARKER_STYLE + PRESENTER_STYLE + SELECTION_MENU_STYLE
   const quotes = document.createElement('div')
   const layer = document.createElement('div')
   const highlight = document.createElement('div')
@@ -328,7 +329,6 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   let frame = 0
   let tracking = false
   let lastPositions = ''
-  let selecting = false
   let pointing = false
   let marking = false
   let shaping = false
@@ -528,6 +528,7 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     shapes.settle()
     route.layout()
     lift.paint()
+    selectionMenu.layout()
     if (draft) place(draft.node, draft.element, draft.anchor)
 
     // Uwaga wybrana z listy może przyjść przed swoją pinezką, więc przewijamy dopiero po jej ułożeniu.
@@ -657,7 +658,7 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     const node = document.createElement('div')
     // W prezentacji pole wpisu stoi nad dokiem, więc szkic widać w dokumencie, a kolejne kliknięcie
     // go przestawia. Poza nią szkic tylko mierzy miejsce dla dymka powłoki.
-    const keep = present !== null && mode !== null
+    const keep = present !== null && !present.edit && mode !== null
     node.className = keep ? (kind === 'sticky' ? `draft shown sticky ${draftColor}` : 'draft shown') : 'draft'
     if (!keep || kind !== 'sticky') node.textContent = '+'
     layer.append(node)
@@ -761,11 +762,54 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     return true
   }
 
+  /** Krok z zaznaczenia kadruje blok, w którym leży tekst, jak Miejsce wskazane kliknięciem. */
+  const stepFromSelection = (range: Range): void => {
+    const container = range.commonAncestorContainer
+    const element = container instanceof Element ? container : container.parentElement
+    if (!element) return
+    const rect = range.getBoundingClientRect()
+    const quote = range.toString().replace(/\s+/g, ' ').trim()
+    const title = quote.length > STEP_TITLE ? `${quote.slice(0, STEP_TITLE - 1).trimEnd()}…` : quote
+    const anchor = createAnchor(blockOf(element), rect.left, rect.top)
+    bridge.send({ type: 'add-step', camera: { kind: 'place', anchor }, title })
+  }
+
+  const selectionMenu = createSelectionMenu({
+    // W prezentacji widzowie patrzą na dokument, a nowe uwagi stawia się z doku.
+    blocked: () =>
+      mode !== null || pointing || marking || shaping || picking || lift.busy || (present !== null && !present.edit),
+    unzoom: () => unzoom,
+    run: (action, range, color) => {
+      switch (action) {
+        case 'copy':
+          // Kliknięcie w menu jest gestem użytkownika, więc kopiowanie nie potrzebuje uprawnień schowka.
+          document.execCommand('copy')
+          break
+        case 'comment':
+        case 'sticky':
+          placeFromSelection(action)
+          break
+        case 'highlight':
+          if (ink.fromRange(range, color)) window.getSelection()?.removeAllRanges()
+          break
+        case 'step':
+          stepFromSelection(range)
+          break
+        case 'find':
+        case 'search':
+          bridge.send({ type: 'selection-find', scope: action === 'find' ? 'doc' : 'library' })
+          break
+      }
+    }
+  })
+  root.append(selectionMenu.element)
+
   guard.overlay = host
   guard.onOverlayClick = (event) => {
     // Kliknięcie kończące przeciągnięcie nie otwiera wątku.
     if (lift.swallowsClick()) return
     const hit = root.elementFromPoint(event.clientX, event.clientY)
+    if (selectionMenu.click(event.clientX, event.clientY, hit)) return
     for (const [id, node] of nodes) {
       if (node !== hit) continue
       select(id)
@@ -863,19 +907,11 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   // W prezentacji spacja i strzałki prowadzą po krokach, ale dokument z własną obsługą klawiszy
   // dostaje je pierwszy. Klawisz, który dokument zatrzymał, zostaje przy nim.
   window.addEventListener('keydown', (event) => {
-    if (!present || !event.isTrusted || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
+    if (!present || present.edit || !event.isTrusted || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
     const key = event.key.toLowerCase() as OverlayKey
     if (!STEP_KEYS.includes(key) || isEditable(event.target)) return
     event.preventDefault()
     if (!event.repeat) bridge.send({ type: 'shortcut', key, shift: event.shiftKey, ctrl: false })
-  })
-
-  document.addEventListener('selectionchange', () => {
-    const selection = window.getSelection()
-    const active = selection !== null && !selection.isCollapsed && !isEditable(document.activeElement)
-    if (active === selecting) return
-    selecting = active
-    bridge.send({ type: 'selection', active })
   })
 
   bridge.onMode((next) => {
@@ -921,10 +957,6 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     tracking = on
     lastPositions = ''
     scheduleLayout()
-  })
-
-  bridge.onSelection((action) => {
-    if (action !== 'copy') placeFromSelection(action)
   })
 
   bridge.onPointer(setPointing)

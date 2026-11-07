@@ -1,6 +1,8 @@
 import type { WebContents } from 'electron'
 import {
+  type CameraLeg,
   type CameraMove,
+  type CameraPlan,
   type CameraShot,
   type CameraView,
   type CameraViewport,
@@ -22,12 +24,16 @@ import {
 
 /** Dokument, który nie odpowiada, nie może zatrzymać ruchu kamery. */
 const REPLY_LIMIT_MS = 1500
+/** Różnica skali, poniżej której kamera nie zmienia powiększenia. */
+const SAME_SCALE = 1e-3
 const PROTOCOL = '1.3'
 
 interface Measure {
   view: CameraView
   viewport: CameraViewport
   target: PageRect | null
+  /** Rozmiar strony, żeby plan nie wyprowadził widoku poza jej krawędź. */
+  page: { width: number; height: number } | null
 }
 
 interface Waiting {
@@ -48,7 +54,35 @@ function parseMeasure(value: unknown): Measure | null {
     box && finite(box.x) && finite(box.y) && finite(box.width) && finite(box.height)
       ? { x: box.x, y: box.y, width: box.width, height: box.height }
       : null
-  return { view: parsedView, viewport: { width: size.width, height: size.height, foot: size.foot }, target: parsedTarget }
+  const page = (value as Record<string, unknown>).page as Record<string, unknown> | undefined
+  return {
+    view: parsedView,
+    viewport: { width: size.width, height: size.height, foot: size.foot },
+    target: parsedTarget,
+    page: page && finite(page.width) && finite(page.height) ? { width: page.width, height: page.height } : null
+  }
+}
+
+function parseMove(value: unknown): CameraMove | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { from, to } = value as Record<string, unknown>
+  const start = parseCameraView(from)
+  const end = parseCameraView(to)
+  return start && end ? { from: start, to: end } : null
+}
+
+/** Widok o danej skali z punktem w środku, przy krawędzi strony dosunięty do niej, jak przy przewinięciu. */
+function viewAround(x: number, y: number, scale: number, measure: Measure): CameraView {
+  const width = measure.viewport.width / scale
+  const height = measure.viewport.height / scale
+  const room = (size: number, seen: number): number => Math.max(0, size - seen)
+  const clampTo = (value: number, size: number | undefined, seen: number): number =>
+    Math.max(0, size === undefined ? value : Math.min(value, room(size, seen)))
+  return {
+    left: clampTo(x - width / 2, measure.page?.width, width),
+    top: clampTo(y - height / 2, measure.page?.height, height),
+    scale
+  }
 }
 
 export class DocCamera {
@@ -67,13 +101,13 @@ export class DocCamera {
     entry.done(result)
   }
 
-  private ask(contents: WebContents, command: Record<string, unknown>): Promise<unknown> {
+  private ask(contents: WebContents, command: Record<string, unknown>, limit = REPLY_LIMIT_MS): Promise<unknown> {
     const id = this.nextId++
     return new Promise((done) => {
       const timer = setTimeout(() => {
         this.waiting.delete(id)
         done(null)
-      }, REPLY_LIMIT_MS)
+      }, limit)
       this.waiting.set(id, {
         sender: contents.id,
         done: (value) => {
@@ -154,6 +188,40 @@ export class DocCamera {
     }
     const to = parseCameraView(await this.ask(contents, { type: 'center', x: centerX, y: centerY }))
     return to ? { from, to } : null
+  }
+
+  /**
+   * Widok teraz i widok w kadrze, bez ruszania kamery. Powłoka sprawdza na tym, czy kadry leżą
+   * blisko siebie, czy kamera musi pojechać po stronie.
+   */
+  async plan(contents: WebContents, shot: CameraShot): Promise<CameraPlan | null> {
+    const measure = parseMeasure(await this.ask(contents, { type: 'measure', shot }))
+    if (!measure?.target) return null
+    const { scale, centerX, centerY } = fitShot(measure.target, measure.viewport)
+    return { from: measure.view, to: viewAround(centerX, centerY, scale, measure), viewport: measure.viewport }
+  }
+
+  /**
+   * Odcinek podróży między odległymi kadrami. `pose` zmienia skalę wokół punktu, a `pan` przesuwa
+   * żywy widok w tej samej skali. Wynik to widok przed odcinkiem i po nim.
+   */
+  async steer(contents: WebContents, leg: CameraLeg): Promise<CameraMove | null> {
+    if (leg.type === 'pan') {
+      return parseMove(await this.ask(contents, { type: 'pan', x: leg.x, y: leg.y, ms: leg.ms }, leg.ms + REPLY_LIMIT_MS))
+    }
+    const measure = parseMeasure(await this.ask(contents, { type: 'measure', shot: null }))
+    if (!measure) return null
+    if (Math.abs(leg.scale - measure.view.scale) > SAME_SCALE && (leg.scale > 1 || this.zoomed.has(contents.id))) {
+      if (!(await this.attach(contents))) return null
+      try {
+        await this.setScale(contents, leg.scale)
+      } catch {
+        await this.release(contents)
+        return null
+      }
+    }
+    const to = parseCameraView(await this.ask(contents, { type: 'center', x: leg.x, y: leg.y }))
+    return to ? { from: measure.view, to } : null
   }
 
   /** Widok zniknął albo wczytał stronę od nowa, więc jego powiększenie przepadło. */

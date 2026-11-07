@@ -74,6 +74,30 @@ const frameInk = (app, url, box) =>
     { url, box }
   )
 
+/** Średnia jasność kawałka widoku dokumentu. */
+const lightness = (app, url, box) =>
+  app.evaluate(
+    async ({ webContents }, { url, box }) => {
+      const contents = webContents.getAllWebContents().find((item) => item.getURL() === url)
+      const image = await contents.capturePage()
+      const data = image.toBitmap()
+      const size = image.getSize()
+      const scale = Math.sqrt(data.length / 4 / (size.width * size.height))
+      const width = Math.round(size.width * scale)
+      let sum = 0
+      let count = 0
+      for (let y = Math.round(box.y * scale); y < Math.round((box.y + box.height) * scale); y++) {
+        for (let x = Math.round(box.x * scale); x < Math.round((box.x + box.width) * scale); x++) {
+          const i = (y * width + x) * 4
+          sum += (data[i] + data[i + 1] + data[i + 2]) / 3
+          count++
+        }
+      }
+      return count ? sum / count : 0
+    },
+    { url, box }
+  )
+
 export async function routeFlow(workspace, { check, entry = projectRoot }) {
   const home = join(workspace, 'route-home')
   const docs = join(workspace, 'route-docs')
@@ -173,6 +197,15 @@ export async function routeFlow(workspace, { check, entry = projectRoot }) {
       await hint.filter({ hasText: 'cały dokument' }).waitFor()
     })
 
+    await check('podgląd kroku jest włączony od startu i daje się wyłączyć', async () => {
+      const eye = shell.locator('#rtPreview')
+      assert.equal(await eye.getAttribute('aria-pressed'), 'true')
+      // Dalsze kroki wskazują kadry na całej stronie, więc podgląd na razie schodzi.
+      await eye.click()
+      await until(async () => (await eye.getAttribute('aria-pressed')) === 'false')
+      await delay(700)
+    })
+
     await check('nazwa kroku zapisuje się w trakcie pisania i stoi na liście', async () => {
       await shell.locator('#rtTitle').fill('Wykres ryzyk')
       await storedWhen((route) => route.steps[0].title === 'Wykres ryzyk')
@@ -249,15 +282,44 @@ export async function routeFlow(workspace, { check, entry = projectRoot }) {
       await storedWhen((route) => route.steps[0].id === first)
     })
 
-    await check('podgląd ustawia kamerę na kadrze kroku i wraca do całej strony', async () => {
+    await check('podgląd ustawia kamerę na kadrze kroku, przygasza resztę i wraca do całej strony', async () => {
       await shell.locator('#rtPreview').click()
       await page.waitForFunction(() => visualViewport.scale > 1.5, null, { timeout: 8000 })
       const area = await page.evaluate(() => visualViewport.scale)
+      // Krok z obszarem ma przygaszoną resztę dokumentu, więc róg widoku ciemnieje jak w prezentacji.
+      await until(async () => (await lightness(app, url, { x: 6, y: 6, width: 40, height: 40 })) < 160, 6000)
+      await writeFile(join(artifacts, 'route-preview-mask.png'), await page.screenshot())
       await steps.first().click()
       await page.waitForFunction((before) => Math.abs(visualViewport.scale - before) > 0.2, area, { timeout: 8000 })
       await writeFile(join(artifacts, 'route-preview.png'), await page.screenshot())
       await shell.locator('#rtPreview').click()
       await page.waitForFunction(() => visualViewport.scale < 1.01, null, { timeout: 8000 })
+      await until(async () => (await lightness(app, url, { x: 6, y: 6, width: 40, height: 40 })) > 190, 6000)
+    })
+
+    await check('kształt narysowany przy podglądzie trafia do wybranego kroku', async () => {
+      await shell.locator('#rtPreview').click()
+      await page.waitForFunction(() => visualViewport.scale > 1.2, null, { timeout: 8000 })
+      const selected = await shell.locator('.rt-step.on').getAttribute('data-step')
+      const id = await shell.evaluate(async (docId) => {
+        await window.api.createAnnotation(docId, {
+          kind: 'shape',
+          audience: 'me',
+          color: 'pink',
+          anchor: { selector: '#diagram', offsetX: 0.5, offsetY: 0.5, quote: '', heading: 'Ryzyka' },
+          text: '',
+          shape: { type: 'rect', box: { x: 0.2, y: 0.2, width: 0.3, height: 0.3 } }
+        })
+        const list = await window.api.listAnnotations()
+        return list.find((note) => note.kind === 'shape' && note.color === 'pink')?.id
+      }, docId)
+      assert.ok(id, 'kształt nie zapisał się')
+      await storedWhen((route) => route.steps.find((step) => step.id === selected)?.show.includes(id))
+      await shell.locator(`.rt-item[data-show="${id}"][aria-checked="true"]`).waitFor()
+      await shell.evaluate((id) => window.api.deleteAnnotation(id), id)
+      await shell.locator('#rtPreview').click()
+      await page.waitForFunction(() => visualViewport.scale < 1.01, null, { timeout: 8000 })
+      await delay(400)
     })
 
     await check('Esc przerywa wskazywanie i niczego nie zmienia', async () => {

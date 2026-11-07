@@ -1,6 +1,7 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { basename, dirname, join, parse, relative, resolve } from 'node:path'
 import { type DocLink, type DocLinks, type DocPair, isLocalHref, type LinkPreview, WIKI_PREFIX } from '../shared/links'
+import { SNIPPET_REACH, type TextSnippet } from '../shared/textSearch'
 import type { DocEntry, DocFormat, LibrarySnapshot } from '../shared/types'
 import { analyzeDocument, analyzeHtml } from './classify'
 import { mapLimit } from './concurrency'
@@ -157,7 +158,7 @@ async function filesUnder(root: string): Promise<Map<string, string[]>> {
 const projectRootOf = (doc: DocEntry): string => doc.path.slice(0, doc.path.length - doc.relPath.length) || dirname(doc.path)
 
 /** Sejf Obsidiana, a bez niego projekt dokumentu. Poza nie link `[[nazwa]]` nie wychodzi. */
-async function vaultRootOf(doc: DocEntry): Promise<string> {
+async function findVaultRoot(doc: DocEntry): Promise<string> {
   const project = projectRootOf(doc)
   let directory = dirname(doc.path)
   while (isInside(directory, project) && dirname(directory) !== directory) {
@@ -187,6 +188,7 @@ interface Catalog {
   snapshot: LibrarySnapshot
   docs: DocEntry[]
   byPath: Map<string, DocEntry>
+  byId: Map<string, DocEntry>
 }
 
 interface Parsed {
@@ -194,6 +196,21 @@ interface Parsed {
   size: number
   links: RawLink[]
 }
+
+/** Pliki, do których prowadzą lokalne linki dokumentu, policzone przy danym układzie biblioteki. */
+interface Targets {
+  mtimeMs: number
+  size: number
+  layout: number
+  paths: string[]
+}
+
+/** Spis plików sejfu się starzeje, bo linki `[[nazwa]]` prowadzą też do obrazków i innych plików spoza biblioteki. */
+const VAULT_TTL_MS = 60_000
+/** Tyle kodu strony wokół linku daje dość tekstu, żeby odnaleźć to miejsce w dokumencie. */
+const SNIPPET_HTML = 4000
+/** Skan wysyła migawki seriami, a start apki ma ważniejsze rzeczy do zrobienia. */
+const WARM_DELAY_MS = 3000
 
 interface Head {
   mtimeMs: number
@@ -208,16 +225,32 @@ function docAt({ byPath }: Catalog, path: string): DocEntry | undefined {
 /**
  * Linki między dokumentami biblioteki. Dokumenty czyta dopiero pierwsze pytanie o linki,
  * a kolejne skany czytają tylko pliki, które się zmieniły.
+ *
+ * Migawka zmienia się przy każdym otwarciu dokumentu, a cele linków tylko wtedy, gdy w bibliotece
+ * przybędzie albo ubędzie plików. Dlatego cele są zapamiętane przy dokumencie razem z numerem układu
+ * i linki zwrotne składają się z nich bez czytania dysku.
  */
 export class LinkGraph {
   private readonly parsed = new Map<string, Parsed>()
+  private readonly targets = new Map<string, Targets>()
   private catalog: Catalog | null = null
+  /** Ścieżki dokumentów z ostatniej migawki i numer, który rośnie, gdy się zmienią. */
+  private layoutKey = ''
+  private layout = 0
   private backlinks: { snapshot: LibrarySnapshot; ready: Promise<Map<string, string[]>> } | null = null
+  /**
+   * Przejścia linkiem z tej sesji: cel i dokumenty, z których do niego przyszedł użytkownik.
+   * Link dorysowany skryptem strony albo dopisany przed skanem nie ginie w panelu celu.
+   */
+  private readonly followed = new Map<string, Set<string>>()
   private readonly heads = new Map<string, Head>()
   /** Objaśnienia każdego planu, liczone raz na migawkę jak linki zwrotne. */
   private explained: { snapshot: LibrarySnapshot; ready: Promise<Map<string, DocEntry[]>> } | null = null
-  /** Spis plików sejfu. Nowa migawka go czyści, a czytamy tylko sejfy, o które ktoś zapytał. */
-  private readonly vaults = new Map<string, Promise<Map<string, string[]>>>()
+  /** Spis plików sejfu. Czytamy tylko sejfy, o które ktoś zapytał, i od nowa po zmianie układu. */
+  private readonly vaults = new Map<string, { at: number; files: Promise<Map<string, string[]>> }>()
+  /** Sejf każdego folderu. Bez tego każdy link `[[nazwa]]` pytał dysk o `.obsidian` piętro po piętrze. */
+  private readonly roots = new Map<string, Promise<string>>()
+  private warmTimer: NodeJS.Timeout | null = null
 
   constructor(private readonly snapshot: () => LibrarySnapshot | null) {}
 
@@ -230,18 +263,33 @@ export class LinkGraph {
     for (const doc of docs) {
       for (const path of [doc.path, ...doc.otherPaths]) byPath.set(normalizePath(path), doc)
     }
-    this.catalog = { snapshot, docs, byPath }
-    this.vaults.clear()
+    this.catalog = { snapshot, docs, byPath, byId: new Map(docs.map((doc) => [doc.id, doc])) }
+    const layoutKey = [...byPath.keys()].sort().join('\n')
+    if (layoutKey !== this.layoutKey) {
+      this.layoutKey = layoutKey
+      this.layout += 1
+      this.vaults.clear()
+      this.roots.clear()
+    }
     return this.catalog
   }
 
+  private vaultRootOf(doc: DocEntry): Promise<string> {
+    const key = `${normalizePath(projectRootOf(doc))}\u0000${normalizePath(dirname(doc.path))}`
+    const known = this.roots.get(key)
+    if (known) return known
+    const root = findVaultRoot(doc)
+    this.roots.set(key, root)
+    return root
+  }
+
   private async vaultFiles(doc: DocEntry): Promise<Map<string, string[]>> {
-    const root = await vaultRootOf(doc)
+    const root = await this.vaultRootOf(doc)
     const key = normalizePath(root)
     const known = this.vaults.get(key)
-    if (known) return known
+    if (known && Date.now() - known.at < VAULT_TTL_MS) return known.files
     const files = filesUnder(root)
-    this.vaults.set(key, files)
+    this.vaults.set(key, { at: Date.now(), files })
     return files
   }
 
@@ -298,17 +346,81 @@ export class LinkGraph {
     }
   }
 
+  /** Cele lokalnych linków dokumentu. Liczy je od nowa tylko zmieniony plik albo zmieniony układ biblioteki. */
+  private async targetPaths(doc: DocEntry, layout: number): Promise<string[]> {
+    if (doc.missing) return []
+    const key = normalizePath(doc.path)
+    const cached = this.targets.get(key)
+    if (cached?.layout === layout && cached.mtimeMs === doc.mtimeMs && cached.size === doc.size) return cached.paths
+    const paths: string[] = []
+    for (const { href } of await this.parse(doc)) {
+      const target = await this.targetOf(doc, href)
+      if (target) paths.push(target.path)
+    }
+    this.targets.set(key, { mtimeMs: doc.mtimeMs, size: doc.size, layout, paths })
+    return paths
+  }
+
   private async collectBacklinks(catalog: Catalog): Promise<Map<string, string[]>> {
     const found = new Map<string, Set<string>>()
+    const { layout } = this
     await mapLimit(catalog.docs, READ_CONCURRENCY, async (doc) => {
-      for (const { href } of await this.parse(doc)) {
-        const target = await this.targetOf(doc, href)
-        const to = target && docAt(catalog, target.path)
+      for (const path of await this.targetPaths(doc, layout)) {
+        const to = docAt(catalog, path)
         if (!to || to.id === doc.id) continue
         found.set(to.id, (found.get(to.id) ?? new Set()).add(doc.id))
       }
     })
     return new Map([...found].map(([docId, from]) => [docId, [...from]]))
+  }
+
+  /** Użytkownik przeszedł linkiem z `from` do `docId`, więc `from` na pewno tu linkuje. */
+  noteFollow(from: DocEntry, docId: string): void {
+    if (from.id === docId) return
+    this.followed.set(docId, (this.followed.get(docId) ?? new Set()).add(from.id))
+  }
+
+  /**
+   * Link z `source` do `target` razem z tekstem wokół, w postaci trafienia z szukania w treści.
+   * Dzięki temu podgląd pokaże miejsce, z którego dokument tu linkuje. Link bez tekstu nie ma czego szukać.
+   */
+  async linkSnippet(source: DocEntry, target: DocEntry): Promise<TextSnippet | null> {
+    const catalog = this.currentCatalog()
+    if (!catalog || source.missing) return null
+    let page: string
+    try {
+      page = pageOf(source.format, await readFile(source.path, 'utf8'))
+    } catch {
+      return null
+    }
+    for (const match of page.matchAll(ANCHOR)) {
+      const [whole, double, single, inner] = match
+      const text = analyzeHtml(inner ?? '').text
+      if (!text) continue
+      const to = await this.targetOf(source, (double ?? single ?? '').replace(/&amp;/g, '&'))
+      if (!to || docAt(catalog, to.path)?.id !== target.id) continue
+      const start = match.index
+      const end = start + whole.length
+      return {
+        before: analyzeHtml(page.slice(Math.max(0, start - SNIPPET_HTML), start)).text.slice(-SNIPPET_REACH),
+        match: text,
+        after: analyzeHtml(page.slice(end, end + SNIPPET_HTML)).text.slice(0, SNIPPET_REACH)
+      }
+    }
+    return null
+  }
+
+  /**
+   * Po zmianie biblioteki liczy linki zwrotne w tle, więc panel nie czeka na pierwsze czytanie
+   * wszystkich plików. Seria zmian, np. przy skanie, liczy raz, dopiero po ciszy.
+   */
+  warmSoon(): void {
+    if (this.warmTimer) clearTimeout(this.warmTimer)
+    this.warmTimer = setTimeout(() => {
+      this.warmTimer = null
+      this.incoming().catch(() => {})
+    }, WARM_DELAY_MS)
+    this.warmTimer.unref()
   }
 
   private incoming(): Promise<Map<string, string[]>> {
@@ -331,7 +443,9 @@ export class LinkGraph {
       seen.add(key)
       return true
     })
-    return { outgoing, incoming: incoming.get(doc.id) ?? [] }
+    const catalog = this.currentCatalog()
+    const followed = [...(this.followed.get(doc.id) ?? [])].filter((id) => catalog?.byId.has(id))
+    return { outgoing, incoming: [...new Set([...(incoming.get(doc.id) ?? []), ...followed])] }
   }
 
   private async planHref(doc: DocEntry): Promise<string | null> {

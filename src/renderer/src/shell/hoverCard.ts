@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { els } from './layout'
+import { linkCardRow } from './linkShots'
 import { menu } from './menu'
 import { cover, uncover } from './native'
 import { ui } from './state'
@@ -17,6 +18,8 @@ export type CardTarget =
   | { kind: 'project'; key: string }
   /** Trafienie z panelu szukania, jako numer w `searchModel().hits`. */
   | { kind: 'hit'; at: number }
+  /** Wiersz panelu Linki, jako klucz z `linkCardKey`. */
+  | { kind: 'link'; key: string }
 
 /** Tyle kursor musi postać na wierszu, zanim karta pojawi się pierwszy raz. */
 const SHOW_MS = 520
@@ -31,7 +34,10 @@ export const card = {
   /** Karta stała już na ekranie, więc jedzie do nowego wiersza, zamiast pojawić się na nim. */
   glide: false,
   target: null as CardTarget | null,
+  /** Krawędź panelu, przy której stoi karta: za lewym panelem albo przed panelem po prawej. */
   left: 0,
+  /** Karta przy panelu po prawej stoi przed `left`, a nie za nim. */
+  before: false,
   /** Górna krawędź wiersza w układzie okna apki. */
   rowTop: 0
 }
@@ -60,7 +66,8 @@ export function useCard(): number {
 }
 
 function targetOf(row: HTMLElement): CardTarget | null {
-  const { doc, folder, project, hit } = row.dataset
+  const { doc, folder, project, hit, link } = row.dataset
+  if (link) return { kind: 'link', key: link }
   if (hit) return { kind: 'hit', at: Number(hit) }
   if (doc) return { kind: 'doc', id: doc }
   if (folder) return { kind: 'folder', key: folder }
@@ -71,14 +78,19 @@ function targetOf(row: HTMLElement): CardTarget | null {
 const sameTarget = (a: CardTarget | null, b: CardTarget): boolean => a !== null && JSON.stringify(a) === JSON.stringify(b)
 
 function show(row: HTMLElement, target: CardTarget): void {
-  if (!row.isConnected || menu.on || ui.cmd || !ui.nav) return
+  // Panel po prawej rysuje swój kształt w SVG na całe okno, więc krawędź wskazuje sama lista.
+  const side = row.closest<HTMLElement>('[data-card-edge]')
+  if (!row.isConnected || menu.on || ui.cmd || (!side && !ui.nav)) return
   const app = els.app.getBoundingClientRect()
   card.glide = card.on
   card.on = true
   card.target = target
-  card.left = els.panel.getBoundingClientRect().right - app.left + GAP
+  card.before = side !== null
+  card.left = side ? side.getBoundingClientRect().left - app.left - GAP : els.panel.getBoundingClientRect().right - app.left + GAP
   card.rowTop = row.getBoundingClientRect().top - app.top
   if (target.kind === 'doc') window.api.requestThumbs([target.id])
+  const linked = target.kind === 'link' ? linkCardRow(target.key) : undefined
+  if (linked) window.api.requestThumbs([linked.docId])
   cover('card')
   changed()
 }

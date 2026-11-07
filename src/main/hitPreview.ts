@@ -46,6 +46,25 @@ interface HitPreviewOptions {
 
 const delay = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
 
+/** Świat skryptu, który ustawia stronę na kotwicy. Inny niż świat dokumentu i preloadu. */
+const PLACE_WORLD = 1207
+/** Kotwica nad górną krawędzią kadru, z odrobiną tekstu przed nią. */
+const PLACE_MARGIN = 24
+
+/** Kotwica idzie jako tekst JSON, więc nazwa z dokumentu nie stanie się kodem. */
+const placeScript = (fragment: string): string => `(() => {
+  const raw = ${JSON.stringify(fragment)};
+  let name = raw;
+  try { name = decodeURIComponent(raw); } catch {}
+  for (const box of document.querySelectorAll('*')) if (box.scrollTop) box.scrollTop = 0;
+  window.scrollTo(0, 0);
+  const target = name ? document.getElementById(name) || document.getElementsByName(name)[0] : null;
+  if (!target) return false;
+  target.scrollIntoView({ block: 'start', behavior: 'instant' });
+  window.scrollBy({ top: -${PLACE_MARGIN}, behavior: 'instant' });
+  return true;
+})()`
+
 export class HitPreviewer {
   private window: BrowserWindow | null = null
   private scale = 1
@@ -70,11 +89,31 @@ export class HitPreviewer {
     this.reply({ count: Number.isInteger(count) ? (count as number) : 0, failure: failure ?? null })
   }
 
-  /** Zamówienia idą po kolei, a nowe unieważnia te, które jeszcze czekają. */
   preview(docId: string, query: TextQuery, target: TextSnippet): Promise<HitShot> {
+    return this.enqueue(docId, async (window) => {
+      const found = await this.find(window, { type: 'set', query, target, center: true })
+      return Boolean(found && found.count > 0 && !found.failure)
+    })
+  }
+
+  /**
+   * Miejsce, do którego prowadzi link: element o nazwie z kotwicy u góry kadru, a bez kotwicy
+   * początek dokumentu. Nieznana kotwica też daje początek, bo link i tak tam otworzy dokument.
+   */
+  place(docId: string, fragment: string): Promise<HitShot> {
+    return this.enqueue(docId, async (window) => {
+      window.webContents.send('find:command', { type: 'clear' } satisfies FindCommand)
+      // Osobny świat: skrypt dokumentu nie podmieni funkcji, którymi szukamy kotwicy.
+      await window.webContents.executeJavaScriptInIsolatedWorld(PLACE_WORLD, [{ code: placeScript(fragment) }]).catch(() => false)
+      return true
+    })
+  }
+
+  /** Zamówienia idą po kolei, a nowe unieważnia te, które jeszcze czekają. */
+  private enqueue(docId: string, aim: (window: BrowserWindow) => Promise<boolean>): Promise<HitShot> {
     const own = (this.latest += 1)
     const job = this.queue
-      .then(() => (own === this.latest && !this.closed ? this.render(docId, query, target) : 'later'))
+      .then(() => (own === this.latest && !this.closed ? this.render(docId, aim) : 'later'))
       .catch(() => null)
       .finally(() => {
         if (own === this.latest) this.rest()
@@ -103,7 +142,7 @@ export class HitPreviewer {
     if (window && !window.isDestroyed()) window.destroy()
   }
 
-  private async render(docId: string, query: TextQuery, target: TextSnippet): Promise<string | null> {
+  private async render(docId: string, aim: (window: BrowserWindow) => Promise<boolean>): Promise<string | null> {
     if (this.idle) clearTimeout(this.idle)
     this.idle = null
     const viewer = this.options.viewer()
@@ -123,8 +162,7 @@ export class HitPreviewer {
       if (window.isDestroyed()) return null
       this.loaded = stamp
     }
-    const found = await this.find(window, { type: 'set', query, target, center: true })
-    if (!found || found.count === 0 || found.failure || window.isDestroyed()) return null
+    if (!(await aim(window)) || window.isDestroyed()) return null
     await delay(PAINT_MS)
     if (window.isDestroyed()) return null
     const page = await window.webContents.capturePage()

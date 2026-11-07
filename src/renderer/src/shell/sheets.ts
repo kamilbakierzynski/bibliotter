@@ -1,3 +1,4 @@
+import type { OpenMode } from '../../../shared/links'
 import { syncFind } from './find'
 import { goHome, openHome, thumbOf } from './home'
 import { applyLayout, paintGlow, reflow, SHUT, OFF, sheets, sL, sR, syncCam, syncChrome, syncSel } from './layout'
@@ -102,14 +103,44 @@ export function peekDoc(id: string): void {
   syncFocus()
 }
 
-/** Link działa jak wiersz listy: klik otwiera na miejscu arkusza z linkiem, a Ctrl zerka. */
-export function followLink(from: string, id: string, peek: boolean): void {
-  if (peek) {
-    peekDoc(id)
+/** Ctrl Shift + klik: dokument staje od razu obok bieżącego arkusza, bez zerknięcia po drodze. */
+export function splitDoc(id: string): void {
+  if (!data.entries.has(id) || ui.setup) return
+  const at = openPane(id)
+  if (at >= 0 && at !== ui.peek) {
+    focusPane(at)
     return
   }
+  if (ui.peek !== null) {
+    openDoc(id, ui.peek)
+    pinPeek()
+    return
+  }
+  const i = ui.home ? null : freeSheet()
+  if (i === null) {
+    openDoc(id)
+    return
+  }
+  clearFrames(i)
+  setPane(i, id)
+  reflow(() => {
+    ui.order.splice(ui.order.indexOf(ui.focus) + 1, 0, i)
+    ui.focus = i
+  })
+  syncFocus()
+}
+
+/** Wiersz listy, link i przełącznik pary otwierają dokument tak samo, zależnie od klawiszy przy kliknięciu. */
+export function openAs(id: string, mode: OpenMode, pane = ui.focus): void {
+  if (mode === 'peek') peekDoc(id)
+  else if (mode === 'split') splitDoc(id)
+  else openDoc(id, pane)
+}
+
+/** Link działa jak wiersz listy: klik otwiera na miejscu arkusza z linkiem. */
+export function followLink(from: string, id: string, mode: OpenMode): void {
   const pane = ui.panes.indexOf(from)
-  openDoc(id, pane >= 0 ? pane : ui.focus)
+  openAs(id, mode, pane >= 0 ? pane : ui.focus)
 }
 
 export function closePeek(): void {

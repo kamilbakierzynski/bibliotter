@@ -310,6 +310,31 @@ export async function htmlLinkFlow(workspace, { check, entry = projectRoot }) {
       await until(shell, () => !document.querySelector('.pane.peek'))
       await stays(again)
     })
+
+    await check('Ctrl Shift + klik stawia dokument od razu obok, bez zerknięcia', async () => {
+      const again = await openMain()
+      await again.keyboard.down('Control')
+      await again.keyboard.down('Shift')
+      await press(again, '#dokument')
+      await again.keyboard.up('Shift')
+      await again.keyboard.up('Control')
+      await until(shell, () => document.getElementById('stage')?.classList.contains('split'), undefined, 'dwa arkusze obok siebie')
+      await until(shell, (title) => document.querySelector('.pane.focused .pl-title')?.textContent === title, TARGET)
+      assert.equal(await shell.locator('.pane.peek').count(), 0)
+      const titles = await shell.evaluate(() =>
+        [...document.querySelectorAll('.stage.split .pane:not(.peek) .pl-title')].map((el) => el.textContent)
+      )
+      assert.ok(titles.includes(MAIN) && titles.includes(TARGET), `arkusze: ${titles.join(', ')}`)
+    })
+
+    await check('Ctrl Shift + klik w wiersz listy też otwiera obok', async () => {
+      await shell.keyboard.press('Control+\\')
+      await until(shell, () => !document.getElementById('stage')?.classList.contains('split'), undefined, 'złożony widok')
+      await shell.locator('.row[data-doc]', { hasText: MAIN }).click({ modifiers: ['Control', 'Shift'] })
+      await until(shell, () => document.getElementById('stage')?.classList.contains('split'), undefined, 'dwa arkusze obok siebie')
+      await until(shell, (title) => document.querySelector('.pane.focused .pl-title')?.textContent === title, MAIN)
+      assert.equal(await shell.locator('.pane.peek').count(), 0)
+    })
   } finally {
     await app.close()
   }

@@ -265,7 +265,8 @@ export async function rowMenuFlow(workspace, { check, entry = projectRoot }) {
 
     await check('wyszukiwarka nie znajduje dokumentów z ukrytego folderu', async () => {
       const layer = app.windows().find((page) => page !== shell && page.url() === 'about:blank')
-      await layer.locator('#cmdBtn').click()
+      // Ukrycie zamknęło dokument, a na ekranie startowym szuka się paskiem pod logo.
+      await shell.locator('#homeAsk').click()
       await layer.locator('#cmdInput').fill('Notatka')
       await delay(400)
       assert.equal(await layer.locator('.cr', { hasText: 'Notatka' }).count(), 0)

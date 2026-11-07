@@ -147,7 +147,7 @@ Trasę można układać od 2026-11-07, a odtwarzać od tego samego dnia (częś�
 - **Formularz:** czwarty widok panelu, pod `Shift P` i w palecie. Na górze lista kroków, pod nią wybrany krok: nazwa, Kadr, Reszta dokumentu i Pokaż w tym kroku. Krok przesuwa się strzałkami w nagłówku albo `Alt ↑` i `Alt ↓` na liście. Usunięty krok wraca przyciskiem „Przywróć krok” do następnej zmiany.
 - **Kadr:** Miejsce to kliknięcie. Kamera bierze cały blok pod kursorem, np. akapit albo obraz, a nie słowo, i ramka pokazuje go przed kliknięciem. Obszar to przeciągnięcie, zapisane w ułamkach elementu pod środkiem, jak prostokąt kształtu. Bez ruchu zostawia kamerę z najbliższego wcześniejszego kroku, a pierwszy taki krok pokazuje cały dokument. `Esc` przerywa wskazywanie.
 - **Dokument przy otwartym formularzu** pokazuje przerywaną ramką kadr wybranego kroku, z nazwą kroku nad ramką. Ramka leży na stronie, więc pod zoomem kamery rośnie razem z treścią. Warstwa sprawdza też, czy kadry wszystkich kroków mają swoje elementy, a krok bez elementu dostaje ostrzeżenie na liście i w opisie kadru.
-- **Podgląd kadru** (oko w nagłówku) ustawia kamerę z etapu 1 na kadrze wybranego kroku i jedzie za wyborem. Wyłączenie podglądu, zamknięcie panelu albo zmiana widoku panelu wraca do całej strony.
+- **Podgląd kroku** (oko w nagłówku) jest od 2026-11-07 włączony od startu i pokazuje wybrany krok tak, jak zobaczą go widzowie. Opis w części „Podgląd kroku i przejazd kamery”.
 - **Nowy krok** staje za wybranym jako jego kopia: ta sama reszta dokumentu i te same uwagi, a kamera bez ruchu.
 - **Testy:** `tests/presentation.test.ts` sprawdza kadr kroku bez ruchu, kopię kroku, przesuwanie, sprawdzanie pliku i zapis. `tests/e2e/route.mjs` sprawdza 16 rzeczy: otwarcie, zapis, nazwę w trakcie pisania, Miejsce bez kliknięcia w dokument, ramkę, kopię kroku, Obszar w ułamkach, resztę dokumentu i uwagi, przesuwanie, podgląd kamerą, `Esc`, ostrzeżenie i jego zniknięcie po przeładowaniu, przywrócenie kroku, zmianę od agenta, zamknięcie panelu i brak błędów.
 
@@ -156,6 +156,24 @@ Ograniczenia:
 - `Ctrl+Z` nie obejmuje trasy. Usunięty krok wraca przyciskiem, a pozostałe zmiany są drobne i łatwe do powtórzenia.
 - Krok nie ma jeszcze kolejności pokazywania uwag. Wszystkie zaznaczone pojawią się razem przy wejściu kroku.
 - Dwa okna apki z otwartym formularzem tego samego dokumentu nadpisują sobie trasę. Ostatni zapis wygrywa.
+
+## Podgląd kroku i przejazd kamery
+
+Wdrożone 2026-11-07 na prośbę użytkownika: kroki mają być widać od razu przy ich układaniu, „Prezentuj” ma stać przy liście kroków, a przejście między krokami ma być ruchem kamery.
+
+- **Wejście:** przycisk w doku (`Shift P`) otwiera i zamyka trasę, a nie zaczyna prezentacji. Prezentację zaczyna przycisk „Prezentuj” w stopce panelu, od pierwszego kroku. `F5` i `Shift F5` działają jak wcześniej.
+- **Podgląd kroku:** kamera jedzie do kadru wybranego kroku, maska kładzie się wokół niego, a dokument pokazuje tylko uwagi i kształty kroku. Zaznaczony kształt rysuje się piórem. Zmiana kadru albo reszty dokumentu przenika razem z ruchem kamery, a zaznaczenie uwagi działa od razu, bez zamrażania dokumentu. Dokument dostaje stan kroku z flagą `edit`, więc klawisze i nowe uwagi działają jak poza prezentacją.
+- **Wskazywanie kadru** zdejmuje podgląd: kamera wraca do całej strony bez maski, a po kliknięciu jedzie do nowego kadru.
+- **Nowa uwaga albo kształt** narysowany przy włączonym podglądzie trafia do wybranego kroku, bo inaczej zniknąłby zaraz po narysowaniu. Użytkownik potwierdził to 2026-11-07.
+- **Przejazd kamery:** gdy zrzuty kadrów się nie pokrywają, kamera nie przenika już obrazów, tylko jedzie po stronie. Najpierw oddala się na zrzutach do skali przejazdu, potem żywy widok przewija się płynnie do celu, a na końcu kamera zbliża się do kadru. Skala przejazdu to mniejsza ze skal obu kadrów, ale niższa, gdy droga przesunęłaby ekran o więcej niż 2,5 wysokości widoku, i nie niższa niż cała strona. Przejazd trwa od 0,42 do 1,2 s, zależnie od drogi na ekranie. Na czas drogi maska schodzi, żeby widzowie widzieli, dokąd jedzie kamera. Gdy żywy widok nie może stanąć, np. bo coś zasłania arkusz, zostaje dawne przenikanie.
+- **Testy:** `tests/e2e/route.mjs` sprawdza podgląd włączony od startu, maskę w podglądzie i kształt dopisany do kroku. `tests/e2e/present.mjs` sprawdza przycisk w doku i „Prezentuj” w panelu. `tests/e2e/camera.mjs` sprawdza, że skok w daleki kadr przewija żywy widok co klatkę w jedną stronę, bez pustej klatki na zrzutach.
+
+Ograniczenia:
+
+- Na granicach odcinków przejazdu, gdy zrzut ustępuje żywemu widokowi i odwrotnie, ruch staje na 2–4 klatki.
+- Strona przewijana co klatkę uruchamia skrypty dokumentu, które słuchają przewijania, np. animacje przy wejściu w widok.
+- Bardzo daleki skok w skali całej strony wciąż przesuwa ekran o wiele wysokości widoku, bo kamera nie oddala się poniżej skali 1.
+- Wyjście z prezentacji przy otwartym panelu jedzie kamerą do całej strony, a potem z powrotem do wybranego kroku.
 
 ## Wdrożenie odtwarzania
 

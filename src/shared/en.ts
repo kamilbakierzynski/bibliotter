@@ -135,7 +135,7 @@ export const EN: Record<string, string> = {
   'Ukryta': 'Hidden',
   'Pokaż w tym kroku': 'Show in this step',
   'Komentarz {n}: {text}': 'Comment {n}: {text}',
-  'Podgląd kadru': 'Preview frame',
+  'Podgląd kroku': 'Preview step',
   'Zamknij trasę': 'Close route',
   'Otwórz dokument, żeby ułożyć jego trasę.': 'Open a document to plan its route.',
   'Trasa prowadzi przez dokument krok po kroku, jedno kliknięcie na krok. Dodaj pierwszy krok i wskaż jego kadr w dokumencie.':
@@ -248,6 +248,7 @@ export const EN: Record<string, string> = {
   'Z tego dokumentu': 'From this document',
   'Zamknij linki': 'Close links',
   'Żaden dokument tu nie linkuje.': 'No document links here.',
+  'Linkuje tutaj': 'Links here',
 
   // Uwagi
   'Co chcesz zapamiętać?': 'What do you want to remember?',
@@ -608,5 +609,10 @@ export const EN: Record<string, string> = {
   'Pokaż kieszeń': 'Show pocket',
   'Dokumenty, które masz pod ręką.': 'Documents you keep at hand.',
   'Wyjmuje wszystkie dokumenty z kieszeni. Same dokumenty zostają w bibliotece.': 'Takes all documents out of the pocket. The documents stay in the library.',
-  'Otwórz dokument z kieszeni': 'Open a document from the pocket'
+  'Otwórz dokument z kieszeni': 'Open a document from the pocket',
+  'Zakreśl': 'Highlight',
+  'Dodaj krok prezentacji': 'Add presentation step',
+  'Dodano krok': 'Step added',
+  'Znajdź w dokumencie': 'Find in document',
+  'Szukaj w bibliotece': 'Search library'
 }

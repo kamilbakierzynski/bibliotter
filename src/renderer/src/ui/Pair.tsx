@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { DocPair } from '../../../shared/links'
+import { type DocPair, openModeOf } from '../../../shared/links'
 import type { DocEntry } from '../../../shared/types'
 import { t } from '../../../shared/i18n'
 import { openPair, pairOf } from '../shell/pair'
@@ -35,7 +35,7 @@ export function PairLink({ doc }: { doc: DocEntry }): React.JSX.Element | null {
       className="pl-link pl-pair"
       data-pair={pair.role}
       title={displayName(partner)}
-      onClick={(event) => void openPair(doc.id, event.ctrlKey || event.metaKey)}
+      onClick={(event) => void openPair(doc.id, openModeOf(event))}
     >
       <Icon name="file" />
       <span>{label}</span>

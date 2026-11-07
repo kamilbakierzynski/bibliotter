@@ -4,6 +4,7 @@ import { t } from '../../../shared/i18n'
 import { type PickKind, type PresentationStep, shotOwner, type StepCamera, type StepRest } from '../../../shared/presentation'
 import { drawings } from '../shell/drawings'
 import { noteNumber, setInsp } from '../shell/notes'
+import { startPresentation } from '../shell/present'
 import {
   addStep,
   flushRoute,
@@ -253,9 +254,9 @@ export function RoutePanel({ docId }: { docId: string | null }): React.JSX.Eleme
           <button
             className={route.preview ? 'mini on' : 'mini'}
             id="rtPreview"
-            aria-label={t('Podgląd kadru')}
+            aria-label={t('Podgląd kroku')}
             aria-pressed={route.preview}
-            data-tip={t('Podgląd kadru')}
+            data-tip={t('Podgląd kroku')}
             disabled={steps.length === 0}
             onClick={togglePreview}
           >
@@ -315,6 +316,16 @@ export function RoutePanel({ docId }: { docId: string | null }): React.JSX.Eleme
                 <span>{t('Przywróć krok')}</span>
               </button>
             )}
+            <button
+              className="ask pl-solid rt-play"
+              id="rtPresent"
+              data-tip={t('Prezentuj od pierwszego kroku')}
+              disabled={steps.length === 0}
+              onClick={() => void startPresentation()}
+            >
+              <Icon name="play" />
+              <span>{t('Prezentuj')}</span>
+            </button>
           </div>
         </footer>
       )}

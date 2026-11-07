@@ -13,6 +13,7 @@ import { DOC_FOOT } from './overlay'
 type CameraCommand =
   | { id: number; type: 'measure'; shot: CameraShot | null }
   | { id: number; type: 'center'; x: number; y: number }
+  | { id: number; type: 'pan'; x: number; y: number; ms: number }
   | { id: number; type: 'settle' }
 
 export interface CameraMeasure {
@@ -20,9 +21,12 @@ export interface CameraMeasure {
   viewport: CameraViewport
   /** Kadr na stronie albo `null`, gdy kotwicy nie ma już w dokumencie. */
   target: PageRect | null
+  page: { width: number; height: number }
 }
 
 const nextFrame = (): Promise<void> => new Promise((done) => requestAnimationFrame(() => done()))
+/** Przejazd rusza i staje łagodnie, bo zaczyna się i kończy w bezruchu kamery na zrzutach. */
+const glide = (t: number): number => (1 - Math.cos(Math.PI * t)) / 2
 
 function view(): CameraView {
   const visual = window.visualViewport
@@ -60,14 +64,53 @@ function markAt(x: number, y: number): HTMLElement {
   return mark
 }
 
-async function run(command: CameraCommand): Promise<CameraMeasure | CameraView> {
+/**
+ * Przesuwa punkt w środek widoku co klatkę. Początek układu mierzymy raz, bo w trakcie przejazdu
+ * układ strony stoi, a pomiar co klatkę wymuszałby jej przeliczenie.
+ */
+function mover(): (x: number, y: number) => void {
+  const node = markAt(0, 0)
+  const baseX = parseFloat(node.style.left)
+  const baseY = parseFloat(node.style.top)
+  return (x, y) => {
+    node.style.left = `${x + baseX}px`
+    node.style.top = `${y + baseY}px`
+    node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  }
+}
+
+/** Płynny przejazd żywego widoku w tej samej skali, od środka widoku do punktu. */
+async function pan(x: number, y: number, ms: number): Promise<{ from: CameraView; to: CameraView }> {
+  const from = view()
+  const visual = window.visualViewport
+  const startX = from.left + (visual?.width ?? innerWidth) / 2
+  const startY = from.top + (visual?.height ?? innerHeight) / 2
+  const move = mover()
+  await new Promise<void>((done) => {
+    let started: number | null = null
+    const tick = (now: number): void => {
+      started ??= now
+      const t = ms > 0 ? Math.min(1, (now - started) / ms) : 1
+      const at = glide(t)
+      move(startX + (x - startX) * at, startY + (y - startY) * at)
+      if (t < 1) requestAnimationFrame(tick)
+      else done()
+    }
+    requestAnimationFrame(tick)
+  })
+  await nextFrame()
+  return { from, to: view() }
+}
+
+async function run(command: CameraCommand): Promise<CameraMeasure | CameraView | { from: CameraView; to: CameraView }> {
   switch (command.type) {
     case 'measure': {
       const root = document.documentElement
       return {
         view: view(),
         viewport: { width: root.clientWidth, height: root.clientHeight, foot: DOC_FOOT },
-        target: command.shot ? targetOf(command.shot) : null
+        target: command.shot ? targetOf(command.shot) : null,
+        page: { width: root.scrollWidth, height: root.scrollHeight }
       }
     }
     case 'center':
@@ -75,6 +118,8 @@ async function run(command: CameraCommand): Promise<CameraMeasure | CameraView> 
       await nextFrame()
       await nextFrame()
       return view()
+    case 'pan':
+      return pan(command.x, command.y, command.ms)
     case 'settle':
       await nextFrame()
       await nextFrame()
