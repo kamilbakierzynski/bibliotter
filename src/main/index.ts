@@ -932,7 +932,11 @@ function createWindow(): BrowserWindow {
 }
 
 async function start(): Promise<void> {
-  // Biblioteka nie potrzebuje okna, więc wczytuje ostatnią migawkę, zanim Electron skończy start.
+  // Wątek biblioteki rusza dopiero teraz. Wcześniej zabierałby procesor oknu, a migawka i tak czeka w pamięci podręcznej.
+  await app.whenReady()
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
+  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+
   config = await loadConfig()
   setLanguage(config.language)
   lastScanAt = Date.now()
@@ -954,9 +958,6 @@ async function start(): Promise<void> {
     () => sendToShell('labels:auto-state', autoLabelState()),
     () => config.autoLabelTickets
   )
-  await app.whenReady()
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
-  if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
   registerIpc()
   stopWatchingAnnotations = watchAnnotations(join(dataDir(), 'library'), () => void pushAnnotations())
   stopWatchingLabels = watchSignal(join(dataDir(), 'library'), 'labels', () => library?.reloadLabels().catch(ignore))

@@ -1,5 +1,5 @@
 import { open, readdir, readFile, stat } from 'node:fs/promises'
-import { basename, dirname, join, parse, relative, resolve } from 'node:path'
+import { basename, dirname, join, parse, relative, resolve, sep } from 'node:path'
 import { type DocLink, type DocLinks, type DocPair, isLocalHref, type LinkPreview, WIKI_PREFIX } from '../shared/links'
 import { SNIPPET_REACH, type TextSnippet } from '../shared/textSearch'
 import type { DocEntry, DocFormat, LibrarySnapshot } from '../shared/types'
@@ -146,21 +146,27 @@ async function headOf(path: string): Promise<string> {
   }
 }
 
-/** Pliki pod katalogiem według nazwy. Obsidian wskazuje plik samą nazwą, a skan zna tylko dokumenty. */
+/**
+ * Pliki pod katalogiem według nazwy. Obsidian wskazuje plik samą nazwą, a skan zna tylko dokumenty.
+ * Sejf bywa całym repozytorium, a to działa na głównym wątku, więc ścieżki składamy bez `join`,
+ * który normalizowałby każdą od nowa.
+ */
 async function filesUnder(root: string): Promise<Map<string, string[]>> {
   const found = new Map<string, string[]>()
-  const pending = [root]
+  const pending = [resolve(root)]
   while (pending.length > 0) {
     await mapLimit(pending.splice(0), READ_CONCURRENCY, async (directory) => {
       const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+      const prefix = directory.endsWith(sep) ? directory : `${directory}${sep}`
       for (const entry of entries) {
-        const path = join(directory, entry.name)
         if (entry.isDirectory()) {
-          if (!isIgnoredDirectory(entry.name)) pending.push(path)
-        } else {
-          const key = entry.name.toLowerCase()
-          found.set(key, [...(found.get(key) ?? []), path])
+          if (!isIgnoredDirectory(entry.name)) pending.push(`${prefix}${entry.name}`)
+          continue
         }
+        const key = entry.name.toLowerCase()
+        const paths = found.get(key)
+        if (paths) paths.push(`${prefix}${entry.name}`)
+        else found.set(key, [`${prefix}${entry.name}`])
       }
     })
   }

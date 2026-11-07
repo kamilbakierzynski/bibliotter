@@ -109,6 +109,8 @@ interface ScanRun {
   ignored: number
   /** Treści już pokazane, żeby identyczne kopie nie migały przed scaleniem. */
   shown: Set<string>
+  /** Ścieżki pokazane przed skanem, także scalone kopie. Niezmieniona kopia nie wraca na chwilę jako osobny dokument. */
+  known: Set<string>
 }
 
 type SnapshotBase = Pick<
@@ -439,7 +441,8 @@ export class Library {
       seenPaths: new Set(),
       unavailableRoots: [],
       ignored: 0,
-      shown: new Set()
+      shown: new Set(),
+      known: new Set([...this.items.values()].flatMap(({ entry }) => [entry.path, ...(entry.otherPaths ?? [])].map(normalizePath)))
     }
     const pacer = new PreviewPacer(() => this.publishItems())
     const waiting: FoundFile[] = []
@@ -519,7 +522,8 @@ export class Library {
     pacer: PreviewPacer
   ): Promise<void> {
     const id = meta?.id ?? docIdFor(file.path)
-    if ((file.text === null && this.items.has(id)) || !this.inScope(file.path)) return
+    const unchanged = file.text === null && (this.items.has(id) || run.known.has(normalizePath(file.path)))
+    if (unchanged || !this.inScope(file.path)) return
     const verdict = this.verdictFor(file, relativeToProject(file), meta)
     if (verdict.classification === 'ignored') return
     const placement = await this.place(file, run.links)

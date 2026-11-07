@@ -544,6 +544,22 @@ describe('repozytoria', () => {
     expect(findDoc(snapshot, 'nowy.html').branch).toBe('feature/x')
   })
 
+  it('scalona kopia z worktree nie wraca na chwilę po ponownym uruchomieniu', async () => {
+    const repo = join(root, 'gra')
+    await initRepo(repo)
+    await git(['worktree', 'add', '-b', 'feature/x', join(root, 'gra-wt')], repo)
+    await put('gra/dokument.html', docHtml('Dokument'))
+    await put('gra-wt/dokument.html', docHtml('Dokument'))
+    await library.scan()
+    library.close()
+    changes = []
+
+    library = await openLibrary()
+    await library.scan()
+
+    expect(changes).toHaveLength(1)
+  })
+
   it('zostawia branch z chwili powstania dokumentu po przełączeniu', async () => {
     const repo = join(root, 'gra')
     await initRepo(repo)
