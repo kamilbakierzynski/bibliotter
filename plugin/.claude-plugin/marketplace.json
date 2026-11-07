@@ -1,0 +1,11 @@
+{
+  "name": "bibliotter-local",
+  "owner": { "name": "kamilbakierzynski" },
+  "plugins": [
+    {
+      "name": "bibliotter",
+      "source": "./bibliotter",
+      "description": "Agent access to the Bibliotter library: documents, comments and references copied from the app"
+    }
+  ]
+}
