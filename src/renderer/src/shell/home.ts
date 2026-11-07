@@ -268,6 +268,9 @@ export function finishZoom(): void {
   z.thumb.style.visibility = ''
   if (z.out) {
     sheets[z.i]?.o.set(0)
+    // Ta klatka zapisała już arkuszowi pełną widoczność, a bez przekształcenia stanąłby nad ścianą w całym rozmiarze.
+    const pane = sheets[z.i]?.el
+    if (pane) Object.assign(pane.style, { opacity: '0', visibility: 'hidden' })
     clearFrames(z.i)
   }
   touch()

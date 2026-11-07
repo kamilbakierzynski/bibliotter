@@ -25,8 +25,11 @@ const FADE_MS = 120
 const REFLOW_MS = 60
 /** Zrzut nie może zatrzymać ruchu na dłużej, nawet gdy dokument wisi. */
 const CAPTURE_LIMIT_MS = 400
-/** Stary dokument czeka tyle na nowy, zanim kartka zostanie pusta. Typowy dokument mieści się w tym czasie. */
-const SWAP_HOLD_MS = 180
+/**
+ * Stary dokument czeka tyle na nowy, zanim kartka pokaże miniaturę. Typowe wczytanie trwa 150–300 ms,
+ * a gdy stary schodził tuż przed nowym, miniatura błyskała między nimi na kilka klatek.
+ */
+const SWAP_HOLD_MS = 400
 /** Widok dopiero co zmienił rozmiar, więc jego następna klatka może mieć jeszcze stary układ. */
 const RESIZE_SETTLE_MS = 34
 /** Kursor, który tylko przejeżdża przez listę, niczego nie ładuje. */
@@ -34,6 +37,10 @@ const AIM_DELAY_MS = 80
 /** Wczytane dokumenty, do których można wrócić bez czekania. Każdy to osobny proces. */
 const RECENT_LIMIT = 4
 const AIM_LIMIT = 2
+/** Odległość arkusza od celu, na której zrzut zaczyna schodzić z jazdy z arkuszem na miejsce żywego widoku. */
+const PIN_FAR = 64
+/** Bliżej zrzut stoi już w miejscu żywego widoku. */
+const PIN_NEAR = 1
 
 interface Shot {
   canvas: HTMLCanvasElement
@@ -114,6 +121,7 @@ function showShot(i: number, shot: Shot & Frame, fade: boolean): void {
   const previous = [...stack.children]
   shot.canvas.classList.toggle('fade', fade)
   stack.append(shot.canvas)
+  alignSheet(i)
   box.style.background = shot.background
   frames.set(i, { docId: shot.docId, width: shot.width, height: shot.height })
   if (fade) setTimeout(() => previous.forEach((node) => node.remove()), FADE_MS + 40)
@@ -135,6 +143,43 @@ function targetBounds(i: number): ViewerBounds {
     width: Math.max(1, Math.round(r.w)),
     height: Math.max(1, Math.round(G.H - G.stageTop - G.stageBot - PLACARD))
   }
+}
+
+const smoothstep = (from: number, to: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - from) / (to - from)))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * Wyśrodkowany zrzut jedzie z arkuszem, a powłoka stawia go w pełnych pikselach, więc w ogonie
+ * sprężyny tekst skakał o piksel w przód i w tył. Zrzut w docelowym rozmiarze schodzi więc płynnie
+ * na miejsce żywego widoku i tam stoi, a ostatnie piksele przestrzelenia robi sama krawędź arkusza.
+ * Zmienia się tylko `left`, bo `transform` należy do kamery.
+ */
+function alignSheet(i: number): void {
+  const s = sheets[i]
+  const stack = stackOf(i)
+  if (!s || !stack?.firstElementChild || !isOpen(i)) return
+  const target = targetBounds(i)
+  const left = sL.x + s.x
+  const distance = Math.max(Math.abs(left - target.x), Math.abs(left + s.wide - target.x - target.width))
+  const pin = 1 - smoothstep(PIN_NEAR, PIN_FAR, distance)
+  for (const canvas of stack.querySelectorAll<HTMLCanvasElement>('canvas.sheet-frame')) {
+    const width = canvas.width / devicePixelRatio
+    if (Math.abs(width - target.width) > 1) {
+      canvas.style.left = ''
+      continue
+    }
+    // `left` wskazuje środek zrzutu, bo zrzut przesuwa się o połowę szerokości w lewo.
+    const centered = s.wide / 2
+    const pinned = target.x - left + width / 2
+    canvas.style.left = `${centered + (pinned - centered) * pin}px`
+  }
+}
+
+/** Woła się co klatkę, gdy arkusze dostały już pozycje. */
+export function alignShots(): void {
+  for (const s of sheets) alignSheet(s.i)
 }
 
 const sameBounds = (a: ViewerBounds | undefined, b: ViewerBounds): boolean =>
@@ -222,9 +267,11 @@ function liveSlots(): number[] {
 const statusAt = (i: number): string | undefined => data.viewers.get(ui.panes[i] ?? '')?.status
 const wantedLive = (): Set<number> => new Set(liveSlots().filter((i) => statusAt(i) === 'ready'))
 
-/** Czy stary dokument może jeszcze poczekać na nowy. Gdy się spóźni, kartka zostaje pusta. */
+/** Czy stary dokument może jeszcze poczekać na nowy. Gdy nowy się spóźni, kartka pokazuje jego miniaturę. */
 function keepsWaiting(i: number, slots: number[]): boolean {
-  if (!slots.includes(i) || statusAt(i) !== 'loading') return false
+  // Stan nowego widoku przychodzi z procesu głównego chwilę po kliknięciu, a do tego czasu dokument też się wczytuje.
+  const status = statusAt(i)
+  if (!slots.includes(i) || (status !== undefined && status !== 'loading')) return false
   const now = performance.now()
   const since = holding.get(i)
   if (since === undefined) {
@@ -313,9 +360,11 @@ async function step(): Promise<void> {
       stepping.map(async ([i, docId]) => {
         const shot = await grab(docId)
         if (shot) showShot(i, shot, false)
-        liveDocs.delete(i)
       })
     )
+    // Widok schodzi dopiero wtedy, gdy zrzut jest już na ekranie. Inaczej przez klatkę spod arkusza wygląda miniatura.
+    await nextPaint()
+    for (const [i] of stepping) liveDocs.delete(i)
   }
 
   for (const [i, docId] of [...liveDocs]) {

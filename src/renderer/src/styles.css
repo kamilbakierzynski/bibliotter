@@ -241,7 +241,8 @@ html.theming *:not(.stage):not(.rail):not(.panel):not(.pane) {
 .sel-pill { background: var(--on); }
 .hover-pill { background: var(--hover); opacity: 0; transition: opacity .16s; }
 #panelItems.swap { animation: list-in .42s var(--spring) both; }
-@keyframes list-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* Stara treść znika od razu, więc nowa nie startuje od zera: pusty panel przez klatkę czyta się jak mignięcie. */
+@keyframes list-in { from { opacity: .45; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .row { position: relative; z-index: 1; display: flex; align-items: center; gap: 7px; width: 100%; min-height: 32px; padding: 0 8px 0 8px; color: var(--ink-2); text-align: left; border-radius: var(--r-row); transition: color .16s; }
 .row:hover { color: var(--ink); }

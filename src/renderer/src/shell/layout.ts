@@ -4,7 +4,7 @@ import { clamp, connectLoop, lerp, Spring, type SpringOptions, wake } from '../m
 import { fitHome, renderMorph, renderZoom } from './home'
 import { hideFly, tipNeedsRoom } from './keys'
 import { inLayer, placeLayer } from './layer'
-import { noteQuiet, releaseUnused, touch, trackQuiet } from './native'
+import { alignShots, noteQuiet, releaseUnused, touch, trackQuiet } from './native'
 import { onWall, renderHangs, syncPanelMode } from './notes'
 import { canAnnotate, focusedDoc, isOpen, MAX_SHEETS, notify, type PanelView, pinned, ui } from './state'
 
@@ -555,6 +555,7 @@ export function render(): void {
   const m = clamp(mH.x)
   stage.style.transform = m > 0.001 ? `scale(${1 - 0.022 * m})` : ''
   layoutSheets(w)
+  alignShots()
   els.lights.style.setProperty('--sx', `${sL.x + w / 2 + glowD.x}px`)
   if (ui.home) fitHome()
   renderZoom()
