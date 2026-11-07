@@ -2,8 +2,14 @@ import type { Annotation } from '../../../shared/annotations'
 import type { ViewerKey } from '../../../shared/types'
 import { renderPills } from '../motion/pill'
 import { springCurve } from '../motion/spring'
+// Kamera rejestruje się sama, a tryb prezentacji będzie ją wołał.
+import './camera'
 import { homeRendered, syncHomeSeg } from './home'
+import { splitShapes, syncDrawings } from './drawings'
+import { handleFindEvent } from './find'
+import { keepLayout, reopenLayout } from './hot'
 import { handleKey, hideCaps, holdStart, isPopOpen, type KeyLike, togglePop } from './keys'
+import { closeLabelPop, connectAutoLabel } from './labels'
 import { layerDocument, layerHost, layerWindow } from './layer'
 import {
   applyResize,
@@ -12,18 +18,24 @@ import {
   dockIn,
   placeInitial,
   render,
+  syncChrome,
   syncRail,
   syncSel
 } from './layout'
-import { load, setLibrary } from './library'
+import { setLibrary, setScanProgress } from './library'
+import { closeRowMenu } from './menu'
+import { resumeLast } from './options'
 import { docReady, focusLive, touch, wheelUnderDock } from './native'
 import { closeThread, handleOverlayEvent, syncTools, syncViewSeg } from './notes'
+import { handleOutlineEvent, isOutlineEvent, syncMinimap } from './outline'
+import { handleRoutePick, reloadRoutes, setMissing } from './route'
 import { closeCmd, renderCmd } from './palette'
-import { applyGlow, focusPane } from './sheets'
+import { applyGlow, focusPane, followLink } from './sheets'
 import { data, findNote, notify, ui } from './state'
 import { applyMode } from './theme'
 
 let booted = false
+let thumbFrame = 0
 
 const virtualKey = (key: string, shift: boolean, ctrl: boolean, alt = false, code?: string): KeyLike => ({
   key,
@@ -38,7 +50,12 @@ const virtualKey = (key: string, shift: boolean, ctrl: boolean, alt = false, cod
 const OVERLAY_KEY_NAMES: Record<string, string> = {
   escape: 'Escape',
   arrowleft: 'ArrowLeft',
-  arrowright: 'ArrowRight'
+  arrowright: 'ArrowRight',
+  pageup: 'PageUp',
+  pagedown: 'PageDown',
+  home: 'Home',
+  end: 'End',
+  f5: 'F5'
 }
 
 function onViewerKey({ type, key, code, ctrl, shift, alt }: ViewerKey): void {
@@ -48,11 +65,12 @@ function onViewerKey({ type, key, code, ctrl, shift, alt }: ViewerKey): void {
     return
   }
   hideCaps()
-  if (type === 'down') handleKey(virtualKey(key, shift, ctrl, alt, code))
+  // Cofanie przychodzi z warstwy dokumentu, bo tylko ona wie, czy klawisz trafił do pola.
+  if (type === 'down' && !(ctrl && key.toLowerCase() === 'z')) handleKey(virtualKey(key, shift, ctrl, alt, code))
 }
 
 function setAnnotations(annotations: Annotation[]): void {
-  data.annotations = annotations
+  data.annotations = splitShapes(annotations)
   // Zamknięty lub usunięty wątek przestaje trzymać arkusz w zrzucie.
   const selected = findNote(ui.selNote)
   if (ui.selNote && (!selected || (selected.status !== 'open' && !ui.showResolved))) closeThread()
@@ -61,11 +79,15 @@ function setAnnotations(annotations: Annotation[]): void {
 }
 
 function connectApi(): void {
-  window.api.onLibraryChanged((snapshot) => {
-    setLibrary(snapshot)
+  window.api.onLibraryChanged((json) => {
+    setLibrary(json)
     if (ui.cmd) renderCmd()
   })
+  window.api.onScanProgress(setScanProgress)
   window.api.onAnnotationsChanged(setAnnotations)
+  window.api.onPresentationChanged(reloadRoutes)
+  connectAutoLabel()
+  syncMinimap()
   window.api.onViewerState((state) => {
     const before = data.viewers.get(state.docId)?.status
     data.viewers.set(state.docId, state)
@@ -76,19 +98,31 @@ function connectApi(): void {
     if (event.type === 'shortcut') {
       const key = OVERLAY_KEY_NAMES[event.key] ?? event.key
       handleKey(virtualKey(key, event.shift, event.ctrl))
+    } else if (event.type === 'find' || event.type === 'find-seed') {
+      handleFindEvent(docId, event)
+    } else if (event.type === 'route-pick') {
+      handleRoutePick(docId, event.camera)
+    } else if (event.type === 'route-missing') {
+      setMissing(docId, event.ids)
     } else {
-      handleOverlayEvent(docId, event)
+      if (isOutlineEvent(event)) handleOutlineEvent(docId, event)
+      else handleOverlayEvent(docId, event)
     }
   })
   window.api.onViewerKey(onViewerKey)
+  window.api.onFollowLink(({ from, docId, peek }) => followLink(from, docId, peek))
   window.api.onViewerFocus((docId) => {
     const slot = ui.panes.indexOf(docId)
     if (slot >= 0) focusPane(slot)
   })
   window.api.onThumb((thumb) => {
     data.thumbs.set(thumb.docId, thumb)
-    applyGlow()
-    notify()
+    // Ściana dostaje miniatury seriami, a powłoka rysuje się raz na klatkę.
+    thumbFrame ||= requestAnimationFrame(() => {
+      thumbFrame = 0
+      applyGlow()
+      notify()
+    })
   })
 }
 
@@ -110,13 +144,21 @@ function connectKeyboard(page: Window): void {
     },
     true
   )
-  page.addEventListener('pointerdown', () => hideCaps(), true)
+  page.addEventListener(
+    'pointerdown',
+    (event) => {
+      hideCaps()
+      if (!(event.target as Element).closest?.('#rowMenu')) closeRowMenu()
+    },
+    true
+  )
   page.addEventListener('blur', () => hideCaps())
   page.addEventListener('keydown', (event) => {
     if (!event.repeat) handleKey(event)
   })
   page.addEventListener('click', (event) => {
     if (isPopOpen() && !(event.target as HTMLElement).closest('#statusPop')) togglePop(false)
+    if (ui.labelPop && !(event.target as HTMLElement).closest('#labelPop')) closeLabelPop()
     // Kliknięcie obok dokumentu nie zabiera mu klawiatury, więc strzałki dalej go przewijają.
     focusLive()
   })
@@ -154,12 +196,16 @@ export function boot(): void {
     (event) => wheelUnderDock(event.clientX, event.clientY, -event.deltaX, -event.deltaY),
     { passive: true }
   )
+  addEventListener('blur', closeRowMenu)
   addEventListener('resize', () => {
+    closeRowMenu()
     applyResize()
     resync()
   })
 
   placeInitial()
+  // Ściana stoi od pierwszej klatki, bo to na niej widać, że biblioteka się wczytuje.
+  syncChrome()
   applyGlow()
   ui.ready = true
   resync()
@@ -167,6 +213,11 @@ export function boot(): void {
   requestAnimationFrame(() => dockIn.to(1))
   void Promise.all([document.fonts.ready, layerDocument().fonts.ready]).then(resync)
 
-  load(window.api.getLibrary)
+  keepLayout()
+  void window.api.getLibrary().then((json) => {
+    setLibrary(json)
+    if (!reopenLayout()) resumeLast()
+  })
   void window.api.listAnnotations().then(setAnnotations)
+  syncDrawings()
 }

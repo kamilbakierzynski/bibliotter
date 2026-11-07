@@ -2,7 +2,15 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { commandRunner, parseReflog, positionAt, readRepo, type RepoInfo } from '../src/main/git'
+import {
+  commandRunner,
+  parseReflog,
+  parseReflogFile,
+  positionAt,
+  readRepo,
+  readRepoFromFiles,
+  type RepoInfo
+} from '../src/main/git'
 
 const git = commandRunner('git')
 
@@ -32,6 +40,26 @@ describe('parseReflog', () => {
     expect(entries).toEqual([
       { timeMs: 2_000_000, commit: 'c2', checkoutFrom: 'feature/a' },
       { timeMs: 1_000_000, commit: 'c1', checkoutFrom: null }
+    ])
+  })
+})
+
+describe('parseReflogFile', () => {
+  it('oddaje wpisy od najnowszych i rozpoznaje przełączenia', () => {
+    const before = '0'.repeat(40)
+    const after = 'a'.repeat(40)
+    const entries = parseReflogFile(
+      [
+        `${before} ${after} Ktoś Ważny <k@example.com> 1000 +0100\tcommit: zmiana`,
+        `${after} ${after} Ktoś Ważny <k@example.com> 2000 -0500\tcheckout: moving from feature/a to main`,
+        'śmieci',
+        ''
+      ].join('\n')
+    )
+
+    expect(entries).toEqual([
+      { timeMs: 2_000_000, commit: after, checkoutFrom: 'feature/a' },
+      { timeMs: 1_000_000, commit: after, checkoutFrom: null }
     ])
   })
 })
@@ -100,5 +128,69 @@ describe('readRepo', () => {
 
   it('zwraca null dla katalogu spoza repozytorium', async () => {
     expect(await readRepo(tmpdir(), git)).toBeNull()
+  })
+
+  describe('z plików daje to samo co git', () => {
+    const same = async (directory: string): Promise<void> => {
+      const expected = await readRepo(directory, git)
+      const actual = await readRepoFromFiles(directory)
+      const shape = (repo: RepoInfo | null): unknown => ({
+        ...repo,
+        worktreePath: repo?.worktreePath.toLowerCase(),
+        mainPath: repo?.mainPath.toLowerCase()
+      })
+      expect(shape(actual)).toEqual(shape(expected))
+    }
+
+    it('w repozytorium głównym', () => same(main()))
+
+    it('w worktree', () => same(join(root, 'wt')))
+
+    it('w podkatalogu', async () => {
+      await mkdir(join(main(), 'a', 'b'), { recursive: true })
+      await same(join(main(), 'a', 'b'))
+    })
+
+    it('z przełączeniami w reflogu i zdalnym repozytorium', async () => {
+      await git(['remote', 'add', 'origin', 'git@github.com:ktos/repo.git'], main())
+      await git(['checkout', '-b', 'inna'], main())
+      await git(['commit', '--allow-empty', '-m', 'druga'], main())
+      await git(['checkout', 'main'], main())
+      await same(main())
+    })
+
+    it('z odłączonym HEAD', async () => {
+      const head = await git(['rev-parse', 'HEAD'], main())
+      await git(['checkout', '--detach', head], main())
+      await same(main())
+      await git(['checkout', 'main'], main())
+    })
+
+    it('po spakowaniu referencji i z domyślnym branchem zdalnym', async () => {
+      await git(['update-ref', 'refs/remotes/origin/trunk', 'HEAD'], main())
+      await git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk'], main())
+      await git(['pack-refs', '--all'], main())
+      await same(main())
+      expect((await readRepoFromFiles(main()))?.defaultBranch).toBe('trunk')
+    })
+
+    it('dla świeżego repozytorium bez commitów', async () => {
+      const empty = join(root, 'pusty')
+      await mkdir(empty)
+      await git(['init', '-b', 'main'], empty)
+      await same(empty)
+    })
+  })
+
+  it('poza repozytorium zwraca null', async () => {
+    expect(await readRepoFromFiles(root)).toBeNull()
+  })
+
+  it('nieznanego układu nie zgaduje', async () => {
+    const reftable = join(root, 'reftable')
+    await mkdir(join(reftable, '.git'), { recursive: true })
+    await writeFile(join(reftable, '.git', 'HEAD'), 'ref: refs/heads/.invalid\n')
+
+    expect(await readRepoFromFiles(reftable)).toBeNull()
   })
 })

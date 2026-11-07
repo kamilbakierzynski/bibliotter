@@ -1,13 +1,17 @@
 import { useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { language } from '../../shared/i18n'
 import { boot } from './shell/boot'
 import { layerHost } from './shell/layer'
 import { closeCmd } from './shell/palette'
-import { ui, useShell } from './shell/state'
+import { ui, useShell, useShellValue } from './shell/state'
 import { Dock, StatusPop } from './ui/Dock'
 import { IconSprite } from './ui/icons'
+import { LabelPop } from './ui/Labels'
+import { HoverCard } from './ui/HoverCard'
 import { Flyout, Nav } from './ui/Nav'
 import { Insp } from './ui/Notes'
+import { RowMenu } from './ui/RowMenu'
 import { Stage } from './ui/Stage'
 
 function Scrim(): React.JSX.Element {
@@ -16,6 +20,8 @@ function Scrim(): React.JSX.Element {
 }
 
 export function App(): React.JSX.Element {
+  // Część interfejsu nie słucha `notify()`, a nowy język musi dojść do wszystkich napisów.
+  useShellValue(language)
   useLayoutEffect(boot, [])
   return (
     <div className="app" id="app" data-tool="move">
@@ -42,7 +48,10 @@ export function App(): React.JSX.Element {
       )}
       <div className="caps" id="caps" aria-hidden="true" />
       <StatusPop />
+      <LabelPop />
       <Flyout />
+      <HoverCard />
+      <RowMenu />
     </div>
   )
 }

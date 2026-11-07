@@ -1,5 +1,6 @@
-import type { MouseEvent, PointerEvent } from 'react'
+import { type MouseEvent, type PointerEvent, useRef } from 'react'
 import { type DocEntry, FORMAT_LABELS } from '../../../shared/types'
+import { locale, t } from '../../../shared/i18n'
 import {
   homeDocs,
   homeHover,
@@ -17,6 +18,9 @@ import { displayName, relativeTime } from '../tree'
 import { FormatSeg } from './FormatSeg'
 import { useSynced } from './hooks'
 import { Icon } from './icons'
+import { LabelTags } from './Labels'
+import { Otter } from './Otter'
+import { SkeletonLine, SkeletonSheet, SkeletonWall } from './Skeleton'
 
 /** Ściana ma stałą pojemność, więc licznik mówi, ile jeszcze czeka poza nią. */
 function wallCount(shown: number): string {
@@ -27,15 +31,20 @@ function wallCount(shown: number): string {
 const when = (doc: DocEntry): string => `${doc.projectName} · ${relativeTime(doc.mtimeMs)}`
 
 function reason(doc: DocEntry): string {
-  if (doc.status === 'to-decide' && answered(doc)) return 'Do decyzji, agent odpisał na uwagę'
-  return answered(doc) ? 'Agent odpisał na uwagę' : STATUS[doc.status].label
+  if (doc.status === 'to-decide' && answered(doc)) return t('Do decyzji, agent odpisał na uwagę')
+  return answered(doc) ? t('Agent odpisał na uwagę') : STATUS[doc.status].label
 }
 
 function Wall({ docs }: { docs: DocEntry[] }): React.JSX.Element {
+  /** Kolejność wejścia liczy się w obrębie porcji, a kartka zachowuje swoją do końca. */
+  const entrance = useRef(new Map<string, number>())
+  let arriving = 0
   return (
     <div className="h-wall">
       {docs.map((doc, i) => {
         const tone = toneOf(doc)
+        const order = entrance.current.get(doc.id) ?? arriving++
+        entrance.current.set(doc.id, order)
         const thumb = data.thumbs.get(doc.id)
         return (
           <div
@@ -43,15 +52,21 @@ function Wall({ docs }: { docs: DocEntry[] }): React.JSX.Element {
             className="hs"
             role="button"
             data-doc={doc.id}
-            style={{ '--i': i, '--sway': `${i % 2 ? 1.4 : -1.4}deg` } as React.CSSProperties}
+            style={{ '--i': order, '--sway': `${i % 2 ? 1.4 : -1.4}deg` } as React.CSSProperties}
           >
-            <div className="hs-sheet" data-format={doc.format}>{thumb && <img src={thumb.url} alt="" draggable={false} />}</div>
+            <div className="hs-sheet" data-format={doc.format}>
+              {thumb && <img src={thumb.url} alt="" draggable={false} />}
+              <SkeletonSheet />
+            </div>
             <div className="hs-cap">
               <b>
                 {tone !== 'none' && <i className={`dot ${tone}`} />}
                 <span>{displayName(doc)}</span>
               </b>
-              <small>{when(doc)}</small>
+              <small>
+                <LabelTags doc={doc} max={2} />
+                {when(doc)}
+              </small>
             </div>
           </div>
         )
@@ -70,7 +85,10 @@ function SpisRows({ title, docs }: { title: string; docs: DocEntry[] }): React.J
           <i className={`dot ${toneOf(doc)}`} />
           <span className="t">
             <b>{displayName(doc)}</b>
-            <small>{reason(doc)}</small>
+            <small>
+              <LabelTags doc={doc} max={3} />
+              {reason(doc)}
+            </small>
           </span>
           <span className="m">{when(doc)}</span>
         </div>
@@ -80,42 +98,65 @@ function SpisRows({ title, docs }: { title: string; docs: DocEntry[] }): React.J
 }
 
 function Spis({ docs, wait }: { docs: DocEntry[]; wait: DocEntry[] }): React.JSX.Element {
-  const date = new Intl.DateTimeFormat('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())
+  const date = new Intl.DateTimeFormat(locale(), { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())
   const n = wait.length
-  const line = n ? `${countDocs(n)} ${plural(n, 'czeka', 'czekają', 'czeka')} na Ciebie.` : 'Nic nie czeka na Ciebie.'
+  const line = n
+    ? t('{docs} {waits} na Ciebie.', { docs: countDocs(n), waits: plural(n, 'czeka', 'czekają', 'czeka') })
+    : t('Nic nie czeka na Ciebie.')
   return (
     <article className="spis">
       <i className="spis-pill" ref={spisPill.bind} />
-      <header>
+      <header className={n ? '' : 'calm'}>
         <small>{date}</small>
         <h1>{line}</h1>
+        {n === 0 && <Otter pose="sleeping" className="spis-otter" />}
       </header>
-      <SpisRows title="Czeka na Ciebie" docs={wait} />
-      <SpisRows title="Do przeczytania" docs={docs.filter((doc) => rankOf(doc) === 1)} />
-      <SpisRows title="Pozostałe" docs={docs.filter((doc) => rankOf(doc) === 2)} />
+      <SpisRows title={t('Czeka na Ciebie')} docs={wait} />
+      <SpisRows title={t('Do przeczytania')} docs={docs.filter((doc) => rankOf(doc) === 1)} />
+      <SpisRows title={t('Pozostałe')} docs={docs.filter((doc) => rankOf(doc) === 2)} />
+    </article>
+  )
+}
+
+function Searching(): React.JSX.Element {
+  const { found } = data.scan
+  return (
+    <article className="spis h-setup">
+      <Otter pose="juggling" className="setup-otter" />
+      <header>
+        <small>{data.library?.roots.at(-1)}</small>
+        <h1>{t('Szukam dokumentów.')}</h1>
+      </header>
+      <p>
+        {found === 0
+          ? t('Przeglądam foldery.')
+          : t('Znalezione pliki: {found}. Dokumenty zaraz zawisną na ścianie.', { found: found.toLocaleString(locale()) })}
+      </p>
     </article>
   )
 }
 
 function Setup(): React.JSX.Element {
   const first = ui.setup === 'first'
+  if (!first && data.scan.active) return <Searching />
   return (
     <article className="spis h-setup">
+      <Otter pose="prone" className="setup-otter" />
       <header>
-        <small>{first ? 'Biblioteka jest pusta' : data.library?.roots[0]}</small>
-        <h1>{first ? 'Wskaż foldery z dokumentami.' : 'Nie ma tu jeszcze dokumentów.'}</h1>
+        <small>{first ? t('Biblioteka jest pusta') : data.library?.roots[0]}</small>
+        <h1>{first ? t('Wskaż foldery z dokumentami.') : t('Nie ma tu jeszcze dokumentów.')}</h1>
       </header>
       <p>
         {first
-          ? 'Apka zbierze z nich dokumenty HTML i Markdown, także z podfolderów, a nowe wykryje sama. Niczego nie zmienia ani nie przenosi.'
-          : 'Gdy agent zapisze w tym folderze dokument HTML lub Markdown, sam zawiśnie na ścianie. Możesz też wskazać inne foldery.'}
+          ? t('Apka zbierze z nich dokumenty HTML i Markdown, także z podfolderów, a nowe wykryje sama. Niczego nie zmienia ani nie przenosi.')
+          : t('Gdy agent zapisze w tym folderze dokument HTML lub Markdown, sam zawiśnie na ścianie. Możesz też wskazać inne foldery.')}
       </p>
       <footer>
         <button className="setup-add" onClick={() => load(window.api.addRoot)}>
           <Icon name="folder" />
-          <span>Dodaj foldery</span>
+          <span>{t('Dodaj foldery')}</span>
         </button>
-        <small>albo przeciągnij je na ścianę</small>
+        <small>{t('albo przeciągnij je na ścianę')}</small>
       </footer>
     </article>
   )
@@ -154,7 +195,7 @@ export function Home(): React.JSX.Element {
     <div
       className="home"
       id="home"
-      aria-label="Ekran startowy"
+      aria-label={t('Ekran startowy')}
       onClick={click}
       onDragOver={(e) => {
         if (!ui.setup) return
@@ -174,15 +215,17 @@ export function Home(): React.JSX.Element {
       }}
     >
       <div className="h-head">
-        <b>Ostatnie</b>
-        <span>{ui.scanned === null ? wallCount(docs.length) + countWait(wait.length) : scanLabel(ui.scanned)}</span>
+        <b>{t('Ostatnie')}</b>
+        <span>
+          {ui.streaming ? scanLabel(homeTotal()) : data.library ? wallCount(docs.length) + countWait(wait.length) : <SkeletonLine />}
+        </span>
         <FormatSeg />
-        <div className="seg view-seg" id="homeSeg" role="radiogroup" aria-label="Widok ekranu startowego">
+        <div className="seg view-seg" id="homeSeg" role="radiogroup" aria-label={t('Widok ekranu startowego')}>
           <i className="view-pill" ref={homePill.bind} />
           {(
             [
-              ['wall', 'gallery', 'Ściana'],
-              ['list', 'index', 'Spis']
+              ['wall', 'gallery', t('Ściana')],
+              ['list', 'index', t('Spis')]
             ] as const
           ).map(([view, icon, label]) => (
             <button
@@ -202,8 +245,10 @@ export function Home(): React.JSX.Element {
       <div className="h-body" id="homeBody">
         {ui.setup ? (
           <Setup />
+        ) : !data.library ? (
+          <SkeletonWall />
         ) : docs.length === 0 && ui.format !== 'all' ? (
-          <p className="empty h-none">Wszystkie dokumenty {FORMAT_LABELS[ui.format]} są w archiwum.</p>
+          <p className="empty h-none">{t('Wszystkie dokumenty {format} są w archiwum.', { format: FORMAT_LABELS[ui.format] })}</p>
         ) : (
           <>
             <Wall docs={docs} />

@@ -1,13 +1,24 @@
+import { t } from '../../../shared/i18n'
 import { clamp, wake } from '../motion/spring'
 import { homeKey, toggleHome, toggleHomeView } from './home'
+import { closeLabelPop, toggleLabelPop } from './labels'
 import { inLayer, layerDocument, typesInField } from './layer'
 import { els, G, popPill, setNav, tipX } from './layout'
 import { cover, uncover } from './native'
-import { cancelDraft, canWall, closeThread, setInsp, setTool, toggleNotesView } from './notes'
+import { menuKey } from './menu'
+import { toggleOptions } from './options'
+import { toggleMinimap } from './outline'
+import { cancelDraft, canWall, closeThread, setTool, toggleNotesView, togglePanel } from './notes'
 import { closeActs, closeCmd, openActs, openCmd, openMap, setMap } from './palette'
+import { openPocket, togglePocket } from './pocket'
+import { startPresentation, stepBy, stepToEnd, stopPresentation, toggleReveal } from './present'
+import { toggleDrawings } from './drawings'
+import { copyReference } from './reference'
+import { endPick } from './route'
+import { escapeFind, searchKey } from './search'
 import { closePeek, closeSheet, focusPane, splitKey } from './sheets'
 import { toggleMode } from './theme'
-import { canAnnotate, focusedDoc, MOD, notify, pinned, ui } from './state'
+import { canAnnotate, focusedDoc, focusedId, MOD, notify, pinned, ui } from './state'
 
 const HOLD_MS = 380
 const TIP_DELAY_MS = 380
@@ -15,6 +26,7 @@ const TIP_MEMORY_MS = 320
 /** Wycięcie warstwy czeka, aż gasnąca wskazówka zniknie. */
 const TIP_FADE_MS = 160
 const FLY_HIDE_MS = 200
+const SAY_MS = 1800
 
 export interface KeyLike {
   key: string
@@ -36,19 +48,32 @@ interface CapSpot {
 }
 
 /** Skrót przypięty do kontrolki, której dotyczy. Resztę zna ściąga, a klawisz ? do niej prowadzi. */
-const HOLD: CapSpot[] = [
+const holdSpots = (): CapSpot[] => [
   { sel: '.rail [data-open-cmd]', keys: [MOD, 'K'], side: 'right' },
   { sel: '#homeBtn', keys: ['H'], side: 'right' },
   { sel: '#homeSeg', keys: ['Shift', 'H'], side: 'bottom', when: () => ui.home && ui.peek === null && !ui.setup },
   { sel: '#railMode', keys: ['T'], side: 'right' },
+  { sel: '#railOptions', keys: [MOD, ','], side: 'right' },
+  { sel: '.rb[data-view="search"]', keys: [MOD, 'Shift', 'F'], side: 'right' },
   { sel: '#navChev', keys: [MOD, 'B'], side: 'right' },
   { sel: '.tb[data-tool="move"]', keys: ['V'], side: 'top' },
   { sel: '.tb[data-tool="comment"]', keys: ['C'], side: 'top' },
   { sel: '.tb[data-tool="sticky"]', keys: ['N'], side: 'top' },
+  { sel: '.tb[data-tool="highlight"]', keys: ['M'], side: 'top' },
+  { sel: '.tb[data-tool="shape"]', keys: ['A'], side: 'top' },
+  { sel: '.tb[data-tool="pointer"]', keys: ['P'], side: 'top' },
+  { sel: '#presentBtn', keys: ['F5'], side: 'top' },
   { sel: '#statusBtn', keys: ['S'], side: 'top' },
-  { sel: '#cmdBtn', keys: ['?'], label: 'Wszystkie skróty', side: 'top' },
+  { sel: '#labelBtn', keys: ['L'], side: 'top' },
+  { sel: '#refBtn', keys: ['R'], side: 'top' },
+  { sel: '#cmdBtn', keys: ['?'], label: t('Wszystkie skróty'), side: 'top' },
+  { sel: '.pane.focused [data-moved="find"]', keys: [MOD, 'F'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="split"]', keys: [MOD, '\\'], side: 'bottom', end: true },
   { sel: '.pane.focused [data-moved="insp"]', keys: ['I'], side: 'bottom' },
+  { sel: '.pane.focused [data-moved="links"]', keys: ['O'], side: 'bottom' },
+  { sel: '.pane.focused [data-moved="outline"]', keys: ['G'], side: 'bottom' },
+  { sel: '.pane.focused [data-moved="drawings"]', keys: ['D'], side: 'bottom' },
+  { sel: '.toc-map', keys: ['Shift', 'G'], side: 'top', when: () => ui.insp && ui.inspView === 'outline' },
   { sel: '.pane.focused .pl-close', keys: ['X'], side: 'bottom' },
   { sel: '.pane.peek .pl-pin', keys: [MOD, '\\'], side: 'bottom' },
   { sel: '#camMap', keys: [MOD, '←', '→'], side: 'top', when: () => pinned() > 2 },
@@ -62,6 +87,7 @@ let tipOff = 0
 let tipRoom = false
 let tipRoomTimer = 0
 let flyTimer = 0
+let sayTimer = 0
 
 export const fly = {
   view: null as string | null,
@@ -78,7 +104,7 @@ export function showCaps(): void {
   const d = els.dock.getBoundingClientRect()
   const cx = d.left + d.width / 2
   const cy = d.top + d.height / 2
-  const html = HOLD.map((spot) => {
+  const html = holdSpots().map((spot) => {
     const element = document.querySelector(spot.sel) ?? layerDocument().querySelector(spot.sel)
     const r = element?.getBoundingClientRect()
     if (!element || !r || !r.width || (spot.when && !spot.when())) return ''
@@ -123,7 +149,37 @@ export function hideTip(): void {
   if (tipRoom) tipRoomTimer = window.setTimeout(() => setTipRoom(false), TIP_FADE_MS)
 }
 
+/** Krótki komunikat na miejscu wskazówki, bo zmiana w dokumencie może leżeć poza ekranem. */
+function sayTip(text: string): void {
+  clearTimeout(tipTimer)
+  clearTimeout(tipRoomTimer)
+  clearTimeout(sayTimer)
+  const line = document.createElement('span')
+  line.textContent = text
+  els.tip.replaceChildren(line)
+  els.tip.classList.add('say')
+  const a = els.app.getBoundingClientRect()
+  const d = els.dock.getBoundingClientRect()
+  els.tip.style.bottom = `${a.bottom - d.top + 14}px`
+  tipX.set(d.left - a.left + d.width / 2)
+  setTipRoom(true)
+  els.tip.classList.add('on')
+  tipLive = false
+  sayTimer = window.setTimeout(hideTip, SAY_MS)
+}
+
+/** Cofa albo przywraca ostatnią zmianę uwag w dokumencie, który ma fokus. */
+export function stepNotes(redo: boolean): void {
+  const docId = focusedId()
+  if (!docId) return
+  void (redo ? window.api.redoAnnotation(docId) : window.api.undoAnnotation(docId)).then((message) => {
+    if (message) sayTip(message)
+  })
+}
+
 export function showTip(button: HTMLElement): void {
+  clearTimeout(sayTimer)
+  els.tip.classList.remove('say')
   const label = button.dataset.tip ?? ''
   const keys = (button.dataset.keys ?? '').replace('MOD', MOD).split(' ').filter(Boolean)
   els.tip.innerHTML = `<span>${label}</span><span class="keys">${keyHtml(keys)}</span>`
@@ -140,7 +196,7 @@ export function showTip(button: HTMLElement): void {
 }
 
 export function dockHover(button: HTMLElement | null): void {
-  if (!button || ui.cmd || isPopOpen()) return
+  if (!button || ui.cmd || ui.labelPop || isPopOpen()) return
   clearTimeout(tipTimer)
   clearTimeout(tipOff)
   if (tipLive) showTip(button)
@@ -214,15 +270,47 @@ export function leaveFly(): void {
 }
 
 function escapeStep(): void {
+  if (endPick()) return
+  if (escapeFind()) return
   if (ui.draft) cancelDraft()
   setTool('move')
   togglePop(false)
+  closeLabelPop()
   if (ui.selNote) closeThread()
   else closePeek()
 }
 
+/**
+ * Klawisze w prezentacji: kroki, wskaźnik, odsłonięcie uwag i wyjście. Reszta skrótów milczy,
+ * żeby przypadkowa litera nie otworzyła panelu przed widzami. Zwraca `true` w prezentacji.
+ */
+function presentKey(e: KeyLike): boolean {
+  if (!ui.presenting) return false
+  if (typesInField()) return false
+  if (e.ctrlKey || e.metaKey || e.altKey) return true
+  const k = e.key.toLowerCase()
+  if (e.key === 'Escape') {
+    if (ui.tool !== 'move') setTool('move')
+    else stopPresentation()
+  } else if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) {
+    e.preventDefault()
+    stepBy(1)
+  } else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === ' ') {
+    e.preventDefault()
+    stepBy(-1)
+  } else if (e.key === 'Home' || e.key === 'End') {
+    e.preventDefault()
+    stepToEnd(e.key === 'End')
+  } else if (k === 'p') setTool(ui.tool === 'pointer' ? 'move' : 'pointer')
+  else if (k === 'v') setTool('move')
+  else if (k === 'd') toggleReveal()
+  return true
+}
+
 /** Wspólna obsługa klawiszy z powłoki i z dokumentu, który ma fokus. */
 export function handleKey(e: KeyLike): void {
+  if (menuKey(e)) return
+  if (presentKey(e)) return
   const typing = typesInField()
   const mod = e.ctrlKey || e.metaKey
   const k = e.key.toLowerCase()
@@ -254,9 +342,31 @@ export function handleKey(e: KeyLike): void {
     if (e.key === 'Escape') closeCmd()
     return
   }
+  const digit = /^Digit([1-9])$/.exec(e.code ?? '')?.[1] ?? (/^[1-9]$/.test(e.key) ? e.key : null)
+  if (mod && !e.shiftKey && !e.altKey && !typing && digit && openPocket(Number(digit) - 1)) {
+    e.preventDefault()
+    return
+  }
+  if (searchKey(e)) return
+  if (mod && k === ',') {
+    e.preventDefault()
+    toggleOptions()
+    return
+  }
+  if (mod && k === 'z' && !e.altKey && !typing) {
+    e.preventDefault()
+    stepNotes(e.shiftKey)
+    return
+  }
   if (!typing && ui.home && ui.peek === null && !ui.setup && homeKey(e)) return
   if (typing || mod || e.altKey) return
-  if (ui.home && ui.peek === null && 'vcnsix'.includes(k)) return
+  if (e.key === 'F5') {
+    // Shift zaczyna od kroku wybranego w formularzu trasy, jak w programach do slajdów.
+    e.preventDefault()
+    void startPresentation(e.shiftKey)
+    return
+  }
+  if (ui.home && ui.peek === null && 'vcnmapslriogdxk'.includes(k)) return
   if (e.key === 'Escape') {
     escapeStep()
     return
@@ -265,10 +375,28 @@ export function handleKey(e: KeyLike): void {
   if (k === 'v') setTool('move')
   else if (k === 'c' && canAnnotate(doc)) setTool(ui.tool === 'comment' ? 'move' : 'comment')
   else if (k === 'n' && canAnnotate(doc)) setTool(ui.tool === 'sticky' ? 'move' : 'sticky')
+  else if (k === 'm' && canAnnotate(doc)) setTool(ui.tool === 'highlight' ? 'move' : 'highlight')
+  else if (k === 'a' && canAnnotate(doc)) setTool(ui.tool === 'shape' ? 'move' : 'shape')
+  else if (k === 'd' && doc) toggleDrawings(doc.id)
+  else if (k === 'p' && doc) {
+    if (e.shiftKey) togglePanel('route')
+    else setTool(ui.tool === 'pointer' ? 'move' : 'pointer')
+  }
   else if (k === 'i') {
     if (e.shiftKey) toggleNotesView()
-    else setInsp(!ui.insp)
+    else togglePanel('notes')
   } else if (k === 's' && canAnnotate(doc)) togglePop()
+  else if (k === 'l' && canAnnotate(doc)) {
+    // Wybierak od razu łapie klawiaturę, więc litera nie może wpaść do jego pola.
+    e.preventDefault()
+    toggleLabelPop()
+  } else if (k === 'r' && doc) copyReference(doc)
+  else if (k === 'k' && doc) togglePocket(doc.id)
+  else if (k === 'o' && doc) togglePanel('links')
+  else if (k === 'g' && doc) {
+    if (e.shiftKey) toggleMinimap()
+    else togglePanel('outline')
+  }
   else if (k === 'x') closeSheet(ui.focus)
   else if (k === 'h') {
     if (e.shiftKey) toggleHomeView()

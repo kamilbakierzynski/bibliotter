@@ -1,7 +1,8 @@
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type { PullRequest } from '../shared/types'
 import type { HtmlFeatures } from './classify'
-import { normalizeText, queryTerms } from './textNormalize'
+import { normalizeText, queryTerms } from '../shared/textNormalize'
+import type { IndexedText } from '../shared/textSearch'
 
 const SCHEMA_VERSION = 2
 const SNIPPET_CONTEXT = 70
@@ -84,6 +85,24 @@ export function buildSnippet(text: string, terms: string[]): Omit<SearchMatch, '
   return { before: '', match: '', after: text.slice(0, SNIPPET_CONTEXT * 2) }
 }
 
+/**
+ * Przegląda tekst całej biblioteki na osobnym połączeniu do odczytu. Indeks FTS znajduje tylko
+ * początki słów, a szukanie w treści ma widzieć każdy fragment. `folded` to tekst po `normalizeText`.
+ */
+export function* indexedTexts(db: DatabaseSync, folded: boolean): Generator<IndexedText> {
+  const original = db.prepare('SELECT text FROM doc_text WHERE rowid = ?')
+  const rows = db
+    .prepare(
+      folded
+        ? 'SELECT rowid AS id, doc_id AS docId, body AS source FROM doc_fts'
+        : 'SELECT rowid AS id, doc_id AS docId, text AS source FROM doc_text'
+    )
+    .iterate() as Iterable<unknown> as Iterable<{ id: number; docId: string; source: string }>
+  for (const { id, docId, source } of rows) {
+    yield { docId, source, text: () => (folded ? (original.get(id) as { text: string }).text : source) }
+  }
+}
+
 /** Indeks odtwarzalny z plików. Źródłem prawdy pozostają dokumenty i ich `meta.json`. */
 export class SearchIndex {
   private readonly db: DatabaseSync
@@ -91,6 +110,15 @@ export class SearchIndex {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path)
+    try {
+      this.prepareSchema()
+    } catch (error) {
+      this.db.close()
+      throw error
+    }
+  }
+
+  private prepareSchema(): void {
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;')
     const { user_version: version } = this.db.prepare('PRAGMA user_version').get() as { user_version: number }
     if (version !== SCHEMA_VERSION) {

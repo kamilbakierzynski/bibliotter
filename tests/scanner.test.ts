@@ -21,6 +21,17 @@ afterEach(async () => {
 })
 
 describe('walkRoots', () => {
+  it('zgłasza pliki w trakcie szukania', async () => {
+    const seen: string[] = []
+    await mkdir(join(root, 'a', 'b'), { recursive: true })
+    await writeFile(join(root, 'a', 'b', 'plan.html'), '<h1>A</h1>')
+
+    const { files } = await walkRoots([root], [], (file) => seen.push(file.name))
+
+    expect(seen).toEqual(files.map((file) => file.name))
+    expect(seen).toContain('plan.html')
+  })
+
   it('wskazuje najbliższe repozytorium i liczbę plików w folderze', async () => {
     await mkdir(join(root, 'repo', '.git'), { recursive: true })
     await put('repo/docs/plan.html')

@@ -54,6 +54,18 @@ function copyStyle(node: Element): Promise<void> | null {
   return loaded
 }
 
+/** Vite podmienia style w miejscu, więc w trybie dev warstwa idzie za powłoką. */
+function followStyles(): void {
+  const id = 'data-vite-dev-id'
+  new MutationObserver(() => {
+    for (const style of document.head.querySelectorAll(`style[${id}]`)) {
+      const twin = page.document.head.querySelector(`style[${id}="${CSS.escape(style.getAttribute(id) ?? '')}"]`)
+      if (!twin) copyStyle(style)
+      else if (twin.textContent !== style.textContent) twin.textContent = style.textContent
+    }
+  }).observe(document.head, { childList: true, characterData: true, subtree: true })
+}
+
 /** Otwiera stronę warstwy. Dok mierzy się przy starcie, więc style muszą już być wczytane. */
 export async function openLayer(): Promise<void> {
   const opened = window.open('', PAGE_NAME)
@@ -69,6 +81,7 @@ export async function openLayer(): Promise<void> {
   mirrorRoot()
   const styles = [...document.head.querySelectorAll('style, link[rel="stylesheet"]')]
   await Promise.all(styles.map(copyStyle))
+  if (import.meta.hot) followStyles()
 }
 
 const same = (a: ViewerBounds, b: ViewerBounds): boolean =>

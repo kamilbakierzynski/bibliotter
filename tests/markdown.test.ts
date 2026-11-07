@@ -38,6 +38,53 @@ describe('renderMarkdown', () => {
     expect(html).toContain('<h2 id="żółta-gęś-1">')
   })
 
+  describe('linki Obsidiana', () => {
+    it('zamienia nazwę w link, także z aliasem i nagłówkiem', () => {
+      expect(renderMarkdown('[[force-atlas-2]]').html).toContain('<a href="wiki:force-atlas-2">force-atlas-2</a>')
+      expect(renderMarkdown('[[cel|inny tekst]]').html).toContain('<a href="wiki:cel">inny tekst</a>')
+      expect(renderMarkdown('[[cel#Sekcja dalej]]').html).toContain('<a href="wiki:cel#Sekcja%20dalej">cel › Sekcja dalej</a>')
+    })
+
+    it('zamienia nagłówek w tym samym pliku w kotwicę', () => {
+      expect(renderMarkdown('[[#Cel prac]]').html).toContain('<a href="#cel-prac">Cel prac</a>')
+    })
+
+    it('rozumie link w całym zdaniu, na liście i w tabeli', () => {
+      const { html } = renderMarkdown('- [[a]] — opis [[b]]\n\n| x |\n|---|\n| [[c\\|d]] |\n')
+
+      expect(html).toContain('href="wiki:a"')
+      expect(html).toContain('href="wiki:b"')
+      expect(html).toContain('<a href="wiki:c">d</a>')
+    })
+
+    it('zostawia kod w spokoju', () => {
+      const { html } = renderMarkdown('`[[a]]`\n\n```\n[[b]]\n```\n')
+
+      expect(html).not.toContain('<a ')
+    })
+
+    it('pokazuje osadzenie jako link, bez szerokości z aliasu', () => {
+      expect(renderMarkdown('![[wykres.png|300]]').html).toContain('<a href="wiki:wykres.png">wykres.png</a>')
+    })
+
+    it('nie psuje tytułu ani identyfikatora nagłówka', () => {
+      const { title, html } = renderMarkdown('# Plan [[cel|celu]]\n')
+
+      expect(title).toBe('Plan celu')
+      expect(html).toContain('<h1 id="plan-celu">')
+    })
+
+    it('ignoruje puste nawiasy', () => {
+      expect(renderMarkdown('[[ ]] i [[]]').html).not.toContain('<a ')
+    })
+
+    it('nie wpuszcza HTML przez alias', () => {
+      const { html } = renderMarkdown('[[cel|<img src=x onerror=alert(1)>]]')
+
+      expect(html).not.toContain('<img')
+    })
+  })
+
   it('obsługuje tabele i listy zadań', () => {
     const { html } = renderMarkdown('| A |\n|---|\n| 1 |\n\n- [x] gotowe\n')
 

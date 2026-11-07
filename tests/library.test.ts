@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { analyzeFile, type FileAnalyzer } from '../src/main/analysis'
 import { commandRunner, type GitRunner } from '../src/main/git'
 import { Library } from '../src/main/library'
-import type { DocEntry, FolderLink, LibrarySnapshot } from '../src/shared/types'
+import type { DocEntry, FolderLink, LibrarySnapshot, ScanProgress } from '../src/shared/types'
 
 const git = commandRunner('git')
 const noGh: GitRunner = async () => {
@@ -30,13 +31,14 @@ async function put(path: string, content: string): Promise<string> {
   return target
 }
 
-async function openLibrary(): Promise<Library> {
+async function openLibrary(extra: { analyze?: FileAnalyzer; onProgress?: (progress: ScanProgress) => void } = {}): Promise<Library> {
   return Library.open({
     dataDir: home,
     git,
     gh,
     getConfig: () => ({ roots: [root], folderLinks: links }),
-    onChange: (snapshot) => changes.push(snapshot)
+    onChange: (snapshot) => changes.push(snapshot),
+    ...extra
   })
 }
 
@@ -131,7 +133,7 @@ ${prose}
     expect(changes).toHaveLength(before)
   })
 
-  it('czyta każde repozytorium tylko raz, nawet gdy pliki pytają równolegle', async () => {
+  it('czyta repozytorium z plików, bez uruchamiania gita', async () => {
     await initRepo(join(root, 'repo'))
     for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) await put(`repo/${name}.html`, docHtml(name))
     library.close()
@@ -150,7 +152,41 @@ ${prose}
 
     await library.scan()
 
-    expect(started.filter((command) => command.startsWith('rev-parse --show-toplevel'))).toHaveLength(1)
+    expect(started).toEqual([])
+  })
+
+  it('pliki odrzucone po ścieżce w ogóle nie są czytane', async () => {
+    await put('plan.html', docHtml('Plan'))
+    await put('README.md', '# Repo')
+    await put('tmp/szkic.html', docHtml('Szkic'))
+    await put('test-results/raport.html', docHtml('Raport'))
+    library.close()
+    const read: string[] = []
+    library = await openLibrary({
+      analyze: (path, format) => {
+        read.push(path)
+        return analyzeFile(path, format)
+      }
+    })
+
+    const snapshot = await library.scan()
+
+    expect(read.map((path) => path.split(/[\\/]/).at(-1))).toEqual(['plan.html'])
+    expect(allDocs(snapshot).map((doc) => doc.name)).toEqual(['plan.html'])
+    expect(snapshot.ignoredCount).toBe(3)
+  })
+
+  it('decyzja użytkownika działa także dla pliku, który odpadłby po ścieżce', async () => {
+    const path = await put('plan.html', docHtml('Plan'))
+    const { id } = findDoc(await library.scan(), 'plan.html')
+    await rm(path)
+    await put('tmp/plan.html', docHtml('Plan'))
+    const moved = await library.scan()
+    expect(allDocs(moved).filter((doc) => !doc.missing)).toEqual([])
+
+    await library.setClassification(id, 'document')
+
+    expect(findDoc(library.getSnapshot(), 'plan.html').classification).toBe('document')
   })
 
   it('wyszukiwanie widzi tylko bieżącą wersję zmienionego dokumentu', async () => {
@@ -191,6 +227,21 @@ ${prose}
     expect(meta.versions).toHaveLength(2)
   })
 
+  it('zmienia status wielu dokumentów jedną migawką i pomija nieznane', async () => {
+    await put('a.html', docHtml('Plan A'))
+    await put('b.html', docHtml('Plan B'))
+    const snapshot = await library.scan()
+    const ids = [findDoc(snapshot, 'a.html').id, findDoc(snapshot, 'b.html').id]
+    changes = []
+
+    await library.setStatuses([...ids, 'nie-ma-takiego'], 'to-decide')
+
+    expect(changes).toHaveLength(1)
+    expect(allDocs(changes[0] as LibrarySnapshot).map((doc) => doc.status)).toEqual(['to-decide', 'to-decide'])
+    const meta = JSON.parse(await readFile(join(home, 'library', ids[0] as string, 'meta.json'), 'utf8'))
+    expect(meta.status).toBe('to-decide')
+  })
+
   it('przeniesiony plik zachowuje status i historię', async () => {
     const path = await put('plan.html', docHtml('Plan'))
     const { id } = findDoc(await library.scan(), 'plan.html')
@@ -202,6 +253,188 @@ ${prose}
 
     expect(moved).toMatchObject({ id, status: 'to-decide', missing: false })
     expect(allDocs(library.getSnapshot())).toHaveLength(1)
+  })
+})
+
+describe('przebieg skanu', () => {
+  /** Zatrzymuje analizę wskazanego pliku, a resztę przepuszcza. */
+  function holdFile(name: string): { analyze: FileAnalyzer; release: () => void } {
+    let release = (): void => {}
+    const gate = new Promise<void>((done) => {
+      release = done
+    })
+    return {
+      release,
+      analyze: async (path, format) => {
+        if (path.endsWith(name)) await gate
+        return analyzeFile(path, format)
+      }
+    }
+  }
+
+  it('pokazuje dokumenty w trakcie skanu, a zapisuje je dopiero na końcu', async () => {
+    await put('gotowy.html', docHtml('Gotowy'))
+    await put('wolny.html', docHtml('Wolny'))
+    library.close()
+    const { analyze, release } = holdFile('wolny.html')
+    library = await openLibrary({ analyze })
+
+    const scan = library.scan()
+    await expect.poll(() => allDocs(library.getSnapshot()).map((doc) => doc.name)).toEqual(['gotowy.html'])
+    const { id } = findDoc(library.getSnapshot(), 'gotowy.html')
+
+    await expect(readFile(join(home, 'library', id, 'meta.json'), 'utf8')).rejects.toThrow()
+    release()
+    await scan
+    expect(allDocs(library.getSnapshot()).map((doc) => doc.name).sort()).toEqual(['gotowy.html', 'wolny.html'])
+    await expect(readFile(join(home, 'library', id, 'meta.json'), 'utf8')).resolves.toContain('gotowy.html')
+  })
+
+  it('najnowsze pliki idą na początek', async () => {
+    const old = await put('stary.html', docHtml('Stary'))
+    await put('nowy.html', docHtml('Nowy'))
+    const dayAgo = new Date(Date.now() - 86_400_000)
+    await utimes(old, dayAgo, dayAgo)
+    library.close()
+    const read: string[] = []
+    library = await openLibrary({
+      analyze: (path, format) => {
+        read.push(path)
+        return analyzeFile(path, format)
+      }
+    })
+
+    await library.scan()
+
+    expect(read[0]).toMatch(/nowy\.html$/)
+  })
+
+  it('status nadany w trakcie skanu nie ginie, gdy dokument nie ma jeszcze danych na dysku', async () => {
+    await put('gotowy.html', docHtml('Gotowy'))
+    await put('wolny.html', docHtml('Wolny'))
+    library.close()
+    const { analyze, release } = holdFile('wolny.html')
+    library = await openLibrary({ analyze })
+
+    const scan = library.scan()
+    await expect.poll(() => allDocs(library.getSnapshot()).length).toBe(1)
+    const { id } = findDoc(library.getSnapshot(), 'gotowy.html')
+    await library.markOpened(id)
+    expect(findDoc(library.getSnapshot(), 'gotowy.html').status).toBe('read')
+
+    release()
+    await scan
+
+    expect(findDoc(library.getSnapshot(), 'gotowy.html').status).toBe('read')
+    const meta = JSON.parse(await readFile(join(home, 'library', id, 'meta.json'), 'utf8'))
+    expect(meta.status).toBe('read')
+  })
+
+  it('zmiana statusu nie uruchamia skanu', async () => {
+    await put('plan.html', docHtml('Plan'))
+    const { id } = findDoc(await library.scan(), 'plan.html')
+    const scan = vi.spyOn(library, 'scan')
+
+    await library.markOpened(id)
+    await library.setStatus(id, 'decided')
+
+    expect(scan).not.toHaveBeenCalled()
+    expect(findDoc(library.getSnapshot(), 'plan.html').status).toBe('decided')
+  })
+
+  it('zgłasza postęp i jego koniec', async () => {
+    await put('plan.html', docHtml('Plan'))
+    await put('tmp/szkic.html', docHtml('Szkic'))
+    library.close()
+    const progress: ScanProgress[] = []
+    library = await openLibrary({ onProgress: (state) => progress.push(state) })
+
+    await library.scan()
+
+    expect(progress[0]).toMatchObject({ active: true })
+    expect(progress.at(-1)).toEqual({ active: false, found: 2, done: 2 })
+  })
+
+  it('usunięty folder znika od razu, jeszcze przed skanem', async () => {
+    const second = join(workspace, 'drugi')
+    await mkdir(second)
+    await writeFile(join(second, 'obcy.html'), docHtml('Obcy'))
+    await put('plan.html', docHtml('Plan'))
+    let roots = [root, second]
+    library.close()
+    library = await Library.open({
+      dataDir: home,
+      git,
+      gh,
+      getConfig: () => ({ roots, folderLinks: links }),
+      onChange: (snapshot) => changes.push(snapshot)
+    })
+    await library.scan()
+    expect(allDocs(library.getSnapshot())).toHaveLength(2)
+
+    roots = [root]
+    const scan = library.scan()
+
+    expect(allDocs(library.getSnapshot()).map((doc) => doc.name)).toEqual(['plan.html'])
+    await scan
+  })
+})
+
+describe('start z pamięci', () => {
+  it('pokazuje ostatni stan, zanim skończy się pierwszy skan', async () => {
+    await put('plan.html', docHtml('Plan'))
+    const { id } = findDoc(await library.scan(), 'plan.html')
+    await library.setStatus(id, 'to-decide')
+    library.close()
+    changes = []
+
+    library = await openLibrary()
+
+    expect(findDoc(changes[0] as LibrarySnapshot, 'plan.html')).toMatchObject({ id, status: 'to-decide' })
+    expect(library.getServedPath(id)).toMatch(/plan\.html$/)
+  })
+
+  it('skan bez zmian po starcie nikogo nie budzi', async () => {
+    await put('a.html', docHtml('A'))
+    await put('b/c.html', docHtml('C'))
+    await library.scan()
+    library.close()
+    changes = []
+
+    library = await openLibrary()
+    await library.scan()
+
+    expect(changes).toHaveLength(1)
+  })
+
+  it('pamięć z innymi folderami nie jest pokazywana', async () => {
+    await put('plan.html', docHtml('Plan'))
+    await library.scan()
+    library.close()
+    changes = []
+    const other = join(workspace, 'inny')
+    await mkdir(other)
+
+    library = await Library.open({
+      dataDir: home,
+      git,
+      gh,
+      getConfig: () => ({ roots: [other], folderLinks: [] }),
+      onChange: (snapshot) => changes.push(snapshot)
+    })
+
+    expect(changes[0]).toMatchObject({ roots: [other], projects: [] })
+  })
+
+  it('uszkodzona pamięć nie zatrzymuje startu', async () => {
+    await put('plan.html', docHtml('Plan'))
+    await library.scan()
+    library.close()
+    await writeFile(join(home, 'cache', 'library-v1.json'), '{"roots":')
+
+    library = await openLibrary()
+
+    expect(allDocs(await library.scan()).map((doc) => doc.name)).toEqual(['plan.html'])
   })
 })
 

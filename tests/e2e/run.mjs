@@ -12,6 +12,20 @@ import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { _electron as electron } from 'playwright-core'
+import { autoLabelFlow } from './autoLabel.mjs'
+import { cameraFlow } from './camera.mjs'
+import { ticketsFlow } from './tickets.mjs'
+import { findFlow } from './find.mjs'
+import { htmlLinkFlow } from './htmlLinks.mjs'
+import { languageFlow } from './language.mjs'
+import { mathFlow } from './math.mjs'
+import { optionsFlow } from './options.mjs'
+import { outlineFlow } from './outline.mjs'
+import { rowMenuFlow } from './rowMenu.mjs'
+import { routeFlow } from './route.mjs'
+import { shapesFlow } from './shapes.mjs'
+import { skeletonFlow } from './skeleton.mjs'
+import { undoFlow } from './undo.mjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const artifacts = join(projectRoot, 'tests/e2e/artifacts')
@@ -152,7 +166,50 @@ const stageSheet = (shell) =>
     return { top, width, height }
   })
 
-const DOCUMENT_BODY = `<style>body { margin: 16px }</style><h1>Temat</h1><h2>Cel</h2><h2>Ryzyka</h2>
+/**
+ * Przyciski na górnym pasku, które zamiast kliknięcia chwytają okno. Chromium składa obszar chwytu
+ * z prostokątów elementów z drag i no-drag po kolei w DOM, więc w danym punkcie wygrywa ostatni z nich.
+ * Ten model zgadzał się z WM_NCHITTEST w każdym zbadanym punkcie, a kosztuje jedno evaluate.
+ * Otwarty flyout staje przy przycisku widoku, poniżej paska, więc tu go nie ma.
+ */
+function topEdgeGrabs() {
+  const bar = document.querySelector('.titlebar').getBoundingClientRect()
+  const regions = []
+  for (const element of document.querySelectorAll('*')) {
+    const style = getComputedStyle(element)
+    const region = style.webkitAppRegion
+    if (style.visibility === 'visible' && (region === 'drag' || region === 'no-drag')) {
+      regions.push({ rect: element.getBoundingClientRect(), drag: region === 'drag' })
+    }
+  }
+  const dragsAt = (x, y) =>
+    regions.findLast(({ rect }) => x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom)?.drag ?? false
+  const name = (element) => (element.id ? `#${element.id}` : `${element.localName}.${[...element.classList].join('.')}`)
+
+  const onBar = []
+  const grabbing = []
+  const controls = 'button, a[href], input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"]), .nav-grip'
+  for (const element of document.querySelectorAll(controls)) {
+    if (!element.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue
+    const r = element.getBoundingClientRect()
+    const left = Math.max(r.left, bar.left)
+    const right = Math.min(r.right, bar.right)
+    const top = Math.max(r.top, bar.top)
+    const bottom = Math.min(r.bottom, bar.bottom)
+    if (right - left < 1 || bottom - top < 1) continue
+    // Siatka punktów na części paska, w którą trafia kliknięcie w ten element, a nie w coś nad nim.
+    const points = [0.2, 0.5, 0.8]
+      .flatMap((fx) => [0.2, 0.5, 0.8].map((fy) => [left + (right - left) * fx, top + (bottom - top) * fy]))
+      .filter(([x, y]) => element.contains(document.elementFromPoint(x, y)))
+    if (points.length === 0) continue
+    onBar.push(element)
+    if (points.some(([x, y]) => dragsAt(x, y))) grabbing.push(name(element))
+  }
+  const missing = ['.logo', '.nav-chev', '.nav-grip'].filter((selector) => !onBar.some((element) => element.matches(selector)))
+  return { missing, grabbing }
+}
+
+const DOCUMENT_BODY =`<style>body { margin: 16px }</style><h1>Temat</h1><h2>Cel</h2><h2>Ryzyka</h2>
 <p>${'Akapit opisujący łamigłówki i decyzje projektowe. '.repeat(30)}</p>`
 
 /** Dopisuje treść, dzięki której plik testowy zostanie rozpoznany jako dokument. */
@@ -173,7 +230,7 @@ async function libraryFlow(workspace) {
   const launch = () =>
     electron.launch({
       args: [projectRoot, `--user-data-dir=${profile}`],
-      env: { ...process.env, HTMLDOCS_HOME: home }
+      env: { ...process.env, BIBLIOTTER_HOME: home }
     })
 
   let app = await launch()
@@ -200,6 +257,12 @@ async function libraryFlow(workspace) {
       assert.deepEqual(bar, { top: 0, missing: false, region: 'drag', closedFlyout: 'none', beforeControls: true })
     })
 
+    await check('przyciski na górnym pasku przyjmują kliknięcia, a nie chwytają okna', async () => {
+      const { missing, grabbing } = await shell.evaluate(topEdgeGrabs)
+      assert.deepEqual(missing, [], `nie leżą na pasku: ${missing.join(', ')}`)
+      assert.deepEqual(grabbing, [], `chwytają okno: ${grabbing.join(', ')}`)
+    })
+
     await check('nowy plik pojawia się bez ręcznego skanowania', async () => {
       await writeFile(join(docs, 'nowy.html'), documentNamed('Nowy dokument', 'pierwsza'))
       await row('nowy').waitFor({ timeout: 8000 })
@@ -209,6 +272,60 @@ async function libraryFlow(workspace) {
       await row('nowy').click()
       await findDocument('Nowy dokument')
       await layer.locator('#statusBtn', { hasText: 'Przeczytane' }).waitFor()
+    })
+
+    await check('R w dokumencie kopiuje odnośnik, a przycisk to potwierdza', async () => {
+      const saved = await app.evaluate(({ clipboard }) => clipboard.readText())
+      try {
+        const page = await findDocument('Nowy dokument')
+        await page.keyboard.press('r')
+        await layer.locator('#refBtn[data-tip="Skopiowano odnośnik"]').waitFor()
+        const copied = await app.evaluate(({ clipboard }) => clipboard.readText())
+        assert.match(copied, /^\[Nowy dokument\]\(bibliotter:[0-9a-z]{10}\)$/)
+      } finally {
+        await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), saved)
+      }
+    })
+
+    const labelInput = shell.locator('#labelInput')
+    await check('L w dokumencie otwiera wybierak etykiet z pustym polem', async () => {
+      const page = await findDocument('Nowy dokument')
+      await page.keyboard.press('l')
+      await shell.locator('#labelPop.on').waitFor()
+      assert.equal(await labelInput.inputValue(), '')
+    })
+
+    await check('nowa etykieta powstaje z pola, a wybierak zostaje otwarty', async () => {
+      await labelInput.fill('PR review')
+      await labelInput.press('Enter')
+      await shell.locator('.placard .tag.label', { hasText: 'PR review' }).waitFor()
+      await layer.locator('#labelBtn em', { hasText: '1' }).waitFor()
+      assert.equal(await labelInput.inputValue(), '')
+      await shell.locator('#labelPop.on [role="menuitemcheckbox"][aria-checked="true"]', { hasText: 'PR review' }).waitFor()
+    })
+
+    await check('Esc zamyka wybierak i nie zamyka arkusza', async () => {
+      await labelInput.press('Escape')
+      await shell.locator('#labelPop.on').waitFor({ state: 'detached' })
+      await shell.locator('.placard .tag.label', { hasText: 'PR review' }).waitFor()
+    })
+
+    await check('widok Etykiety pokazuje dokumenty z etykietą z każdego projektu', async () => {
+      await railTab(shell, 'labels').click()
+      await shell.locator('#panelItems .row', { hasText: 'PR review' }).click()
+      await docRow(shell, 'nowy').waitFor()
+      await railTab(shell, 'library').click()
+    })
+
+    await check('paleta filtruje po etykiecie także pod nazwą label:', async () => {
+      await layer.locator('#cmdBtn').click()
+      await layer.locator('#cmdInput').fill('label:')
+      await layer.locator('.cr', { hasText: 'PR review' }).waitFor()
+      await layer.locator('#cmdInput').press('Enter')
+      await layer.locator('.f-chip', { hasText: 'PR review' }).waitFor()
+      await layer.locator('.cr', { hasText: 'Nowy dokument' }).waitFor()
+      assert.equal(await layer.locator('.cr', { hasText: 'Stary dokument' }).count(), 0)
+      await layer.locator('#cmdInput').press('Escape')
     })
 
     await check('zmiana otwartego pliku proponuje nową wersję', async () => {
@@ -304,10 +421,466 @@ const centerOf = (page, selector) =>
 
 const overlayCovers = (page, point) =>
   page.waitForFunction(
-    ({ x, y }) => document.elementFromPoint(x, y)?.tagName === 'HTML-DOCS-OVERLAY',
+    ({ x, y }) => document.elementFromPoint(x, y)?.tagName === 'BIBLIOTTER-OVERLAY',
     point,
     { timeout: 5000 }
   )
+
+/** Ręka leży w zamkniętym Shadow DOM, więc jej obecność widać tylko na obrazie strony. */
+const handOn = async (page, baseline) => !(await page.screenshot()).equals(baseline)
+
+const leaveDocument = (app, url) =>
+  app.evaluate(({ webContents }, target) => {
+    webContents.getAllWebContents().find((item) => item.getURL() === target).sendInputEvent({ type: 'mouseLeave', x: 0, y: 0 })
+  }, url)
+
+/** Liczba kolorów w prostokącie zrzutu arkusza. Pusty fragment dokumentu ma jeden kolor. */
+const frameColors = (shell, x, y, width, height) =>
+  shell.evaluate(
+    (box) => {
+      const canvas = document.querySelector('canvas.sheet-frame')
+      const scale = canvas.width / canvas.getBoundingClientRect().width
+      const pixels = canvas
+        .getContext('2d')
+        .getImageData(box.x * scale, box.y * scale, box.width * scale, box.height * scale).data
+      const colors = new Set()
+      for (let i = 0; i < pixels.length; i += 4) colors.add(`${pixels[i]},${pixels[i + 1]},${pixels[i + 2]}`)
+      return colors.size
+    },
+    { x, y, width, height }
+  )
+
+async function pointerFlow(workspace) {
+  const home = join(workspace, 'pointer-home')
+  const docs = join(workspace, 'pointer-docs')
+  await mkdir(home, { recursive: true })
+  await mkdir(docs, { recursive: true })
+  await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
+  await writeFile(
+    join(docs, 'wskaznik.html'),
+    annotatedDoc('<button id="akcja">Zatwierdź wariant</button><div style="height: 2400px"></div>')
+  )
+  await writeFile(join(docs, 'drugi.html'), documentNamed('Drugi dokument'))
+
+  const app = await electron.launch({
+    args: [projectRoot, `--user-data-dir=${join(workspace, 'pointer-profile')}`],
+    env: { ...process.env, BIBLIOTTER_HOME: home }
+  })
+  try {
+    const shell = await app.firstWindow()
+    const layer = await dockLayer(app, shell)
+    shell.setDefaultTimeout(6000)
+    layer.setDefaultTimeout(6000)
+    const findDocument = attachDocument(app)
+    const errors = []
+    const cursorOf = (page, selector) =>
+      page.locator(selector).evaluate((element) => getComputedStyle(element).cursor)
+    const tool = (name) => shell.locator(`#app[data-tool="${name}"]`).waitFor({ state: 'attached' })
+
+    await docRow(shell, 'Dokument z uwagami').click()
+    const page = await findDocument('Dokument z uwagami')
+    await page.waitForLoadState('load')
+    await documentIsLive(shell)
+    await delay(400)
+    page.on('pageerror', (error) => errors.push(String(error)))
+    const target = await centerOf(page, '#akcja')
+    const baseline = await page.screenshot()
+
+    await check('skrót P włącza wskaźnik i chowa kursor tylko w dokumencie', async () => {
+      await page.keyboard.press('p')
+      await tool('pointer')
+      await layer.locator('.tb[data-tool="pointer"].on').waitFor()
+      assert.equal(await cursorOf(page, '#akcja'), 'none')
+      assert.notEqual(await cursorOf(shell, 'body'), 'none')
+    })
+
+    await check('ręka pojawia się dopiero nad dokumentem', async () => {
+      assert.equal(await handOn(page, baseline), false)
+      await page.mouse.move(target.x, target.y)
+      await delay(700)
+      assert.equal(await handOn(page, baseline), true)
+    })
+
+    await check('kliknięcie uderza w ekran zamiast uruchamiać dokument', async () => {
+      const before = await page.screenshot()
+      await page.mouse.down()
+      await delay(120)
+      const struck = await page.screenshot()
+      await page.mouse.up()
+      assert.equal(await page.evaluate(() => window.klikniecia), undefined)
+      assert.ok(!struck.equals(before))
+    })
+
+    await check('ręka znika, gdy mysz wychodzi z dokumentu', async () => {
+      await delay(900)
+      await leaveDocument(app, page.url())
+      await delay(700)
+      assert.equal(await handOn(page, baseline), false)
+    })
+
+    await check('przytrzymany przycisk zostawia linię, a prawy ją kasuje', async () => {
+      const line = async (x, y) => {
+        await page.mouse.move(x, y)
+        await page.mouse.down()
+        await delay(120)
+        await page.mouse.move(x + 160, y + 40, { steps: 8 })
+        await page.mouse.up()
+      }
+      await line(target.x - 200, target.y - 120)
+      await delay(900)
+      await leaveDocument(app, page.url())
+      await delay(700)
+      assert.equal(await handOn(page, baseline), true)
+      await page.mouse.click(target.x, target.y, { button: 'right' })
+      await delay(400)
+      await leaveDocument(app, page.url())
+      await delay(700)
+      assert.equal(await handOn(page, baseline), false)
+      assert.equal(await page.evaluate(() => window.klikniecia), undefined)
+    })
+
+    await check('linia chowa się z narzędziem i wraca z nim', async () => {
+      await page.mouse.move(target.x, target.y)
+      await page.mouse.down()
+      await page.mouse.move(target.x + 120, target.y, { steps: 6 })
+      await page.mouse.up()
+      await delay(1000)
+      await leaveDocument(app, page.url())
+      await page.keyboard.press('v')
+      await tool('move')
+      await delay(700)
+      assert.equal(await handOn(page, baseline), false)
+      await page.keyboard.press('p')
+      await tool('pointer')
+      await delay(300)
+      assert.equal(await handOn(page, baseline), true)
+      await page.mouse.click(target.x, target.y, { button: 'right' })
+      await delay(400)
+    })
+
+    await check('kółko przewija dokument pod ręką', async () => {
+      await page.mouse.move(target.x, target.y)
+      await page.mouse.wheel(0, 320)
+      await page.waitForFunction(() => scrollY > 0)
+      await page.evaluate(() => scrollTo(0, 0))
+    })
+
+    await check('wskaźnik obejmuje też arkusz otwarty obok', async () => {
+      await layer.keyboard.press('Control+\\')
+      const second = await findDocument('Drugi dokument')
+      await second.waitForLoadState('load')
+      await documentIsLive(shell)
+      await second.waitForFunction(() => getComputedStyle(document.body).cursor === 'none')
+      assert.equal(await cursorOf(page, '#akcja'), 'none')
+      await tool('pointer')
+      // Złożenie zostawia arkusz z fokusem, a ten należy do drugiego dokumentu.
+      await layer.keyboard.press('Control+ArrowLeft')
+      await layer.keyboard.press('Control+\\')
+      await documentIsLive(shell)
+    })
+
+    await check('ręka nie zostaje na zrzucie arkusza', async () => {
+      await page.evaluate(() => scrollTo(0, 2000))
+      await page.mouse.move(420, 300)
+      await delay(700)
+      await layer.keyboard.press('Control+k')
+      await layer.locator('.dock.wide').waitFor()
+      await shell.locator('canvas.sheet-frame').first().waitFor()
+      assert.equal(await frameColors(shell, 400, 300, 80, 200), 1)
+      await layer.keyboard.press('Escape')
+      await layer.locator('.dock.wide').waitFor({ state: 'detached' })
+      await documentIsLive(shell)
+      await page.evaluate(() => scrollTo(0, 0))
+    })
+
+    await check('V oddaje dokumentowi mysz i kursor', async () => {
+      await page.keyboard.press('v')
+      await tool('move')
+      await page.waitForFunction(() => getComputedStyle(document.getElementById('akcja')).cursor !== 'none')
+      await page.mouse.click(target.x, target.y)
+      assert.equal(await page.evaluate(() => window.klikniecia), 2)
+    })
+
+    await check('wskaźnik jest w doku i wyłącza się na ekranie startowym', async () => {
+      await layer.locator('.tb[data-tool="pointer"]').click()
+      await tool('pointer')
+      await page.keyboard.press('h')
+      await tool('move')
+      await page.waitForFunction(() => getComputedStyle(document.body).cursor !== 'none')
+    })
+
+    await check('wskaźnik nie zgłasza błędów w dokumencie', async () => assert.deepEqual(errors, []))
+  } finally {
+    await app.close()
+  }
+}
+
+/** Kolory wycinka zrzutu. Dekoduje go powłoka, bo test nie ma własnego czytnika PNG. */
+const pixelsOf = (shell, png, x, y, width, height) =>
+  shell.evaluate(
+    async ({ data, x, y, width, height }) => {
+      const image = await createImageBitmap(new Blob([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))]))
+      const canvas = new OffscreenCanvas(width, height)
+      const context = canvas.getContext('2d')
+      context.drawImage(image, -x, -y)
+      const { data: bytes } = context.getImageData(0, 0, width, height)
+      const list = []
+      for (let i = 0; i < bytes.length; i += 4) list.push([bytes[i], bytes[i + 1], bytes[i + 2]])
+      return list
+    },
+    { data: png.toString('base64'), x, y, width, height }
+  )
+
+async function markerFlow(workspace) {
+  const home = join(workspace, 'marker-home')
+  const docs = join(workspace, 'marker-docs')
+  await mkdir(home, { recursive: true })
+  await mkdir(docs, { recursive: true })
+  await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
+  await writeFile(
+    join(docs, 'zakreslacz.html'),
+    annotatedDoc(
+      '<p id="temat" style="font: 16px/28px sans-serif; max-width: 680px">Ten fragment trzeba poruszyć na spotkaniu z zespołem, bo zmienia termin wdrożenia.</p><p id="drugi" style="font: 16px/28px sans-serif">Drugi akapit też warto zakreślić innym kolorem.</p><div style="height: 1600px"></div>'
+    )
+  )
+  await writeFile(join(docs, 'drugi.html'), documentNamed('Drugi dokument'))
+
+  const highlights = async () => {
+    const library = join(home, 'library')
+    const found = []
+    for (const doc of await readdir(library).catch(() => [])) {
+      const folder = join(library, doc, 'annotations')
+      for (const file of await readdir(folder).catch(() => [])) {
+        // Zapis idzie przez plik tymczasowy, którego nie wolno czytać w połowie.
+        if (!file.endsWith('.json')) continue
+        const item = JSON.parse(await readFile(join(folder, file), 'utf8'))
+        if (item.kind === 'highlight') found.push(item)
+      }
+    }
+    return found.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+  const until = async (test, ms = 4000) => {
+    const start = Date.now()
+    while (Date.now() - start < ms) {
+      const value = await test()
+      if (value) return value
+      await delay(60)
+    }
+    throw new Error('Nie doczekano się zapisu')
+  }
+
+  const app = await electron.launch({
+    args: [projectRoot, `--user-data-dir=${join(workspace, 'marker-profile')}`],
+    env: { ...process.env, BIBLIOTTER_HOME: home }
+  })
+  try {
+    const shell = await app.firstWindow()
+    const layer = await dockLayer(app, shell)
+    shell.setDefaultTimeout(6000)
+    layer.setDefaultTimeout(6000)
+    const findDocument = attachDocument(app)
+    const errors = []
+    const tool = (name) => shell.locator(`#app[data-tool="${name}"]`).waitFor({ state: 'attached' })
+    const swipe = async (from, to, steps = 12) => {
+      await page.mouse.move(from.x, from.y)
+      await page.mouse.down()
+      await delay(80)
+      await page.mouse.move(to.x, to.y, { steps })
+      await delay(120)
+      await page.mouse.up()
+    }
+
+    await docRow(shell, 'Dokument z uwagami').click()
+    const page = await findDocument('Dokument z uwagami')
+    await page.waitForLoadState('load')
+    await documentIsLive(shell)
+    await delay(400)
+    page.on('pageerror', (error) => errors.push(String(error)))
+    const box = await page.locator('#temat').boundingBox()
+    const line = box.y + 14
+    const wide = await page.evaluate(() => innerWidth)
+    const clean = await page.screenshot()
+
+    await check('skrót M włącza zakreślacz, kolory w tacy i chowa kursor', async () => {
+      await page.keyboard.press('m')
+      await tool('highlight')
+      await layer.locator('.tb[data-tool="highlight"].on').waitFor()
+      await layer.locator('#trayIn[data-tray="highlight"] .swatch.yellow.on').waitFor()
+      assert.equal(await page.locator('#temat').evaluate((element) => getComputedStyle(element).cursor), 'none')
+    })
+
+    await check('przy kursorze stoi model, a znika po wyjściu z dokumentu', async () => {
+      await page.mouse.move(box.x + 300, box.y + 120)
+      await delay(600)
+      assert.equal(await handOn(page, clean), true)
+      await leaveDocument(app, page.url())
+      await delay(600)
+      assert.equal(await handOn(page, clean), false)
+    })
+
+    await check('przeciągnięcie zapisuje zakreślenie z cytatem', async () => {
+      await swipe({ x: box.x + 4, y: line }, { x: box.x + 340, y: line + 1 })
+      await page.mouse.down()
+      await page.mouse.up()
+      const [saved] = await until(async () => {
+        const list = await highlights()
+        return list.length > 0 && list
+      })
+      assert.equal(saved.color, 'yellow')
+      assert.equal(saved.audience, 'me')
+      assert.equal(saved.status, 'open')
+      assert.equal(saved.anchor.selector, '#temat')
+      assert.match(saved.anchor.quote, /fragment trzeba/)
+      assert.equal(saved.anchorWidth, box.width)
+      assert.equal(saved.strokes.length, 1)
+      assert.deepEqual(saved.messages, [])
+      assert.equal(await page.evaluate(() => window.klikniecia), undefined)
+    })
+
+    await check('tusz barwi papier i nie przykrywa tekstu', async () => {
+      await page.mouse.move(box.x + 500, box.y + 300)
+      await leaveDocument(app, page.url())
+      await delay(1100)
+      const shot = await page.screenshot()
+      const pixels = await pixelsOf(shell, shot, Math.round(box.x + 20), Math.round(line - 8), 300, 16)
+      const paper = pixels.filter(([r, g, b]) => r > 220 && g > 200 && b < 170)
+      const text = pixels.filter(([r, g, b]) => r < 90 && g < 90 && b < 90)
+      assert.ok(paper.length > 300, `żółtych pikseli: ${paper.length}`)
+      assert.ok(text.length > 80, `ciemnych pikseli: ${text.length}`)
+    })
+
+    await check('linie położone jedna po drugiej to jedno zakreślenie', async () => {
+      const before = (await highlights()).length
+      const second = await page.locator('#drugi').boundingBox()
+      await swipe({ x: second.x + 4, y: second.y + 8 }, { x: second.x + 160, y: second.y + 8 }, 6)
+      await delay(200)
+      await swipe({ x: second.x + 4, y: second.y + 20 }, { x: second.x + 160, y: second.y + 20 }, 6)
+      await until(async () => (await highlights()).length === before + 1)
+      assert.equal((await highlights()).at(-1).strokes.length, 2)
+    })
+
+    await check('kolor z tacy zmienia model i zapisane zakreślenie', async () => {
+      await layer.locator('.swatch.pink').click()
+      await layer.locator('.swatch.pink.on').waitFor()
+      await page.mouse.move(box.x + 300, box.y + 150)
+      await delay(600)
+      const before = (await highlights()).length
+      await swipe({ x: box.x + 4, y: line + 28 }, { x: box.x + 200, y: line + 28 }, 6)
+      await until(async () => (await highlights()).length === before + 1)
+      assert.equal((await highlights()).at(-1).color, 'pink')
+    })
+
+    await check('prawy przycisk usuwa zakreślenie', async () => {
+      // Plik jest już na dysku, a lista uwag dopiero jedzie do dokumentu.
+      await delay(400)
+      const before = (await highlights()).length
+      await page.mouse.click(box.x + 100, line + 28, { button: 'right' })
+      await until(async () => (await highlights()).length === before - 1)
+    })
+
+    await check('kod dokumentu nie widzi tuszu', async () => {
+      const seen = await page.evaluate(() => document.querySelector('bibliotter-ink')?.shadowRoot)
+      assert.equal(seen, null)
+    })
+
+    await check('V oddaje dokumentowi mysz i kursor', async () => {
+      await page.keyboard.press('v')
+      await tool('move')
+      await page.waitForFunction(() => getComputedStyle(document.body).cursor !== 'none')
+    })
+
+    await check('zakreślenie jest na liście tematów dla mnie', async () => {
+      await railTab(shell, 'notes').click()
+      await shell.locator('.row[data-open-note]', { hasText: 'fragment trzeba' }).waitFor()
+      await railTab(shell, 'library').click()
+      await documentIsLive(shell)
+    })
+
+    await check('znacznik prowadzi do wątku, a notatka zostaje przy zakreśleniu', async () => {
+      const saved = (await highlights())[0]
+      const dot = { x: box.x + saved.anchor.offsetX * box.width, y: box.y + saved.anchor.offsetY * box.height }
+      // Znacznik stoi nad końcem linii.
+      await page.mouse.click(dot.x + 3, dot.y - 14)
+      const thread = shell.locator('.th-pop .thread')
+      await thread.waitFor()
+      assert.match(await thread.locator('.th-text').innerText(), /fragment trzeba/)
+      await thread.locator('.reply input').fill('Zapytać o termin')
+      await thread.locator('.reply input').press('Enter')
+      await until(async () => (await highlights())[0].messages[0]?.text === 'Zapytać o termin')
+      await shell.locator('.th-pop .thread .reply input').press('Escape')
+      await documentIsLive(shell)
+    })
+
+    await check('zakreślenia z notatką nie usuwa prawy przycisk', async () => {
+      await page.keyboard.press('m')
+      await tool('highlight')
+      await page.mouse.click(box.x + 100, line, { button: 'right' })
+      await delay(400)
+      assert.equal((await highlights())[0].messages.length, 1)
+      await page.keyboard.press('Escape')
+      await tool('move')
+    })
+
+    await check('zakreślenia wracają po przeładowaniu dokumentu', async () => {
+      await page.reload()
+      await page.waitForLoadState('load')
+      await delay(500)
+      const shot = await page.screenshot()
+      const pixels = await pixelsOf(shell, shot, Math.round(box.x + 20), Math.round(line - 8), 300, 16)
+      assert.ok(pixels.filter(([r, g, b]) => r > 220 && g > 200 && b < 170).length > 300)
+    })
+
+    await check('zakreślacz obejmuje arkusz otwarty obok i idzie za szerokością tekstu', async () => {
+      await page.keyboard.press('m')
+      await tool('highlight')
+      await layer.keyboard.press('Control+\\')
+      const second = await findDocument('Drugi dokument')
+      await second.waitForLoadState('load')
+      await documentIsLive(shell)
+      await second.waitForFunction(() => getComputedStyle(document.body).cursor === 'none')
+      await delay(500)
+      // Akapit ma teraz inne wiersze, a tusz ma leżeć na jego pierwszym wierszu, nie między nimi.
+      const narrow = await page.locator('#temat').boundingBox()
+      const shot = await page.screenshot()
+      const row = await pixelsOf(shell, shot, Math.round(narrow.x + 20), Math.round(narrow.y + 6), 200, 16)
+      assert.ok(row.filter(([r, g, b]) => r > 220 && g > 200 && b < 170).length > 300)
+      await layer.keyboard.press('Control+ArrowLeft')
+      await layer.keyboard.press('Control+\\')
+      await documentIsLive(shell)
+    })
+
+    await check('na ciemnym dokumencie tusz świeci zamiast znikać', async () => {
+      // Złożony podział może jeszcze rozciągać arkusz, a linia poza tekstem skaluje się z elementem.
+      await page.waitForFunction((width) => innerWidth === width, wide)
+      await delay(400)
+      await page.evaluate(() => {
+        document.body.style.cssText = 'background: #151517; color: #f4f4f5'
+      })
+      await page.mouse.move(box.x + 4, line + 60)
+      await swipe({ x: box.x + 4, y: line + 100 }, { x: box.x + 300, y: line + 100 }, 6)
+      await delay(1500)
+      await page.mouse.move(box.x + 420, line + 240)
+      await leaveDocument(app, page.url())
+      await delay(600)
+      const shot = await page.screenshot()
+      const pixels = await pixelsOf(shell, shot, Math.round(box.x + 20), Math.round(line + 92), 260, 16)
+      assert.ok(pixels.filter(([r, g, b]) => r > 60 && r > b + 12).length > 2000)
+      await page.evaluate(() => {
+        document.body.style.cssText = ''
+      })
+    })
+
+    await check('zakreślacz wyłącza się na ekranie startowym', async () => {
+      await page.keyboard.press('h')
+      await tool('move')
+      await page.waitForFunction(() => getComputedStyle(document.body).cursor !== 'none')
+    })
+
+    await check('zakreślacz nie zgłasza błędów w dokumencie', async () => assert.deepEqual(errors, []))
+  } finally {
+    await app.close()
+  }
+}
 
 async function annotationFlow(workspace) {
   const home = join(workspace, 'notes-home')
@@ -319,7 +892,7 @@ async function annotationFlow(workspace) {
   const docPath = join(docs, 'uwagi.html')
   await writeFile(docPath, annotatedDoc('<button id="akcja">Zatwierdź wariant</button>'))
 
-  const env = { ...process.env, HTMLDOCS_HOME: home }
+  const env = { ...process.env, BIBLIOTTER_HOME: home }
   const run = promisify(execFile)
   // Celowo systemowy Node, a nie ten z Electrona: agent uruchamia CLI i MCP bez apki.
   const cli = async (...args) => (await run(process.execPath, [join(projectRoot, 'out/main/cli.js'), ...args], { env })).stdout
@@ -403,7 +976,7 @@ async function annotationFlow(workspace) {
 
     await check('prawdziwy klient MCP czyta dokument i odpowiada w wątku', async () => {
       const { tools } = await mcp.listTools()
-      assert.equal(tools.length, 7)
+      assert.equal(tools.length, 9)
       assert.equal((await tool('current_document')).title, 'Dokument z uwagami')
       const read = await tool('read_document', { document: 'current', limit: 20 })
       assert.equal(read.content.length, 20)
@@ -415,6 +988,11 @@ async function annotationFlow(workspace) {
     await check('odpowiedź agenta pojawia się w otwartym wątku', async () => {
       await shell.locator('.th-pop .msg.agent', { hasText: 'Czy nazwa' }).waitFor({ timeout: 5000 })
       await shell.locator('.th-pop .th-flag', { hasText: 'Agent odpisał' }).waitFor()
+    })
+
+    await check('etykieta od agenta pojawia się w otwartej apce', async () => {
+      assert.deepEqual(await tool('label_document', { document: 'current', add: ['Plan'] }), { labels: ['Plan'] })
+      await shell.locator('.placard .tag.label', { hasText: 'Plan' }).waitFor({ timeout: 5000 })
     })
 
     await check('karteczka dla mnie jest ukryta przed agentem', async () => {
@@ -447,7 +1025,7 @@ async function annotationFlow(workspace) {
       const probe = await page.evaluate(() => ({
         html: document.documentElement.outerHTML.includes('Poruszyć'),
         text: document.documentElement.textContent.includes('Zmień nazwę'),
-        shadow: document.querySelector('html-docs-overlay')?.shadowRoot ?? null,
+        shadow: document.querySelector('bibliotter-overlay')?.shadowRoot ?? null,
         bridge: typeof window.api + typeof window.require + typeof window.ipcRenderer
       }))
       assert.deepEqual(probe, {
@@ -498,7 +1076,7 @@ async function annotationFlow(workspace) {
   await check('po zamknięciu apki żaden dokument nie jest bieżący', async () => {
     assert.equal(JSON.parse(await cli('current', '--json')), null)
     assert.equal(await tool('current_document'), null)
-    await assert.rejects(cli('read', 'current'), /nie jest otwarty/)
+    await assert.rejects(cli('read', 'current'), /No document is open/)
   })
 
   await check('agent odpowiada także przy zamkniętej apce', async () => {
@@ -589,7 +1167,7 @@ async function markdownTheme(workspace) {
 
   const app = await electron.launch({
     args: [projectRoot, `--user-data-dir=${join(workspace, 'markdown-theme-profile')}`],
-    env: { ...process.env, HTMLDOCS_HOME: home },
+    env: { ...process.env, BIBLIOTTER_HOME: home },
     // Playwright domyślnie udaje jasny motyw, a tu liczy się ten z `nativeTheme`.
     colorScheme: null
   })
@@ -647,11 +1225,252 @@ async function markdownTheme(workspace) {
   }
 }
 
+const linkProse = 'Zdanie opisujące decyzję w dokumencie, które ma tu robić objętość. '.repeat(30)
+const linkSection = Array.from({ length: 12 }, () => linkProse).join('\n\n')
+const linkDoc = (title, links) =>
+  `# ${title}\n\nWstęp do dokumentu ${title}.\n\n${links}\n\n## Cel\n\n${linkSection}\n\n## Ryzyka\n\n${linkSection}\n\n## Sekcja dalej\n\n${linkSection}\n`
+
+/** Link w arkuszu Markdownu: plik względem dokumentu, a nie adresu strony. */
+async function linkFlow(workspace) {
+  const home = join(workspace, 'links-home')
+  const repo = join(workspace, 'links-repo')
+  const docs = join(repo, 'docs')
+  await mkdir(home, { recursive: true })
+  await mkdir(docs, { recursive: true })
+  const absolute = join(repo, 'absolutny.md').replace(/\\/g, '/')
+  const planLinks = [
+    '[do celu](cel.md#sekcja-dalej)',
+    '[wyżej](../wyzej.md)',
+    `[bezwzględny](${absolute})`,
+    '[martwy](nie-ma.md)',
+    '[sieć](https://example.com/z-arkusza)',
+    '[tutaj](#ryzyka)',
+    '[kod](../kod.ts:12)',
+    '[readme](../README.md)',
+    '[ta sama strona](plan.md#ryzyka)',
+    '[poczta](mailto:ktos@example.com)',
+    '[[wiki-cel#Żółta sekcja|z Obsidiana]]',
+    '![[wykres.png]]'
+  ].join(' · ')
+  await writeFile(join(docs, 'plan.md'), linkDoc('Plan linków', planLinks))
+  await writeFile(join(docs, 'cel.md'), linkDoc('Cel linków', '[z powrotem](plan.md)'))
+  await writeFile(join(repo, 'wyzej.md'), linkDoc('Wyżej linków', 'bez linków'))
+  await writeFile(join(repo, 'absolutny.md'), linkDoc('Bezwzględny linków', 'bez linków'))
+  await writeFile(join(repo, 'README.md'), '# Opis repozytorium\n\nKrótki wstęp.\n')
+  await mkdir(join(repo, 'notatki', 'gleboko'), { recursive: true })
+  await mkdir(join(repo, 'zasoby'), { recursive: true })
+  await writeFile(join(repo, 'zasoby', 'wykres.png'), '')
+  await writeFile(join(repo, 'notatki', 'gleboko', 'wiki-cel.md'), `${linkDoc('Wiki cel', 'bez linków')}\n## Żółta sekcja\n\nKoniec.\n`)
+  await writeFile(join(repo, 'kod.ts'), 'export {}\n')
+  await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [repo] }))
+
+  const app = await electron.launch({
+    args: [projectRoot, `--user-data-dir=${join(workspace, 'links-profile')}`],
+    env: { ...process.env, BIBLIOTTER_HOME: home }
+  })
+  try {
+    await app.evaluate(({ shell: electronShell }) => {
+      globalThis.outside = []
+      electronShell.openExternal = async (url) => void globalThis.outside.push(url)
+      electronShell.showItemInFolder = (path) => void globalThis.outside.push(path)
+    })
+    const outside = () => app.evaluate(() => globalThis.outside)
+    const shell = await app.firstWindow()
+    const layer = await dockLayer(app, shell)
+    const findDocument = attachDocument(app)
+    shell.setDefaultTimeout(6000)
+    const link = (href) => `a[href="${href}"]`
+
+    const openPlan = async () => {
+      await docRow(shell, 'Plan linków').click()
+      const page = await findDocument('Plan linków')
+      await page.waitForLoadState('load')
+      await documentIsLive(shell)
+      await delay(300)
+      return page
+    }
+    const page = await openPlan()
+
+    await check('link pokazuje, czy prowadzi do sieci, czy do pliku', async () => {
+      const mark = (href) =>
+        page.evaluate((target) => {
+          const after = getComputedStyle(document.querySelector(target), '::after')
+          return { content: after.content, mask: after.maskImage }
+        }, link(href))
+      const web = await mark('https://example.com/z-arkusza')
+      const file = await mark('cel.md#sekcja-dalej')
+      assert.match(web.mask, /^url\("data:image/)
+      assert.match(file.mask, /^url\("data:image/)
+      assert.notEqual(web.mask, file.mask)
+      assert.equal((await mark('#ryzyka')).content, 'none')
+      assert.equal((await mark('mailto:ktos@example.com')).content, 'none')
+    })
+
+    await check('najechanie na link do dokumentu pokazuje kartę', async () => {
+      const baseline = await page.screenshot()
+      await page.hover(link('cel.md#sekcja-dalej'))
+      await delay(800)
+      const shot = await page.screenshot({ path: join(artifacts, 'link-preview.png') })
+      assert.ok(!shot.equals(baseline))
+      await page.mouse.move(4, 400)
+      await delay(200)
+    })
+
+    await check('kotwica przewija ten sam dokument', async () => {
+      await page.click(link('#ryzyka'))
+      await page.waitForFunction(() => scrollY > 100 && location.hash === '#ryzyka')
+      await page.evaluate(() => scrollTo(0, 0))
+    })
+
+    await check('martwy link zostaje w dokumencie', async () => {
+      const url = page.url()
+      await page.click(link('nie-ma.md'))
+      await delay(400)
+      assert.equal(page.url(), url)
+      assert.equal(await page.title(), 'Plan linków')
+    })
+
+    await check('plik, który nie jest dokumentem, otwiera Eksplorator bez numeru linii', async () => {
+      await page.click(link('../kod.ts:12'))
+      await page.click(link('../README.md'))
+      await delay(300)
+      assert.deepEqual(await outside(), [join(repo, 'kod.ts'), join(repo, 'README.md')])
+      assert.equal(await page.title(), 'Plan linków')
+    })
+
+    await check('link z `..` trafia do pliku wyżej', async () => {
+      await page.click(link('../wyzej.md'))
+      await findDocument('Wyżej linków')
+      await documentIsLive(shell)
+    })
+
+    const again = await openPlan()
+
+    await check('link Obsidiana znajduje notatkę po nazwie i przewija do nagłówka', async () => {
+      await again.click('a:text("z Obsidiana")')
+      const target = await findDocument('Wiki cel')
+      await target.waitForFunction(() => decodeURIComponent(location.hash) === '#żółta-sekcja' && scrollY > 300)
+      await documentIsLive(shell)
+    })
+
+    await check('osadzenie Obsidiana prowadzi do pliku w innym folderze', async () => {
+      const before = (await outside()).length
+      const plan = await openPlan()
+      await plan.click('a:text("wykres.png")')
+      await delay(300)
+      assert.deepEqual((await outside()).slice(before), [join(repo, 'zasoby', 'wykres.png')])
+    })
+
+    const fifth = await openPlan()
+
+    await check('link ze ścieżką bezwzględną otwiera dokument', async () => {
+      await fifth.click(link(absolute))
+      await findDocument('Bezwzględny linków')
+      await documentIsLive(shell)
+    })
+
+    const third = await openPlan()
+
+    await check('Ctrl + klik zerka na dokument, a układ zostaje', async () => {
+      await third.click(link('cel.md#sekcja-dalej'), { modifiers: ['Control'] })
+      await shell.locator('.pane.peek').waitFor({ state: 'attached' })
+      const target = await findDocument('Cel linków')
+      await target.waitForFunction(() => location.hash === '#sekcja-dalej' && scrollY > 300)
+      await target.keyboard.press('Escape')
+      await shell.waitForFunction(() => !document.querySelector('.pane.peek'))
+    })
+
+    await check('link do tego samego pliku przewija otwarty dokument bez przeładowania', async () => {
+      await documentIsLive(shell)
+      await third.evaluate(() => {
+        scrollTo(0, 0)
+        window.bezPrzeladowania = true
+      })
+      await third.click(link('plan.md#ryzyka'))
+      await third.waitForFunction(() => location.hash === '#ryzyka' && scrollY > 100 && window.bezPrzeladowania)
+    })
+
+    await check('klik otwiera dokument na miejscu arkusza, przy kotwicy', async () => {
+      await third.evaluate(() => scrollTo(0, 0))
+      await third.click(link('cel.md#sekcja-dalej'))
+      const target = await findDocument('Cel linków')
+      await target.waitForFunction(() => location.hash === '#sekcja-dalej' && scrollY > 300)
+      assert.equal(await shell.locator('.pane.focused .pl-title').textContent(), 'Cel linków')
+    })
+
+    const fourth = await openPlan()
+
+    await check('narzędzia nad dokumentem nie przechodzą przez link', async () => {
+      const box = await fourth.locator(link('https://example.com/z-arkusza')).boundingBox()
+      const file = await fourth.locator(link('../wyzej.md')).boundingBox()
+      const before = (await outside()).length
+      await fourth.keyboard.press('p')
+      await shell.locator('#app[data-tool="pointer"]').waitFor({ state: 'attached' })
+      await fourth.mouse.click(box.x + 4, box.y + 6)
+      await fourth.mouse.click(file.x + 4, file.y + 6)
+      await delay(400)
+      assert.equal(await fourth.title(), 'Plan linków')
+      assert.equal((await outside()).length, before)
+      await fourth.keyboard.press('v')
+      await shell.locator('#app[data-tool="move"]').waitFor({ state: 'attached' })
+    })
+
+    await check('O pokazuje linki z dokumentu i do niego', async () => {
+      await fourth.keyboard.press('o')
+      const rows = shell.locator('.link-row')
+      await rows.first().waitFor()
+      const titles = await shell.locator('.lr-title').allTextContents()
+      assert.deepEqual(titles, [
+        'Cel linków',
+        'Wyżej linków',
+        'Bezwzględny linków',
+        'Wiki cel',
+        'kod',
+        'readme',
+        'wykres.png',
+        'sieć',
+        'martwy',
+        'Cel linków'
+      ])
+      assert.deepEqual(await shell.locator('.links-head').allTextContents(), ['Z tego dokumentu 9', 'Do tego dokumentu 1'])
+      assert.ok(await shell.locator('.link-row', { hasText: 'martwy' }).isDisabled())
+      await delay(500)
+      const image = await app.evaluate(async ({ BrowserWindow }) => {
+        const main = BrowserWindow.getAllWindows().find((window) => window.isVisible())
+        return (await main.webContents.capturePage()).toPNG().toString('base64')
+      })
+      await writeFile(join(artifacts, 'links-panel-shell.png'), Buffer.from(image, 'base64'))
+    })
+
+    await check('I i O przełączają panel, a drugie naciśnięcie go zamyka', async () => {
+      await fourth.keyboard.press('i')
+      await shell.locator('.insp-head strong', { hasText: 'Uwagi' }).waitFor()
+      assert.ok(await shell.locator('.insp.open').count())
+      await fourth.keyboard.press('o')
+      await shell.locator('.insp-head strong', { hasText: 'Linki' }).waitFor()
+      await fourth.keyboard.press('o')
+      await shell.waitForFunction(() => !document.querySelector('.insp.open'))
+    })
+
+    await check('wiersz panelu otwiera dokument', async () => {
+      await fourth.keyboard.press('o')
+      await shell.locator('.link-row', { hasText: 'Wyżej linków' }).click()
+      await findDocument('Wyżej linków')
+      await shell.locator('.insp-head strong', { hasText: 'Linki' }).waitFor()
+      await shell.locator('.links-head', { hasText: 'Do tego dokumentu 1' }).waitFor()
+    })
+
+    void layer
+  } finally {
+    await app.close()
+  }
+}
+
 async function firstRun(workspace, docs) {
   const home = join(workspace, 'first-run')
   const app = await electron.launch({
     args: [projectRoot, `--user-data-dir=${join(workspace, 'first-run-profile')}`],
-    env: { ...process.env, HTMLDOCS_HOME: home }
+    env: { ...process.env, BIBLIOTTER_HOME: home }
   })
   try {
     const shell = await app.firstWindow()
@@ -681,7 +1500,7 @@ async function firstRun(workspace, docs) {
 
 async function main() {
   const sink = await startLeakSink()
-  const workspace = await mkdtemp(join(tmpdir(), 'htmldocs-e2e-'))
+  const workspace = await mkdtemp(join(tmpdir(), 'bibliotter-e2e-'))
   const home = join(workspace, 'home')
   const docs = join(workspace, 'docs')
   await mkdir(home, { recursive: true })
@@ -705,12 +1524,29 @@ async function main() {
   await firstRun(workspace, docs)
   await libraryFlow(workspace)
   await check('scenariusz uwag dobiega końca', () => annotationFlow(workspace))
+  await check('scenariusz wskaźnika dobiega końca', () => pointerFlow(workspace))
+  await check('scenariusz zakreślacza dobiega końca', () => markerFlow(workspace))
   await check('scenariusz motywu Markdownu dobiega końca', () => markdownTheme(workspace))
+  await check('scenariusz cofania dobiega końca', () => undoFlow(workspace, { check }))
+  await check('scenariusz menu wiersza dobiega końca', () => rowMenuFlow(workspace, { check }))
+  await check('scenariusz szkieletów dobiega końca', () => skeletonFlow(workspace, { check }))
+  await check('scenariusz opcji dobiega końca', () => optionsFlow(workspace, { check }))
+  await check('scenariusz języka dobiega końca', () => languageFlow(workspace, { check }))
+  await check('scenariusz auto-etykiet dobiega końca', () => autoLabelFlow(workspace, { check }))
+  await check('scenariusz kodów zgłoszeń dobiega końca', () => ticketsFlow(workspace, { check }))
+  await check('scenariusz wzorów dobiega końca', () => mathFlow(workspace, { check }))
+  await check('scenariusz kamery dobiega końca', () => cameraFlow(workspace, { check }))
+  await check('scenariusz kształtów dobiega końca', () => shapesFlow(workspace, { check }))
+  await check('scenariusz trasy dobiega końca', () => routeFlow(workspace, { check }))
+  await check('scenariusz szukania dobiega końca', () => findFlow(workspace, { check }))
+  await check('scenariusz minimapy i spisu treści dobiega końca', () => outlineFlow(workspace, { check }))
+  await check('scenariusz linków dobiega końca', () => linkFlow(workspace))
+  await check('scenariusz linków HTML dobiega końca', () => htmlLinkFlow(workspace, { check }))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [docs] }))
 
   const app = await electron.launch({
     args: [projectRoot, `--user-data-dir=${join(workspace, 'profile')}`],
-    env: { ...process.env, HTMLDOCS_HOME: home }
+    env: { ...process.env, BIBLIOTTER_HOME: home }
   })
   const consoleErrors = []
   const shell = await app.firstWindow()
@@ -840,10 +1676,24 @@ async function main() {
       await documentIsLive(shell)
       const titles = await app.evaluate(({ BrowserWindow }) => {
         const main = BrowserWindow.getAllWindows().find((item) => item.isVisible())
-        const views = main.contentView.children.filter((view) => view.webContents?.getURL().startsWith('htmldoc://'))
+        // Poprzedni dokument czeka odstawiony poza oknem, żeby powrót do niego był natychmiastowy.
+        const views = main.contentView.children.filter(
+          (view) => view.webContents?.getURL().startsWith('htmldoc://') && view.getBounds().x >= 0
+        )
         return views.map((view) => view.webContents.getTitle())
       })
       assert.deepEqual(titles, ['Interaktywny'])
+    })
+
+    await check('powrót do niedawnego dokumentu nie wczytuje go od nowa', async () => {
+      await interactive.evaluate(() => {
+        window.zostalWPamieci = true
+      })
+      await openDoc('link')
+      await delay(300)
+      await openDoc('interaktywny')
+      await delay(300)
+      assert.equal(await interactive.evaluate(() => window.zostalWPamieci), true)
     })
 
     await check('kliknięcie w dok oddaje klawiaturę dokumentowi', async () => {

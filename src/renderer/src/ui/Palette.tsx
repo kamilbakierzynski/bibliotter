@@ -11,11 +11,12 @@ import {
   DOC_MORE,
   docSub,
   dropFilter,
-  FILTERS,
+  fileLine,
+  filters,
   filterKey,
   type FilterKey,
   type Item,
-  KEYMAP,
+  keymap,
   norm,
   onCmdInput,
   renderActs,
@@ -23,15 +24,19 @@ import {
   runCmd,
   startFilter,
   syncActPill,
-  syncCmdPill
+  syncCmdPill,
+  wordMarks
 } from '../shell/palette'
 import { FORMAT_LABELS } from '../../../shared/types'
-import { data, MOD, plural, STATUS, ui, useShell } from '../shell/state'
+import { t } from '../../../shared/i18n'
+import { data, MOD, noteText, plural, STATUS, ui, useShell } from '../shell/state'
 import { displayName, relativeTime } from '../tree'
 import { useSynced } from './hooks'
 import { Icon, Keys } from './icons'
+import { Otter } from './Otter'
+import { SkeletonList } from './Skeleton'
 
-const FILTER_ICON: Record<FilterKey, string> = { project: 'folder', branch: 'branch', format: 'file', kind: 'layers', status: 'layers' }
+const FILTER_ICON: Record<FilterKey, string> = { project: 'folder', branch: 'branch', format: 'file', label: 'tag', kind: 'layers', status: 'layers' }
 
 function Marked({ text, q }: { text: string; q: string }): React.JSX.Element {
   const at = q ? norm(text).indexOf(q) : -1
@@ -45,6 +50,20 @@ function Marked({ text, q }: { text: string; q: string }): React.JSX.Element {
   )
 }
 
+/** Tekst z kilkoma zaznaczeniami. Nachodzące na siebie łączą się w jedno. */
+function MarkedWords({ text, q }: { text: string; q: string }): React.JSX.Element {
+  const parts: React.ReactNode[] = []
+  let at = 0
+  for (const [from, to] of wordMarks(text, q)) {
+    if (to <= at) continue
+    const start = Math.max(from, at)
+    parts.push(text.slice(at, start), <mark key={start}>{text.slice(start, to)}</mark>)
+    at = to
+  }
+  parts.push(text.slice(at))
+  return <>{parts}</>
+}
+
 function Row({ item, i, q }: { item: Item; i: number; q: string }): React.JSX.Element {
   if (item.type === 'more') {
     return (
@@ -53,7 +72,7 @@ function Row({ item, i, q }: { item: Item; i: number; q: string }): React.JSX.El
           <Icon name="chev" />
         </span>
         <span className="t">
-          <b>Pokaż kolejne {Math.min(item.left, DOC_MORE)}</b>
+          <b>{t('Pokaż kolejne {n}', { n: Math.min(item.left, DOC_MORE) })}</b>
         </span>
         <span className="r">{item.left}</span>
       </button>
@@ -66,14 +85,14 @@ function Row({ item, i, q }: { item: Item; i: number; q: string }): React.JSX.El
           {item.key === 'status' ? <i className={`dot ${STATUS[item.v as keyof typeof STATUS].tone}`} /> : <Icon name={FILTER_ICON[item.key]} />}
         </span>
         <span className="t">
-          <b>{FILTERS[item.key].name(item.v)}</b>
+          <b>{filters()[item.key].name(item.v)}</b>
         </span>
         <span className="r">{item.count}</span>
       </button>
     )
   }
   if (item.type === 'doc') {
-    const { doc, hit } = item
+    const { doc, hit, file } = item
     return (
       <button className="cr" data-i={i}>
         <span className="tile">
@@ -83,7 +102,11 @@ function Row({ item, i, q }: { item: Item; i: number; q: string }): React.JSX.El
           <b>
             <Marked text={displayName(doc)} q={q} />
           </b>
-          {hit ? (
+          {file ? (
+            <small className="file">
+              <MarkedWords text={fileLine(doc)} q={q} />
+            </small>
+          ) : hit ? (
             <small className="snippet">
               {hit.before}
               <mark>{hit.match}</mark>
@@ -108,12 +131,12 @@ function Row({ item, i, q }: { item: Item; i: number; q: string }): React.JSX.El
           <span className={`tile sw ${note.color ?? 'yellow'}`} />
         ) : (
           <span className="tile">
-            <Icon name="comment" />
+            <Icon name={note.kind === 'highlight' ? 'marker' : 'comment'} />
           </span>
         )}
         <span className="t">
           <b>
-            <Marked text={note.messages[0]?.text ?? ''} q={q} />
+            <Marked text={noteText(note)} q={q} />
           </b>
           <small>{doc ? displayName(doc) : ''}</small>
         </span>
@@ -137,20 +160,20 @@ function Row({ item, i, q }: { item: Item; i: number; q: string }): React.JSX.El
   )
 }
 
-function Preview({ item }: { item: Item | undefined }): React.JSX.Element | null {
+function Preview({ item, q }: { item: Item | undefined; q: string }): React.JSX.Element | null {
   if (!item) return null
   if (item.type === 'more') {
     return (
       <>
-        <p className="pv-title">Pozostałe dokumenty</p>
-        <p className="pv-text">Reszta wyników to starsze albo słabiej pasujące pliki. Żeton lub dłuższe słowo zawęzi listę.</p>
+        <p className="pv-title">{t('Pozostałe dokumenty')}</p>
+        <p className="pv-text">{t('Reszta wyników to starsze albo słabiej pasujące pliki. Żeton lub dłuższe słowo zawęzi listę.')}</p>
       </>
     )
   }
   if (item.type === 'value') {
     return (
       <>
-        <p className="pv-title">{FILTERS[item.key].name(item.v)}</p>
+        <p className="pv-title">{filters()[item.key].name(item.v)}</p>
         <p className="pv-text">
           {item.count} {plural(item.count, 'wynik', 'wyniki', 'wyników')}
         </p>
@@ -164,7 +187,7 @@ function Preview({ item }: { item: Item | undefined }): React.JSX.Element | null
       <>
         <div className="thumb" data-format={doc.format}>{thumb && <img src={thumb.url} alt="" draggable={false} />}</div>
         <dl className="meta">
-          <dt>Projekt</dt>
+          <dt>{t('Projekt')}</dt>
           <dd>{doc.projectName}</dd>
           {doc.branch && (
             <>
@@ -172,11 +195,21 @@ function Preview({ item }: { item: Item | undefined }): React.JSX.Element | null
               <dd>{doc.branch}</dd>
             </>
           )}
+          <dt>{t('Plik')}</dt>
+          <dd className="wrap">
+            <MarkedWords text={doc.relPath} q={item.file ? q : ''} />
+          </dd>
           <dt>Format</dt>
           <dd>{FORMAT_LABELS[doc.format]}</dd>
           <dt>Status</dt>
           <dd>{STATUS[doc.status].label}</dd>
-          <dt>Zmieniono</dt>
+          {doc.labels.length > 0 && (
+            <>
+              <dt>{t('Etykiety')}</dt>
+              <dd title={doc.labels.join(', ')}>{doc.labels.join(', ')}</dd>
+            </>
+          )}
+          <dt>{t('Zmieniono')}</dt>
           <dd>{relativeTime(doc.mtimeMs)}</dd>
         </dl>
       </>
@@ -187,9 +220,10 @@ function Preview({ item }: { item: Item | undefined }): React.JSX.Element | null
     return (
       <>
         <p className="pv-title">{doc ? displayName(doc) : ''}</p>
+        {item.note.messages.length === 0 && <p className="pv-text">{noteText(item.note)}</p>}
         {item.note.messages.map((message) => (
           <p className="pv-text" key={message.id}>
-            <b>{message.author === 'agent' ? 'Agent' : 'Ty'}:</b> {message.text}
+            <b>{message.author === 'agent' ? 'Agent' : t('Ty')}:</b> {message.text}
           </p>
         ))}
       </>
@@ -216,19 +250,19 @@ function FootHints({ item }: { item: Item | undefined }): React.JSX.Element | nu
   if (ui.map) {
     return (
       <>
-        <Hint keys={['Esc']} text="Zamknij" />
-        <Hint keys={[MOD, 'K']} text="Paleta" />
+        <Hint keys={['Esc']} text={t('Zamknij')} />
+        <Hint keys={[MOD, 'K']} text={t('Paleta')} />
       </>
     )
   }
   if (!item) return null
-  if (item.type === 'value') return <Hint keys={['↵']} text="Dodaj filtr" />
-  if (item.type === 'more') return <Hint keys={['↵']} text="Pokaż więcej" />
-  const label = item.type === 'doc' ? 'Otwórz' : item.type === 'note' ? 'Pokaż w dokumencie' : 'Uruchom'
+  if (item.type === 'value') return <Hint keys={['↵']} text={t('Dodaj filtr')} />
+  if (item.type === 'more') return <Hint keys={['↵']} text={t('Pokaż więcej')} />
+  const label = item.type === 'doc' ? t('Otwórz') : item.type === 'note' ? t('Pokaż w dokumencie') : t('Uruchom')
   return (
     <>
       <Hint keys={['↵']} text={label} />
-      <Hint keys={[MOD, 'K']} text="Akcje" />
+      <Hint keys={[MOD, 'K']} text={t('Akcje')} />
     </>
   )
 }
@@ -237,7 +271,7 @@ function KeyMap({ q }: { q: string }): React.JSX.Element {
   let n = 0
   return (
     <div className="km">
-      {KEYMAP.map((group) => (
+      {keymap().map((group) => (
         <section className="km-group" key={group.group}>
           <h3>{group.group}</h3>
           {group.items.map((item) => {
@@ -263,7 +297,7 @@ function KeyMap({ q }: { q: string }): React.JSX.Element {
 }
 
 function mapCount(q: string): string {
-  const all = KEYMAP.flatMap((group) => group.items)
+  const all = keymap().flatMap((group) => group.items)
   const hits = q ? all.filter((item) => norm(`${item.title} ${item.keys.join(' ')}`).includes(q)).length : all.length
   return `${hits} ${plural(hits, 'skrót', 'skróty', 'skrótów')}`
 }
@@ -336,7 +370,7 @@ function Actions(): React.JSX.Element {
     if (row && Number(row.dataset.a) !== cmd.actIdx) actSelect(Number(row.dataset.a))
   }
   return (
-    <div className={ui.acts ? 'cmd-acts on' : 'cmd-acts'} id="cmdActs" role="menu" aria-label="Akcje">
+    <div className={ui.acts ? 'cmd-acts on' : 'cmd-acts'} id="cmdActs" role="menu" aria-label={t('Akcje')}>
       <div className="act-rows" id="actBox">
         <i className="act-pill" ref={actPill.bind} />
         <div id="actRows" onPointerMove={moved}>
@@ -350,7 +384,7 @@ function Actions(): React.JSX.Element {
             }
             const i = n++
             return (
-              <button className="ar" data-a={i} role="menuitem" key={action.title} onClick={action.run}>
+              <button className="ar" data-a={i} role="menuitem" key={at} onClick={action.run}>
                 {action.dot === undefined ? <Icon name={action.icon ?? 'file'} /> : <i className={`dot ${action.dot}`} />}
                 <span>{action.title}</span>
                 <i className="keys">{action.check ? <Icon name="check" /> : <Keys keys={action.keys ?? []} />}</i>
@@ -362,10 +396,10 @@ function Actions(): React.JSX.Element {
       <input
         id="actInput"
         type="text"
-        placeholder="Szukaj akcji"
+        placeholder={t('Szukaj akcji')}
         autoComplete="off"
         spellCheck={false}
-        aria-label="Szukaj akcji"
+        aria-label={t('Szukaj akcji')}
         onChange={(e) => {
           cmd.actQuery = e.target.value
           renderActs()
@@ -398,7 +432,7 @@ export function Palette(): React.JSX.Element {
       className="cmd"
       id="cmd"
       role="dialog"
-      aria-label="Paleta poleceń"
+      aria-label={t('Paleta poleceń')}
       data-view={ui.map ? 'list' : undefined}
       onPointerDown={(e) => {
         const target = e.target as HTMLElement
@@ -410,9 +444,9 @@ export function Palette(): React.JSX.Element {
         <div className="cmd-chips">
           {cmd.order.map(([key, value]) => (
             <span className="f-chip" key={`${key}:${value}`}>
-              <b>{FILTERS[key].label}</b>
-              {FILTERS[key].name(value)}
-              <button aria-label="Usuń filtr" onClick={() => dropFilter(key, value)}>
+              <b>{filters()[key].label}</b>
+              {filters()[key].name(value)}
+              <button aria-label={t('Usuń filtr')} onClick={() => dropFilter(key, value)}>
                 <Icon name="x" />
               </button>
             </span>
@@ -421,19 +455,19 @@ export function Palette(): React.JSX.Element {
         <input
           id="cmdInput"
           type="text"
-          placeholder={ui.map ? 'Szukaj skrótu' : 'Szukaj dokumentów, uwag i akcji'}
+          placeholder={ui.map ? t('Szukaj skrótu') : t('Szukaj dokumentów, uwag i akcji')}
           autoComplete="off"
           spellCheck={false}
-          aria-label="Szukaj"
+          aria-label={t('Szukaj')}
           onChange={(e) => onCmdInput(e.target.value)}
           onKeyDown={inputKey}
         />
       </div>
       <div className="cmd-filters">
-        <span className="f-note">Dodaj filtr</span>
-        {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
+        <span className="f-note">{t('Dodaj filtr')}</span>
+        {(Object.keys(filters()) as FilterKey[]).map((key) => (
           <button key={key} className={cmd.pick?.key === key ? 'f-add on' : 'f-add'} onClick={() => startFilter(key)}>
-            {FILTERS[key].label}
+            {filters()[key].label}
           </button>
         ))}
       </div>
@@ -458,11 +492,19 @@ export function Palette(): React.JSX.Element {
               const i = n++
               return <Row key={`${row.type}${i}`} item={row} i={i} q={q} />
             })}
-            {cmd.rows.length === 0 && <p className="cmd-none">Nic nie pasuje. Spróbuj innego słowa.</p>}
+            {cmd.rows.length === 0 &&
+              (cmd.pending || !data.library ? (
+                <SkeletonList shape="two" count={5} />
+              ) : (
+                <div className="cmd-none">
+                  <Otter pose="swimming" />
+                  <p>{t('Nic nie pasuje. Spróbuj innego słowa.')}</p>
+                </div>
+              ))}
           </div>
         </div>
         <aside className="cmd-preview">
-          <Preview item={item} />
+          <Preview item={item} q={q} />
         </aside>
       </div>
       <div className="cmd-map">{ui.map && <KeyMap q={norm(cmd.query.trim())} />}</div>

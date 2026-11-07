@@ -1,9 +1,11 @@
+import './legacyNames'
 import { rmSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -17,23 +19,53 @@ import {
   DOC_STATUSES,
   type DocEntry,
   type DocStatus,
-  type LibrarySnapshot,
+  type ThemeChoice,
   type ThemeMode,
   type ViewerBounds,
   type ViewerPlacement,
   type ViewerWheel
 } from '../shared/types'
 import type { Audience, NewAnnotation, OverlayEvent, OverlayMode, SelectionAction } from '../shared/annotations'
+import type { AutoLabelOptions, AutoLabelState } from '../shared/autoLabel'
+import { parseCameraShot } from '../shared/camera'
+import { MAX_STEPS, parsePresentState, parseStepCamera, type RouteFrame, STEP_ID } from '../shared/presentation'
+import { cleanLabel, hasLabel, isLabelTone, moveLabelColor, parseLabels, sameLabel, ticketTemplate, withLabelColor } from '../shared/labels'
+import type { LinkOutcome, LinkPreview } from '../shared/links'
+import { parseOutlineCommand } from '../shared/outline'
+import { DEFAULT_LANGUAGE, isLanguage, setLanguage, t } from '../shared/i18n'
+import { type AppInfo, cleanHosts } from '../shared/options'
+import { parseFindCommand, parseTextQuery } from '../shared/textSearch'
 import { currentDocumentPath, writeCurrentDocument } from './agentApi'
-import { AnnotationStore, parseAnchor, parseStickyColor, toOverlayItems, watchAnnotations } from './annotationStore'
-import { type AppConfig, dataDir, loadConfig, saveConfig } from './config'
+import { readAgentSetup } from './agentSetup'
+import { AnnotationHistory } from './annotationHistory'
+import {
+  AnnotationStore,
+  MAX_HIGHLIGHT_QUOTE,
+  parseAnchor,
+  parseShape,
+  parseShapeType,
+  parseStickyColor,
+  parseStrokes,
+  toOverlayItems,
+  watchAnnotations
+} from './annotationStore'
+import { AutoLabeler, claudeRunner } from './autoLabel'
+import { ContentSearcher } from './contentSearch'
+import { type AppConfig, dataDir, DEFAULT_LABEL_STARTERS, loadConfig, saveConfig } from './config'
+import { LinkGraph } from './docLinks'
 import { isExternalUrl } from './docPolicy'
 import { DockLayer } from './dockLayer'
 import { DocViewer, registerDocScheme } from './docViewer'
-import { FolderWatcher } from './folderWatcher'
 import { commandRunner, readRepo } from './git'
-import { Library } from './library'
+import type { LibraryConfig } from './library'
+import { LibraryClient } from './libraryClient'
+import { isInside } from './scanner'
+import { PresentationStore, readPresentation, watchPresentation } from './presentationStore'
+import { watchSignal } from './signals'
 import { Thumbnailer } from './thumbnails'
+// Windows bierze z ICO ramkę narysowaną dla danego rozmiaru, a nie zmniejszony wzorzec.
+import iconIco from '../../resources/icon.ico?asset'
+import iconPng from '../../resources/icon.png?asset'
 
 const RESCAN_ON_FOCUS_AFTER_MS = 60_000
 /** Kolor ściany, żeby okno nie błysnęło innym tłem przed pierwszą klatką powłoki. */
@@ -44,19 +76,39 @@ const TITLE_BAR_HEIGHT = 32
 registerDocScheme()
 
 const git = commandRunner('git')
-const gh = commandRunner('gh')
+const claude = commandRunner('claude')
+const locate = commandRunner(process.platform === 'win32' ? 'where' : 'which')
 
 let mainWindow: BrowserWindow | null = null
 let viewer: DocViewer | null = null
 let dockLayer: DockLayer | null = null
 let thumbnails: Thumbnailer | null = null
-let library: Library | null = null
-let config: AppConfig = { roots: [], allowedHosts: [], folderLinks: [] }
+let library: LibraryClient | null = null
+let labeler: AutoLabeler | null = null
+let config: AppConfig = {
+  roots: [],
+  allowedHosts: [],
+  folderLinks: [],
+  hiddenFolders: [],
+  folderNames: {},
+  autoLabelNew: false,
+  autoLabelTickets: true,
+  labelStarters: DEFAULT_LABEL_STARTERS,
+  labelColors: {},
+  ticketUrl: '',
+  language: DEFAULT_LANGUAGE
+}
 let lastScanAt = 0
 let stopWatchingAnnotations: (() => void) | null = null
+let stopWatchingLabels: (() => void) | null = null
+let stopWatchingPresentation: (() => void) | null = null
+
+const ignore = (): void => {}
 
 const annotations = new AnnotationStore(join(dataDir(), 'library'))
-const watcher = new FolderWatcher(() => void scanLibrary())
+const presentations = new PresentationStore(join(dataDir(), 'library'))
+const searcher = new ContentSearcher(join(__dirname, 'searchWorker.js'), join(dataDir(), 'cache', 'index.sqlite'))
+const links = new LinkGraph(() => library?.getSnapshot() ?? null)
 
 /** Wysyła uwagi do panelu i do warstw otwartych dokumentów. Działa też po zmianach agenta. */
 async function pushAnnotations(): Promise<void> {
@@ -67,9 +119,16 @@ async function pushAnnotations(): Promise<void> {
   }
 }
 
+/** Świeżo wczytany dokument potrzebuje tylko swoich uwag, a pełna lista czyta foldery wszystkich. */
+async function pushDocAnnotations(docId: string): Promise<void> {
+  viewer?.setOverlayItems(docId, toOverlayItems(await annotations.listForDoc(docId)))
+}
+
 function sendToShell(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
 }
+
+const noteHistory = new AnnotationHistory(annotations, pushAnnotations)
 
 function forwardOverlayEvent(docId: string, event: OverlayEvent): void {
   sendToShell('viewer:overlay-event', { docId, event })
@@ -77,9 +136,43 @@ function forwardOverlayEvent(docId: string, event: OverlayEvent): void {
   if (event.type === 'place') mainWindow?.webContents.focus()
 }
 
-async function openDocument(doc: DocEntry): Promise<void> {
+function openDocument(doc: DocEntry): void {
+  warmDocument(doc)
+  requireLibrary().markOpened(doc.id).catch(ignore)
+}
+
+/** Widok powstaje tak samo jak przy otwarciu, ale nikt jeszcze dokumentu nie przeczytał. */
+function warmDocument(doc: DocEntry): void {
+  thumbnails?.pause()
   viewer?.open(doc.id)
-  await requireLibrary().markOpened(doc.id)
+}
+
+/** Link prowadzi tam, gdzie wskazuje: dokument otwiera się w apce, a inny plik w Eksploratorze. */
+async function followLink(from: DocEntry, href: string, peek: boolean): Promise<LinkOutcome> {
+  const link = await links.resolve(from, href)
+  if (!link) return 'none'
+  if (link.kind === 'external') {
+    void shell.openExternal(href)
+    return 'opened'
+  }
+  if (link.kind === 'missing' || !link.path) return 'missing'
+  if (!link.docId) {
+    shell.showItemInFolder(link.path)
+    return 'revealed'
+  }
+  if (link.fragment) viewer?.aim(link.docId, link.fragment)
+  if (link.docId !== from.id) sendToShell('viewer:follow-link', { from: from.id, docId: link.docId, peek })
+  return 'opened'
+}
+
+async function followLinkFrom(docId: string, href: string, peek: boolean): Promise<LinkOutcome> {
+  const doc = library?.getEntry(docId)
+  return doc ? followLink(doc, href, peek) : 'none'
+}
+
+async function previewLink(docId: string, href: string): Promise<LinkPreview | null> {
+  const doc = library?.getEntry(docId)
+  return doc ? links.preview(doc, href, (target) => thumbnails?.stored(target) ?? Promise.resolve(null)) : null
 }
 
 /** Agent widzi jako bieżący dokument z fokusem w powłoce. */
@@ -102,8 +195,9 @@ function titleBarFor(mode: ThemeMode): Electron.TitleBarOverlay {
 }
 
 /** Motyw obejmuje też dokumenty, które reagują na `prefers-color-scheme`, w tym arkusze Markdownu. */
-function applyTheme(mode: ThemeMode): void {
-  nativeTheme.themeSource = mode
+function applyTheme(choice: ThemeChoice): void {
+  nativeTheme.themeSource = choice
+  const mode: ThemeMode = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   viewer?.syncTheme()
   thumbnails?.syncTheme()
   if (!mainWindow || mainWindow.isDestroyed()) return
@@ -112,7 +206,28 @@ function applyTheme(mode: ThemeMode): void {
 }
 
 function parseNewAnnotation(value: unknown): NewAnnotation {
-  const { kind, audience, color, anchor, text } = (value ?? {}) as Record<string, unknown>
+  const { kind, audience, color, anchor, text, strokes, anchorWidth, shape } = (value ?? {}) as Record<string, unknown>
+  if (kind === 'shape') {
+    const place = parseAnchor(anchor)
+    const geometry = parseShape(shape)
+    if (!place || !geometry) throw new Error('Niepoprawny kształt')
+    // Rysunek należy do użytkownika, więc agent domyślnie go nie widzi.
+    return { kind, audience: 'me', color: parseStickyColor(color), anchor: place, text: '', shape: geometry }
+  }
+  if (kind === 'highlight') {
+    const place = parseAnchor(anchor, MAX_HIGHLIGHT_QUOTE)
+    const lines = parseStrokes(strokes)
+    if (!place || !lines) throw new Error('Niepoprawne zakreślenie')
+    return {
+      kind,
+      audience: 'me',
+      color: parseStickyColor(color),
+      anchor: place,
+      text: '',
+      strokes: lines,
+      anchorWidth: Number(anchorWidth) || 0
+    }
+  }
   if (kind !== 'comment' && kind !== 'sticky') throw new Error('Nieznany rodzaj uwagi')
   return {
     kind,
@@ -128,21 +243,92 @@ function parseAudience(value: unknown): Audience {
   return value
 }
 
-function requireLibrary(): Library {
+function requireLibrary(): LibraryClient {
   if (!library) throw new Error('Biblioteka nie jest gotowa')
   return library
 }
 
-function scanLibrary(refreshGit = false): Promise<LibrarySnapshot> {
-  lastScanAt = Date.now()
-  return requireLibrary().scan({ refreshGit })
+function requireLabeler(): AutoLabeler {
+  if (!labeler) throw new Error('Biblioteka nie jest gotowa')
+  return labeler
 }
 
-async function updateConfig(change: Partial<AppConfig>): Promise<LibrarySnapshot> {
+function autoLabelState(): AutoLabelState {
+  return {
+    pending: [],
+    done: 0,
+    total: 0,
+    error: null,
+    ...labeler?.state(),
+    newFiles: config.autoLabelNew,
+    tickets: config.autoLabelTickets,
+    starters: config.labelStarters
+  }
+}
+
+function parseAutoLabelChange(value: unknown): Partial<AppConfig> {
+  const { newFiles, tickets, starters } = (value ?? {}) as Partial<AutoLabelOptions>
+  return {
+    ...(typeof newFiles === 'boolean' && { autoLabelNew: newFiles }),
+    ...(typeof tickets === 'boolean' && { autoLabelTickets: tickets }),
+    ...(Array.isArray(starters) && { labelStarters: parseLabels(starters) })
+  }
+}
+
+/** Usunięta etykieta nie może wrócić od Haiku, a przemianowana zachowuje swój kolor i miejsce na liście. */
+async function followLabel(name: string, next: string | null): Promise<void> {
+  const others = config.labelStarters.filter((starter) => !sameLabel(starter, name))
+  const wasStarter = hasLabel(config.labelStarters, name)
+  await storeConfig({
+    labelStarters: wasStarter && next ? [...others, next] : others,
+    labelColors: moveLabelColor(config.labelColors, name, next)
+  })
+}
+
+function scanLibrary(refreshGit = false): Promise<void> {
+  lastScanAt = Date.now()
+  return requireLibrary().scan(refreshGit)
+}
+
+function libraryConfig(): LibraryConfig {
+  const { roots, folderLinks, hiddenFolders, folderNames, labelStarters, labelColors, ticketUrl } = config
+  return { roots, folderLinks, hiddenFolders, folderNames, labelStarters, labelColors, ticketUrl }
+}
+
+async function storeConfig(change: Partial<AppConfig>): Promise<void> {
   config = { ...config, ...change }
+  library?.settings(libraryConfig()).catch(ignore)
   await saveConfig(config)
-  watcher.watch(config.roots)
-  return scanLibrary(true)
+}
+
+/** Skan rusza od razu, a zapis konfiguracji idzie obok, żeby wybór folderu miał natychmiastowy skutek. */
+async function updateConfig(change: Partial<AppConfig>, refreshGit = true): Promise<void> {
+  lastScanAt = Date.now()
+  const saved = storeConfig(change)
+  await Promise.all([requireLibrary().configure(libraryConfig(), refreshGit), saved])
+}
+
+/** Ukrycie i nazwy nie zmieniają obserwowanych folderów ani repozytoriów, więc wystarczy zwykły skan. */
+function updateFolders(change: Pick<Partial<AppConfig>, 'hiddenFolders' | 'folderNames'>): Promise<void> {
+  return updateConfig(change, false)
+}
+
+const absolutePaths = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((path): path is string => typeof path === 'string' && isAbsolute(path)) : []
+
+/** Folder, który obejmuje cały wybrany folder, opróżniłby bibliotekę. Od tego jest lista folderów. */
+function hideFolders(paths: unknown): Promise<void> {
+  const folders = absolutePaths(paths).filter((path) => !config.roots.some((root) => isInside(root, path)))
+  return updateFolders({ hiddenFolders: [...new Set([...config.hiddenFolders, ...folders])] })
+}
+
+/** Jeden wiersz może zbierać kilka folderów, np. z worktree, więc nazwa zastępuje wszystkie poprzednie. */
+function renameFolder(paths: unknown, name: unknown): Promise<void> {
+  const folders = absolutePaths(paths)
+  const names = Object.entries(config.folderNames).filter(([folder]) => !folders.includes(folder))
+  const [first] = folders
+  const alias = typeof name === 'string' ? name.trim() : ''
+  return updateFolders({ folderNames: Object.fromEntries(first && alias ? [...names, [first, alias]] : names) })
 }
 
 async function chooseFolders(title: string, multiple: boolean): Promise<string[]> {
@@ -154,10 +340,9 @@ async function chooseFolders(title: string, multiple: boolean): Promise<string[]
   return canceled ? [] : filePaths
 }
 
-async function addRoots(): Promise<LibrarySnapshot> {
-  const folders = await chooseFolders('Wybierz foldery z dokumentami', true)
-  if (folders.length === 0) return requireLibrary().getSnapshot()
-  return updateConfig({ roots: [...new Set([...config.roots, ...folders])] })
+async function addRoots(): Promise<void> {
+  const folders = await chooseFolders(t('Wybierz foldery z dokumentami'), true)
+  if (folders.length > 0) await updateConfig({ roots: [...new Set([...config.roots, ...folders])] })
 }
 
 async function isFolder(path: string): Promise<boolean> {
@@ -168,31 +353,43 @@ async function isFolder(path: string): Promise<boolean> {
 }
 
 /** Foldery upuszczone na ścianę. Ścieżki pochodzą z powłoki, więc sprawdzamy, że to katalogi. */
-async function addDroppedFolders(paths: unknown): Promise<LibrarySnapshot> {
-  const dropped = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string' && isAbsolute(path)) : []
-  const checked = await Promise.all(dropped.map(async (path) => ((await isFolder(path)) ? [path] : [])))
+async function addDroppedFolders(paths: unknown): Promise<void> {
+  const checked = await Promise.all(absolutePaths(paths).map(async (path) => ((await isFolder(path)) ? [path] : [])))
   const folders = checked.flat()
-  if (folders.length === 0) return requireLibrary().getSnapshot()
-  return updateConfig({ roots: [...new Set([...config.roots, ...folders])] })
+  if (folders.length > 0) await updateConfig({ roots: [...new Set([...config.roots, ...folders])] })
 }
 
-async function linkFolder(): Promise<LibrarySnapshot> {
-  const snapshot = requireLibrary().getSnapshot()
-  const [folder] = await chooseFolders('Wybierz folder z dokumentami', false)
-  if (!folder) return snapshot
-  const [repo] = await chooseFolders('Wybierz repozytorium, do którego należy ten folder', false)
-  if (!repo) return snapshot
+async function linkFolder(): Promise<void> {
+  const [folder] = await chooseFolders(t('Wybierz folder z dokumentami'), false)
+  if (!folder) return
+  const [repo] = await chooseFolders(t('Wybierz repozytorium, do którego należy ten folder'), false)
+  if (!repo) return
 
   if (!(await readRepo(repo, git))) {
     await dialog.showMessageBox({
       type: 'warning',
-      message: 'Wybrany folder nie jest repozytorium git.',
+      message: t('Wybrany folder nie jest repozytorium git.'),
       buttons: ['OK']
     })
-    return snapshot
+    return
   }
   const others = config.folderLinks.filter((link) => link.folder !== folder)
-  return updateConfig({ folderLinks: [...others, { folder, repo }] })
+  await updateConfig({ folderLinks: [...others, { folder, repo }] })
+}
+
+/** Apka bez instalatora startuje jako Electron z folderem projektu, więc wpis musi go wskazać. */
+const loginItem = (): Electron.Settings => (app.isPackaged ? {} : { path: process.execPath, args: [app.getAppPath()] })
+
+const readOpenAtLogin = (): boolean => app.getLoginItemSettings(loginItem()).openAtLogin
+
+function appInfo(): AppInfo {
+  return {
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    dataDir: dataDir(),
+    openAtLogin: readOpenAtLogin(),
+    allowedHosts: config.allowedHosts
+  }
 }
 
 function isValidBounds(value: unknown): value is ViewerBounds {
@@ -229,6 +426,20 @@ function requireDoc(docId: unknown): DocEntry {
   return doc
 }
 
+/** Kadry trasy idą z powłoki do dokumentu, więc sprawdzamy je jak trasę z pliku. */
+function parseRoute(value: unknown): { frames: RouteFrame[]; selected: string | null } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { frames, selected } = value as Record<string, unknown>
+  if (!Array.isArray(frames)) return null
+  const parsed = frames.slice(0, MAX_STEPS).flatMap((frame): RouteFrame[] => {
+    const { id, camera, label } = (frame ?? {}) as Record<string, unknown>
+    const step = parseStepCamera(camera, (anchor) => parseAnchor(anchor))
+    if (typeof id !== 'string' || !STEP_ID.test(id) || !step) return []
+    return [{ id, camera: step, label: typeof label === 'string' ? label.slice(0, 160) : '' }]
+  })
+  return { frames: parsed, selected: typeof selected === 'string' ? selected : null }
+}
+
 function isDocStatus(value: unknown): value is DocStatus {
   return DOC_STATUSES.includes(value as DocStatus)
 }
@@ -244,7 +455,7 @@ function registerIpc(): void {
     })
   }
 
-  handle('library:get', () => scanLibrary())
+  handle('library:get', () => requireLibrary().snapshotJson())
   handle('library:rescan', () => scanLibrary(true))
   handle('library:add-root', () => addRoots())
   handle('library:add-paths', (paths: unknown) => addDroppedFolders(paths))
@@ -255,6 +466,18 @@ function registerIpc(): void {
   handle('library:unlink-folder', (folder: unknown) =>
     updateConfig({ folderLinks: config.folderLinks.filter((link) => link.folder !== folder) })
   )
+  handle('library:hide-folders', (paths: unknown) => hideFolders(paths))
+  handle('library:show-folder', (path: unknown) =>
+    updateFolders({ hiddenFolders: config.hiddenFolders.filter((folder) => folder !== path) })
+  )
+  handle('library:rename-folder', (paths: unknown, name: unknown) => renameFolder(paths, name))
+  handle('library:reveal-folder', (path: unknown) => {
+    if (typeof path === 'string' && isAbsolute(path)) shell.showItemInFolder(path)
+  })
+  handle('library:search-content', (query: unknown) => {
+    const parsed = parseTextQuery(query)
+    return parsed ? searcher.search(parsed) : { docs: [] }
+  })
   handle('library:search', (query: unknown) =>
     typeof query === 'string' ? requireLibrary().search(query) : []
   )
@@ -262,49 +485,119 @@ function registerIpc(): void {
     if (!isDocStatus(status)) throw new Error('Nieznany status')
     return requireLibrary().setStatus(requireDoc(docId).id, status)
   })
+  handle('doc:set-statuses', (docIds: unknown, status: unknown) => {
+    if (!isDocStatus(status)) throw new Error('Nieznany status')
+    if (!Array.isArray(docIds)) throw new Error('Oczekiwano listy dokumentów')
+    const library = requireLibrary()
+    // Ukryty folder nie oddaje dokumentów nawet po identyfikatorze, tak jak przy pojedynczej zmianie.
+    const known = docIds.filter((id): id is string => typeof id === 'string' && library.getEntry(id) !== undefined)
+    return library.setStatuses(known, status)
+  })
   handle('doc:set-classification', (docId: unknown, classification: unknown) => {
     if (classification !== 'document' && classification !== 'ignored') {
       throw new Error('Nieznana klasyfikacja')
     }
     return requireLibrary().setClassification(requireDoc(docId).id, classification)
   })
+  handle('doc:set-labels', (docId: unknown, labels: unknown) =>
+    requireLibrary().setLabels(requireDoc(docId).id, labels)
+  )
+  handle('labels:rename', async (from: unknown, to: unknown) => {
+    await requireLibrary().renameLabel(String(from), to)
+    await followLabel(String(from), cleanLabel(to))
+  })
+  handle('labels:delete', async (name: unknown) => {
+    await requireLibrary().deleteLabel(String(name))
+    await followLabel(String(name), null)
+  })
+  handle('labels:auto-state', () => autoLabelState())
+  handle('labels:auto-run', (docIds: unknown) =>
+    requireLabeler().labelAll(Array.isArray(docIds) ? docIds.map(String) : [])
+  )
+  handle('labels:auto-stop', () => requireLabeler().stop())
+  handle('labels:auto-options', async (change: unknown) => {
+    await storeConfig(parseAutoLabelChange(change))
+    sendToShell('labels:auto-state', autoLabelState())
+  })
+  handle('labels:set-color', async (name: unknown, tone: unknown) => {
+    if (!isLabelTone(tone)) throw new Error('Nieznany kolor etykiety')
+    await storeConfig({ labelColors: withLabelColor(config.labelColors, String(name), tone) })
+  })
+  handle('labels:set-ticket-url', async (value: unknown) => {
+    const ticketUrl = ticketTemplate(value)
+    if (ticketUrl === null) throw new Error('To nie jest adres strony')
+    await storeConfig({ ticketUrl })
+  })
+  handle('doc:rename', (docId: unknown, name: unknown) => requireLibrary().renameDoc(requireDoc(docId).id, String(name)))
   handle('doc:reveal', (docId: unknown) => shell.showItemInFolder(requireDoc(docId).path))
   handle('app:open-external', (url: unknown) => {
     if (typeof url === 'string' && isExternalUrl(url)) void shell.openExternal(url)
   })
+  handle('options:info', () => appInfo())
+  handle('options:agent', () => readAgentSetup(__dirname, { claude, locate }))
+  handle('options:set-login', (on: unknown) => {
+    app.setLoginItemSettings({ ...loginItem(), openAtLogin: on === true })
+    return readOpenAtLogin()
+  })
+  handle('options:set-hosts', async (hosts: unknown) => {
+    await storeConfig({ allowedHosts: cleanHosts(hosts) })
+    return config.allowedHosts
+  })
+  handle('options:language', () => config.language)
+  handle('options:set-language', async (value: unknown) => {
+    if (!isLanguage(value)) throw new Error('Nieznany język')
+    await storeConfig({ language: value })
+    setLanguage(value)
+    viewer?.setLanguage(value)
+  })
   handle('viewer:open', (docId: unknown) => openDocument(requireDoc(docId)))
+  handle('viewer:warm', (docId: unknown) => warmDocument(requireDoc(docId)))
+  handle('links:list', (docId: unknown) => links.links(requireDoc(docId)))
+  handle('links:follow', (docId: unknown, href: unknown, peek: unknown) =>
+    followLink(requireDoc(docId), String(href), peek === true)
+  )
   handle('viewer:close', (docId: unknown) => viewer?.close(String(docId)))
   handle('viewer:reload', (docId: unknown) => viewer?.reload(String(docId)))
   handle('viewer:layout', (placements: unknown) => viewer?.setLayout(parsePlacements(placements)))
   handle('viewer:capture', (docId: unknown) => viewer?.capture(String(docId)) ?? null)
+  handle('viewer:camera', (docId: unknown, shot: unknown) =>
+    viewer?.aimCamera(String(docId), shot === null ? null : parseCameraShot(shot, (value) => parseAnchor(value))) ?? null
+  )
   handle('viewer:set-current', (docId: unknown) => setCurrentDocument(docId === null ? null : requireDoc(docId)))
 
+  handle('presentation:get', (docId: unknown) => presentations.read(requireDoc(docId).id))
+  handle('presentation:save', (docId: unknown, value: unknown) => {
+    const doc = requireDoc(docId)
+    const presentation = readPresentation(value)
+    if (!presentation) throw new Error('Niepoprawna trasa')
+    return presentations.write(doc.id, presentation)
+  })
   handle('annotations:list', () => annotations.listAll())
   handle('annotations:create', async (docId: unknown, input: unknown) => {
     const doc = requireDoc(docId)
-    const sha = requireLibrary().getDocSha(doc.id)
-    if (!sha) throw new Error('Uwagi można dodawać tylko do dokumentów z biblioteki')
-    await annotations.create(doc.id, sha, parseNewAnnotation(input))
-    await pushAnnotations()
+    if (doc.classification !== 'document' || !doc.sha) {
+      throw new Error('Uwagi można dodawać tylko do dokumentów z biblioteki')
+    }
+    await noteHistory.create(doc.id, doc.sha, parseNewAnnotation(input))
   })
   handle('annotations:reply', async (id: unknown, text: unknown) => {
-    await annotations.addMessage(String(id), 'user', String(text))
-    await pushAnnotations()
+    await noteHistory.reply(String(id), String(text))
   })
   handle('annotations:set-status', async (id: unknown, status: unknown) => {
     if (status !== 'open' && status !== 'resolved') throw new Error('Nieznany status uwagi')
-    await annotations.setStatus(String(id), status)
-    await pushAnnotations()
+    await noteHistory.setStatus(String(id), status)
   })
   handle('annotations:set-audience', async (id: unknown, audience: unknown) => {
-    await annotations.setAudience(String(id), parseAudience(audience))
-    await pushAnnotations()
+    await noteHistory.setAudience(String(id), parseAudience(audience))
   })
-  handle('annotations:delete', async (id: unknown) => {
-    await annotations.delete(String(id))
-    await pushAnnotations()
-  })
+  handle('annotations:delete', (id: unknown) => noteHistory.delete(String(id)))
+  handle('annotations:undo', (docId: unknown) => noteHistory.undo(String(docId)))
+  handle('annotations:redo', (docId: unknown) => noteHistory.redo(String(docId)))
 
+  ipcMain.on('app:copy-text', (event, text: unknown) => {
+    assertShell(event)
+    if (typeof text === 'string') clipboard.writeText(text)
+  })
   ipcMain.on('viewer:focus', (event, docId: unknown) => {
     assertShell(event)
     if (typeof docId === 'string') viewer?.focus(docId)
@@ -322,11 +615,56 @@ function registerIpc(): void {
     assertShell(event)
     dockLayer?.focus()
   })
+  ipcMain.on('viewer:find', (event, docId: unknown, command: unknown) => {
+    assertShell(event)
+    const parsed = parseFindCommand(command)
+    if (parsed) viewer?.find(String(docId), parsed)
+  })
   ipcMain.on('viewer:set-mode', (event, docId: unknown, mode: unknown) => {
     assertShell(event)
     const next: OverlayMode = mode === 'comment' || mode === 'sticky' ? mode : null
     viewer?.setOverlayMode(String(docId), next)
     if (next) viewer?.focus(String(docId))
+  })
+  ipcMain.on('viewer:set-pointer', (event, on: unknown) => {
+    assertShell(event)
+    viewer?.setPointer(on === true)
+  })
+  ipcMain.on('viewer:set-minimap', (event, on: unknown) => {
+    assertShell(event)
+    viewer?.setMinimap(on === true)
+  })
+  ipcMain.on('viewer:outline', (event, docId: unknown, command: unknown) => {
+    assertShell(event)
+    const parsed = parseOutlineCommand(command)
+    if (parsed) viewer?.outline(String(docId), parsed)
+  })
+  ipcMain.on('viewer:set-marker', (event, color: unknown) => {
+    assertShell(event)
+    viewer?.setMarker(parseStickyColor(color))
+  })
+  ipcMain.on('viewer:set-shaper', (event, tool: unknown) => {
+    assertShell(event)
+    const { type, color } = (tool ?? {}) as Record<string, unknown>
+    const shapeType = parseShapeType(type)
+    const shapeColor = parseStickyColor(color)
+    viewer?.setShaper(shapeType && shapeColor ? { type: shapeType, color: shapeColor } : null)
+  })
+  ipcMain.on('viewer:hide-drawings', (event, docIds: unknown) => {
+    assertShell(event)
+    viewer?.setHiddenDrawings(Array.isArray(docIds) ? docIds.filter((id): id is string => typeof id === 'string') : [])
+  })
+  ipcMain.on('viewer:route', (event, docId: unknown, route: unknown) => {
+    assertShell(event)
+    viewer?.setRoute(String(docId), parseRoute(route))
+  })
+  ipcMain.on('viewer:present', (event, docId: unknown, state: unknown) => {
+    assertShell(event)
+    viewer?.setPresent(String(docId), state === null ? null : parsePresentState(state, (value) => parseAnchor(value)))
+  })
+  ipcMain.on('viewer:pick', (event, docId: unknown, kind: unknown) => {
+    assertShell(event)
+    viewer?.setPicker(String(docId), kind === 'place' || kind === 'area' ? kind : null)
   })
   ipcMain.on('viewer:focus-annotation', (event, docId: unknown, id: unknown) => {
     assertShell(event)
@@ -346,7 +684,7 @@ function registerIpc(): void {
   })
   ipcMain.on('window:set-theme', (event, mode: unknown) => {
     assertShell(event)
-    if (mode === 'light' || mode === 'dark') applyTheme(mode)
+    if (mode === 'light' || mode === 'dark' || mode === 'system') applyTheme(mode)
   })
 }
 
@@ -357,7 +695,8 @@ function createWindow(): BrowserWindow {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    title: 'HTML Docs',
+    title: 'Bibliotter',
+    icon: process.platform === 'win32' ? iconIco : iconPng,
     show: false,
     backgroundColor: WALL_COLORS[theme],
     titleBarStyle: 'hidden',
@@ -374,21 +713,34 @@ function createWindow(): BrowserWindow {
   const layer = new DockLayer(window)
   dockLayer = layer
   window.webContents.setWindowOpenHandler((details) => layer.open(details))
-  window.webContents.on('will-navigate', (event) => event.preventDefault())
+  // Vite przeładowuje stronę pod tym samym adresem. Każda inna nawigacja opuściłaby powłokę.
+  window.webContents.on('will-navigate', (event) => {
+    if (event.url !== window.webContents.getURL()) event.preventDefault()
+  })
+  window.webContents.on('did-navigate', () => {
+    viewer?.reset()
+    thumbnails?.forgetSent()
+  })
   window.on('focus', () => {
-    if (Date.now() - lastScanAt > RESCAN_ON_FOCUS_AFTER_MS) void scanLibrary(true)
+    if (Date.now() - lastScanAt > RESCAN_ON_FOCUS_AFTER_MS) scanLibrary(true).catch(ignore)
   })
 
   viewer = new DocViewer({
     window,
-    allowedHosts: config.allowedHosts,
+    get allowedHosts() {
+      return config.allowedHosts
+    },
     lookupDocPath: (docId) => library?.getServedPath(docId),
+    renderMarkdown: (docPath) => requireLibrary().renderMarkdown(docPath),
     onState: (state) => sendToShell('viewer:state', state),
     onOverlayEvent: forwardOverlayEvent,
-    onOverlayReady: () => void pushAnnotations(),
+    onOverlayReady: (docId) => void pushDocAnnotations(docId),
     onKey: (key) => sendToShell('viewer:key', key),
     onFocus: (docId) => sendToShell('viewer:focus', docId),
-    onStacked: () => layer.raise()
+    onStacked: () => layer.raise(),
+    openLink: followLinkFrom,
+    previewLink,
+    matchPage: (text, query) => searcher.matchPage(text, query)
   })
 
   thumbnails = new Thumbnailer({
@@ -412,6 +764,7 @@ function createWindow(): BrowserWindow {
     dockLayer?.close()
     dockLayer = null
     mainWindow = null
+    viewer?.dispose()
     viewer = null
   })
   return window
@@ -423,20 +776,27 @@ async function start(): Promise<void> {
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
   config = await loadConfig()
-  library = await Library.open({
-    dataDir: dataDir(),
-    git,
-    gh,
-    getConfig: () => config,
-    onChange: (snapshot) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('library:changed', snapshot)
-      }
+  setLanguage(config.language)
+  lastScanAt = Date.now()
+  library = new LibraryClient({
+    script: join(__dirname, 'libraryWorker.js'),
+    init: () => ({ dataDir: dataDir(), config: libraryConfig() }),
+    onChange: (json) => sendToShell('library:changed', json),
+    onProgress: (progress) => sendToShell('library:progress', progress),
+    onNewDocs: (docIds) => {
+      if (config.autoLabelNew) labeler?.enqueue(docIds)
     }
   })
+  labeler = new AutoLabeler(
+    library,
+    claudeRunner(dataDir()),
+    () => sendToShell('labels:auto-state', autoLabelState()),
+    () => config.autoLabelTickets
+  )
   registerIpc()
-  watcher.watch(config.roots)
   stopWatchingAnnotations = watchAnnotations(join(dataDir(), 'library'), () => void pushAnnotations())
+  stopWatchingLabels = watchSignal(join(dataDir(), 'library'), 'labels', () => library?.reloadLabels().catch(ignore))
+  stopWatchingPresentation = watchPresentation(join(dataDir(), 'library'), () => sendToShell('presentation:changed', null))
   mainWindow = createWindow()
 
   app.on('activate', () => {
@@ -452,12 +812,19 @@ if (app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
-  app.on('will-quit', () => {
-    watcher.close()
+  app.on('will-quit', (event) => {
+    searcher.close()
+    const closing = library?.close()
+    if (!closing) return
+    library = null
     stopWatchingAnnotations?.()
-    library?.close()
+    stopWatchingLabels?.()
+    stopWatchingPresentation?.()
+    labeler?.stop()
     // Po zamknięciu apki żaden dokument nie jest już otwarty, więc agent nie powinien go wskazywać.
     rmSync(currentDocumentPath(dataDir()), { force: true })
+    event.preventDefault()
+    void closing.finally(() => app.quit())
   })
   void start()
 } else {

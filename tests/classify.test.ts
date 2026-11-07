@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeHtml, classify } from '../src/main/classify'
-import { normalizeText, queryTerms } from '../src/main/textNormalize'
+import { analyzeHtml, classify, classifyByPath } from '../src/main/classify'
+import { normalizeText, queryTerms } from '../src/shared/textNormalize'
 
 const prose = 'Zdanie opisujące decyzję w dokumencie. '.repeat(30)
 const documentHtml = `<!doctype html><html><head><title>Plan  prac</title><style>h1{color:red}</style></head>
@@ -65,6 +65,27 @@ describe('classify', () => {
 
   it('pomija zwykłą stronę bez własnego stylu', () => {
     expect(run(`<h1>Polityka</h1><p>${prose}</p>`)).toBe('ignored')
+  })
+})
+
+describe('classifyByPath', () => {
+  const rich = { ...analyzeHtml(documentHtml) }
+
+  it.each([
+    ['wyniki testów', { ...context, relPath: 'test-results/plan.html' }],
+    ['folder tymczasowy', { ...context, relPath: 'tmp/plan.html' }],
+    ['plik repozytorium', { relPath: 'README.md', siblings: 1, format: 'markdown' as const }],
+    ['masowy generator', { ...context, siblings: 500 }]
+  ])('werdykt po ścieżce jest taki sam jak pełny: %s', (_name, where) => {
+    const byPath = classifyByPath(where)
+
+    expect(byPath).not.toBeNull()
+    expect(classify(rich, where)).toEqual(byPath)
+  })
+
+  it('zwykły plik wymaga przeczytania', () => {
+    expect(classifyByPath(context)).toBeNull()
+    expect(classifyByPath({ relPath: 'docs/plan.md', siblings: 500, format: 'markdown' })).toBeNull()
   })
 })
 

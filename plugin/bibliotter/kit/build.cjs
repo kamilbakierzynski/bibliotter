@@ -3,6 +3,7 @@
  * Składa dokument objaśniający z folderu roboczego: doc.json, essay.html i plików z wynikami.
  * Kod cytowany w bibliografii pochodzi z obiektów Gita, więc nie da się go przepisać z błędem.
  * Wynik to jeden plik HTML z wklejonym stylem, skryptem i fontami, zgodny z regułami biblioteki.
+ * Ten sam build składa objaśnienie zmiany ("kind": "diff") i plan zmiany ("kind": "plan").
  *
  *   node build.cjs <folder> [--out <plik.html>] [--repo <repo>] [--check] [--no-exclude]
  */
@@ -11,9 +12,11 @@ const { execFileSync, spawnSync } = require('node:child_process')
 const { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } = require('node:path')
+const figuresKit = require('./figures.cjs')
+const planKit = require('./plan.cjs')
 
 const KIT = __dirname
-const KIT_VERSION = '0.1.0'
+const KIT_VERSION = '0.2.0'
 
 /* Reguły biblioteki z src/main/classify.ts i src/main/scanner.ts. Zmiana tam wymaga zmiany tutaj. */
 const MIN_TEXT = 800
@@ -52,11 +55,70 @@ const TEXT = {
     minutes: (n) => `ok. ${n} min czytania`,
     commits: (n) => `${n} ${plural(n, 'commit', 'commity', 'commitów')}`,
     uncommitted: 'bez commita',
-    kinds: { code: 'Kod', test: 'Test', commit: 'Opis commita', git: 'Przeszukanie', run: 'Eksperyment', said: 'Rozmowa', doc: 'Dokument' },
+    kinds: { code: 'Kod', test: 'Test', commit: 'Opis commita', git: 'Przeszukanie', run: 'Eksperyment', said: 'Rozmowa', doc: 'Dokument', web: 'Strona', plan: 'Plan' },
     commitLabel: 'opis commita',
     saidLabel: 'rozmowa',
     beforeChange: 'przed zmianą',
-    more: (n) => `… i ${n} ${plural(n, 'wiersz', 'wiersze', 'wierszy')} więcej`
+    more: (n) => `… i ${n} ${plural(n, 'wiersz', 'wiersze', 'wierszy')} więcej`,
+    // Plan zmiany
+    planKicker: 'Plan zmiany',
+    base: 'Stan wyjściowy',
+    on: 'na',
+    planFile: 'Plan',
+    sections: (n) => `${n} ${plural(n, 'sekcja', 'sekcje', 'sekcji')}`,
+    openInPlan: 'Otwórz to miejsce w planie',
+    planCopyNote: (from, date, href, title) => `Kopia planu z \`${from}\`, zrobiona ${date}. Objaśnienie z rysunkami: [${title}](${href}).`,
+    biblioIntroPlan: 'Fragmenty kodu pochodzą z obiektów Gita i pokazują stan, od którego plan zaczyna. Wyniki eksperymentów pochodzą z plików zapisanych przy ich uruchomieniu. Jeśli nie zaznaczono inaczej, kod pochodzi z {rev}.',
+    biblioIntroPlanWorktree: 'Fragmenty kodu pochodzą z plików na dysku z dnia {date}, czyli ze stanu, od którego plan zaczyna, i mogły się od tego czasu zmienić. Wyniki eksperymentów pochodzą z plików zapisanych przy ich uruchomieniu.',
+    figure: 'Rysunek',
+    states: { same: 'bez zmian', changed: 'zmienione', new: 'nowe', removed: 'usunięte' },
+    fileChange: { new: 'nowy', changed: 'zmiana', removed: 'usunięty' },
+    stepOf: (n, all) => `Krok ${n} z ${all}`,
+    stepWord: 'krok',
+    after: (list) => `po ${list.length === 1 ? 'kroku' : 'krokach'} ${list.join(', ')}`,
+    stepStatus: { doing: 'w toku', done: 'zrobione' },
+    doneWhen: 'Gotowe, gdy',
+    files: (n) => `${n} ${plural(n, 'plik', 'pliki', 'plików')}`,
+    lines: (n) => `${n} ${plural(n, 'wiersz', 'wiersze', 'wierszy')}`,
+    parallel: 'równolegle',
+    roadmapCaption: 'Kolejność kroków. Kliknięcie w kartę przenosi do opisu kroku.',
+    roadmapParallel: 'Kroki w jednym rzędzie nie zależą od siebie, więc mogą powstawać równolegle.',
+    filesCaption: 'Pliki, których dotyka plan, i kroki, które je zmieniają. Liczba wierszy opisuje stan wyjściowy.',
+    filesSum: {
+      new: (n) => `${n} ${plural(n, 'nowy', 'nowe', 'nowych')}`,
+      changed: (n) => `${n} ${plural(n, 'zmieniony', 'zmienione', 'zmienionych')}`,
+      removed: (n) => `${n} ${plural(n, 'usunięty', 'usunięte', 'usuniętych')}`
+    },
+    stepsShort: (list) => `${list.length === 1 ? 'krok' : 'kroki'} ${list.join(', ')}`,
+    decision: 'Decyzja',
+    decisionOpen: 'do rozstrzygnięcia',
+    decisionDone: 'rozstrzygnięta',
+    recommend: 'polecam',
+    chosen: 'wybrane',
+    whyOption: (letter) => `Dlaczego ${letter}`,
+    answerHint: 'Zaznacz pytanie, wciśnij <kbd>C</kbd>, wybierz odbiorcę Agent i napisz, którą drogę wybierasz albo czego w nich brakuje.',
+    riskHead: ['Ryzyko', 'Szansa', 'Skutek', 'Co z tym robimy'],
+    likelihood: ['mała', 'średnia', 'duża'],
+    impact: ['mały', 'średni', 'duży'],
+    sketch: 'Szkic',
+    sketchNew: (file) => `nowy plik ${file}`,
+    sketchChange: (file) => `zmiana w ${file}`,
+    sketchNote: 'tego kodu jeszcze nie ma',
+    progress: 'Postęp',
+    progressLine: (done, all) => `${done} z ${all} ${plural(all, 'kroku', 'kroków', 'kroków')} zrobione`,
+    glance: {
+      label: 'Plan w pigułce',
+      steps: 'Kroki',
+      files: 'Pliki',
+      decisions: 'Decyzje',
+      risks: 'Ryzyka',
+      stages: (n) => `${n} ${plural(n, 'etap', 'etapy', 'etapów')}`,
+      done: (n) => `${n} ${plural(n, 'zrobiony', 'zrobione', 'zrobionych')}`,
+      open: (n) => `${plural(n, 'czeka', 'czekają', 'czeka')} na Ciebie`,
+      closed: 'rozstrzygnięte',
+      top: (word) => `najwyższe ${word}`,
+      bands: ['niskie', 'średnie', 'wysokie']
+    }
   },
   en: {
     kicker: 'Change explained',
@@ -85,11 +147,65 @@ const TEXT = {
     minutes: (n) => `about ${n} min read`,
     commits: (n) => `${n} commit${n === 1 ? '' : 's'}`,
     uncommitted: 'uncommitted changes',
-    kinds: { code: 'Code', test: 'Test', commit: 'Commit message', git: 'Search', run: 'Experiment', said: 'Conversation', doc: 'Document' },
+    kinds: { code: 'Code', test: 'Test', commit: 'Commit message', git: 'Search', run: 'Experiment', said: 'Conversation', doc: 'Document', web: 'Web page', plan: 'Plan' },
     commitLabel: 'commit message',
     saidLabel: 'conversation',
     beforeChange: 'before the change',
-    more: (n) => `… and ${n} more line${n === 1 ? '' : 's'}`
+    more: (n) => `… and ${n} more line${n === 1 ? '' : 's'}`,
+    planKicker: 'Change plan',
+    base: 'Starting point',
+    on: 'on',
+    planFile: 'Plan',
+    sections: (n) => `${n} section${n === 1 ? '' : 's'}`,
+    openInPlan: 'Open this place in the plan',
+    planCopyNote: (from, date, href, title) => `Copy of the plan from \`${from}\`, made ${date}. Illustrated explanation: [${title}](${href}).`,
+    biblioIntroPlan: 'Code excerpts come from Git objects and show the state the plan starts from. Experiment results come from files saved when they ran. Unless noted otherwise, code is from {rev}.',
+    biblioIntroPlanWorktree: 'Code excerpts come from the files on disk on {date}, the state the plan starts from, and may have changed since. Experiment results come from files saved when they ran.',
+    figure: 'Figure',
+    states: { same: 'unchanged', changed: 'changed', new: 'new', removed: 'removed' },
+    fileChange: { new: 'new', changed: 'changed', removed: 'removed' },
+    stepOf: (n, all) => `Step ${n} of ${all}`,
+    stepWord: 'step',
+    after: (list) => `after step${list.length === 1 ? '' : 's'} ${list.join(', ')}`,
+    stepStatus: { doing: 'in progress', done: 'done' },
+    doneWhen: 'Done when',
+    files: (n) => `${n} file${n === 1 ? '' : 's'}`,
+    lines: (n) => `${n} line${n === 1 ? '' : 's'}`,
+    parallel: 'in parallel',
+    roadmapCaption: 'The order of the steps. Click a card to jump to its description.',
+    roadmapParallel: 'Steps in one row do not depend on each other, so they can be built in parallel.',
+    filesCaption: 'The files the plan touches and the steps that change them. Line counts describe the starting point.',
+    filesSum: { new: (n) => `${n} new`, changed: (n) => `${n} changed`, removed: (n) => `${n} removed` },
+    stepsShort: (list) => `step${list.length === 1 ? '' : 's'} ${list.join(', ')}`,
+    decision: 'Decision',
+    decisionOpen: 'open',
+    decisionDone: 'decided',
+    recommend: 'recommended',
+    chosen: 'chosen',
+    whyOption: (letter) => `Why ${letter}`,
+    answerHint: 'Select the question, press <kbd>C</kbd>, choose Agent as the recipient and write which way you choose or what the options miss.',
+    riskHead: ['Risk', 'Likelihood', 'Impact', 'What we do about it'],
+    likelihood: ['low', 'medium', 'high'],
+    impact: ['low', 'medium', 'high'],
+    sketch: 'Sketch',
+    sketchNew: (file) => `new file ${file}`,
+    sketchChange: (file) => `change in ${file}`,
+    sketchNote: 'this code does not exist yet',
+    progress: 'Progress',
+    progressLine: (done, all) => `${done} of ${all} step${all === 1 ? '' : 's'} done`,
+    glance: {
+      label: 'The plan at a glance',
+      steps: 'Steps',
+      files: 'Files',
+      decisions: 'Decisions',
+      risks: 'Risks',
+      stages: (n) => `${n} stage${n === 1 ? '' : 's'}`,
+      done: (n) => `${n} done`,
+      open: () => 'waiting for you',
+      closed: 'decided',
+      top: (word) => `highest ${word}`,
+      bands: ['low', 'medium', 'high']
+    }
   }
 }
 
@@ -130,6 +246,9 @@ try {
 const essay = existsSync(join(work, 'essay.html')) ? readWork('essay.html') : (problem('Missing essay.html'), '')
 const lang = doc.lang === 'en' ? 'en' : 'pl'
 const T = TEXT[lang]
+const isPlan = doc.kind === 'plan'
+if (doc.kind !== undefined && !['diff', 'plan'].includes(doc.kind)) problem('"kind" is diff or plan')
+const today = new Date().toISOString().slice(0, 10)
 
 /* Git */
 const run = (cwd, command, list) => execFileSync(command, list, { cwd, encoding: 'utf8', maxBuffer: 1 << 26, stdio: ['ignore', 'pipe', 'pipe'] }).replace(/\r/g, '')
@@ -163,7 +282,19 @@ const peopleOf = (rev) => {
 }
 const joinNames = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} ${lang === 'pl' ? 'i' : 'and'} ${names.at(-1)}`)
 
-if (change.rev) {
+if (isPlan) {
+  // Plan nie ma zmiany, tylko stan, od którego zaczyna: commit albo pliki na dysku.
+  if (doc.change) problem('a plan has "base" instead of "change"')
+  const base = doc.base ?? { rev: 'HEAD' }
+  parentRev = null // nic w planie nie jest „przed zmianą”
+  if (base.worktree) {
+    changeLine = `${T.worktree}, ${today}, ${T.on} ${shortOf('HEAD')}`
+  } else {
+    if (tryGit('rev-parse', '--verify', `${base.rev}^{commit}`) === null) problem(`base.rev ${base.rev} is not a commit`)
+    changeRev = shortOf(base.rev)
+    changeLine = `${changeRev}, ${dateOf(changeRev)}`
+  }
+} else if (change.rev) {
   if (tryGit('rev-parse', '--verify', `${change.rev}^{commit}`) === null) problem(`change.rev ${change.rev} is not a commit`)
   changeRev = shortOf(change.rev)
   parentRev = `${changeRev}~1`
@@ -179,7 +310,14 @@ if (change.rev) {
 }
 const fullChange = changeRev === WORKTREE ? '' : (tryGit('rev-parse', changeRev)?.trim() ?? '')
 
-const revAlias = (rev) => (rev === undefined || rev === 'change' ? changeRev : rev === 'parent' ? parentRev : rev)
+const revAlias = (rev) => {
+  if (rev === undefined || rev === 'change' || (isPlan && rev === 'base')) return changeRev
+  if (rev === 'parent' && isPlan) {
+    problem('a plan has no "parent" revision; quote "base" or a commit')
+    return changeRev
+  }
+  return rev === 'parent' ? parentRev : rev
+}
 const revName = (rev) => (rev === WORKTREE ? T.worktree : rev === parentRev ? `${shortOf(parentRev)}, ${T.beforeChange}` : shortOf(rev))
 const readAt = (rev, file) => {
   const clean = file.replace(/\\/g, '/')
@@ -268,10 +406,116 @@ function resolvePart(part, where) {
     dirtyWarned.add(clean)
     warn(`${where}: ${part.file} has uncommitted changes, so this excerpt shows them as they are now and nobody can check it later. Quote a commit unless the uncommitted state is the point.`)
   }
+  // Plan opisuje kod, który ma się zmienić, więc nieskomitowane zmiany w tym pliku zmieniają też punkt wyjścia.
+  if (isPlan && rev === changeRev && rev !== WORKTREE && !dirtyWarned.has(clean) && tryGit('status', '--porcelain', '--', clean)?.trim()) {
+    dirtyWarned.add(clean)
+    warn(`${where}: ${part.file} has uncommitted changes since ${rev}. If the plan builds on them, set "base": { "worktree": true }.`)
+  }
   return { file: part.file.replace(/\\/g, '/'), rev, from: from + 1, to: from + count, excerpt }
 }
 
 const span = (part) => `${part.file}:${part.from}${part.to > part.from ? `-${part.to}` : ''}`
+
+/* Ścieżka wyniku: główny checkout, explain/<gałąź>/<temat>.html. Stała ścieżka zachowuje uwagi. */
+const slugify = (text) =>
+  String(text)
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/Ł/g, 'L')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'explain'
+const commonDir = tryGit('rev-parse', '--path-format=absolute', '--git-common-dir')?.trim()
+const toplevel = tryGit('rev-parse', '--show-toplevel')?.trim() ?? repo
+const mainCheckout = commonDir && basename(commonDir) === '.git' ? dirname(commonDir) : toplevel
+const branch = (doc.branch ?? tryGit('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? 'HEAD').replace(/^HEAD$/, changeRev)
+const branchPath = branch.split('/').map((part) => part.replace(/[<>:"|?*\\]/g, '-')).join(sep)
+// Plan i objaśnienie zmiany leżą w jednym folderze gałęzi, więc plan ma przedrostek w nazwie.
+const slug = ((name) => (isPlan && !name.startsWith('plan-') ? `plan-${name}` : name))(slugify(doc.slug ?? doc.title ?? 'explain'))
+const out = resolve(option('--out') ?? join(mainCheckout, 'explain', branchPath, `${slug}.html`))
+
+/* Foldery, których skaner biblioteki nie pokazuje. */
+const skippedFolder = (name) => name.startsWith('.') || IGNORED_DIRECTORIES.has(name) || NON_DOCUMENT_FOLDERS.has(name.toLowerCase()) || TEST_OUTPUT_FOLDER.test(name)
+const isInside = (root, path) => {
+  const rel = relative(resolve(root), path)
+  return !rel.startsWith('..') && !isAbsolute(rel)
+}
+function libraryRoots() {
+  const home = process.env.BIBLIOTTER_HOME ?? process.env.HTMLDOCS_HOME ?? [join(homedir(), 'Bibliotter'), join(homedir(), 'HtmlDocs')].find((dir) => existsSync(join(dir, 'config.json')))
+  try {
+    const { roots } = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))
+    return Array.isArray(roots) ? roots : null
+  } catch {
+    return null // Bez konfiguracji apki nie wiemy, co skanuje.
+  }
+}
+const visibleIn = (root, path) => isInside(root, path) && !relative(resolve(root), dirname(path)).split(/[\\/]/).filter(Boolean).some(skippedFolder)
+
+/* Pliki w stanie wyjściowym planu albo w commicie zmiany, z pamięcią podręczną. */
+const fileCache = new Map()
+function fileAt(path, rev = changeRev) {
+  const clean = path.replace(/\\/g, '/')
+  const key = `${rev}\n${clean}`
+  if (!fileCache.has(key)) {
+    let text = null
+    try {
+      text = rev === WORKTREE ? (existsSync(join(repo, clean)) ? readAt(rev, clean) : null) : tryGit('cat-file', '-e', `${rev}:${clean}`) === null ? null : readAt(rev, clean)
+    } catch {
+      text = null
+    }
+    fileCache.set(key, { exists: text !== null, lines: text === null ? 0 : text.replace(/\n$/, '').split('\n').length })
+  }
+  return fileCache.get(key)
+}
+const baseName = () => (changeRev === WORKTREE ? T.worktree : changeRev)
+function checkFile(path, state, where) {
+  const now = fileAt(path)
+  if (isPlan) {
+    if (state === 'new' && now.exists) problem(`${where}: ${path} is marked new, but it already exists in ${baseName()}`)
+    if (state !== 'new' && !now.exists) problem(`${where}: ${path} does not exist in ${baseName()}; mark it new or fix the path`)
+    return
+  }
+  const before = fileAt(path, parentRev)
+  if (state === 'new' && (!now.exists || before.exists)) problem(`${where}: ${path} is marked new, but the change does not add it`)
+  else if (state === 'removed' && (now.exists || !before.exists)) problem(`${where}: ${path} is marked removed, but the change does not remove it`)
+  else if (state !== 'new' && state !== 'removed' && !now.exists) problem(`${where}: ${path} does not exist in ${baseName()}`)
+}
+function commitLine(rev, where) {
+  const line = tryGit('log', '-1', '--format=%h %s', rev)?.trim()
+  if (!line) {
+    problem(`${where}: "commit" ${rev} is not a commit`)
+    return ''
+  }
+  return line.length > 64 ? `${line.slice(0, 61)}...` : line
+}
+const sketchBlock = (lines, file) => {
+  const family = familyOf(file ?? '')
+  return `<pre class="code plain">${lines.map((line) => `<span class="ln">${highlight(line, family) || ' '}</span>`).join('')}</pre>`
+}
+
+const plan = planKit({ doc, T, escape, problem, warn, fileAt, checkFile, commitLine, sketchBlock, readWork, isPlan })
+const figureKit = figuresKit({ T, escape, problem, warn, checkFile })
+
+/* Plik planu w Markdownie. Spoza biblioteki trafia jako kopia obok dokumentu, żeby oba były w apce. */
+function planFile() {
+  if (!doc.plan) return null
+  const spec = typeof doc.plan === 'string' ? { file: doc.plan } : doc.plan
+  const path = resolve(repo, String(spec.file ?? ''))
+  if (!spec.file || !existsSync(path)) {
+    problem(`"plan": ${path} not found; give an absolute path or one relative to the repository`)
+    return null
+  }
+  if (extname(path).toLowerCase() !== '.md') warn(`"plan": ${basename(path)} is not a .md file`)
+  const roots = libraryRoots()
+  const visible = roots ? roots.some((root) => visibleIn(root, path)) : visibleIn(mainCheckout, path)
+  const copy = spec.copy ?? !visible
+  const target = copy ? join(dirname(out), `${basename(out, extname(out))}.md`) : path
+  const href = relative(dirname(out), target).split(/[\\/]/).map(encodeURIComponent).join('/')
+  return { path, target, copy, href }
+}
+plan.attachPlan(planFile())
 
 /* Źródła */
 const sources = doc.sources ?? {}
@@ -281,7 +525,7 @@ function prepareSource(id, source) {
   const where = `source "${id}"`
   const kind = source.kind
   if (!T.kinds[kind]) {
-    problem(`${where}: unknown kind "${kind}". Use code, test, commit, git, run, said or doc.`)
+    problem(`${where}: unknown kind "${kind}". Use code, test, commit, git, run, said, doc, web or plan.`)
     return
   }
   if (!source.note || !String(source.note).trim()) problem(`${where}: "note" must say in one sentence what this source shows`)
@@ -303,7 +547,10 @@ function prepareSource(id, source) {
     source.where = `git log -1 ${shortOf(rev)}`
     source.body = plainBlock(message.trim().split('\n'))
   } else if (kind === 'git') {
-    const list = (source.args ?? []).map((arg) => String(arg).replaceAll('{change}', changeRev).replaceAll('{parent}', parentRev))
+    // Przy plikach na dysku samo {change} albo {base} znika, bo git grep bez rewizji czyta drzewo robocze.
+    const list = (source.args ?? [])
+      .filter((arg) => !(changeRev === WORKTREE && (arg === '{change}' || arg === '{base}')))
+      .map((arg) => String(arg).replaceAll('{change}', changeRev).replaceAll('{base}', changeRev).replaceAll('{parent}', parentRev ?? changeRev))
     if (!SAFE_GIT.has(list[0])) return problem(`${where}: only git ${[...SAFE_GIT].join(', ')} are allowed`)
     const result = spawnSync('git', list, { cwd: repo, encoding: 'utf8', maxBuffer: 1 << 24 })
     if (result.status !== 0 && !(list[0] === 'grep' && result.status === 1)) return problem(`${where}: git ${list.join(' ')} failed: ${(result.stderr || '').trim().split('\n')[0]}`)
@@ -344,6 +591,24 @@ function prepareSource(id, source) {
     source.label = source.label ?? source.title ?? basename(decodeURI(source.href))
     source.where = source.href
     source.body = `<p class="ref-from"><a href="${escape(source.href)}">${escape(source.title ?? source.href)}</a></p>`
+  } else if (kind === 'web') {
+    if (!/^https?:\/\//.test(source.url ?? '')) return problem(`${where}: "url" must start with http:// or https://`)
+    if (source.quote && String(source.quote).split(/\s+/).length > 30) warn(`${where}: the quote is long; quote one sentence and say the rest in your own words`)
+    source.label = source.label ?? source.title ?? new URL(source.url).hostname
+    source.where = source.url
+    source.body = `<p class="ref-from"><a href="${escape(source.url)}">${escape(source.title ?? source.url)}</a>${source.accessed ? ` · ${escape(source.accessed)}` : ''}</p>${source.quote ? `<blockquote>${escape(source.quote)}</blockquote>` : ''}`
+  } else if (kind === 'plan') {
+    // Fragment pliku planu: przypis prowadzi do nagłówka, który apka przewinie po kliknięciu.
+    const section = plan.planSection(source.heading ?? '', where)
+    if (!section) return
+    const all = plan.planMd.lines.slice(section.line, section.end)
+    while (all.length > 1 && !all.at(-1).trim()) all.pop()
+    const limit = source.count ?? 14
+    const shown = all.slice(0, limit)
+    if (all.length > limit) shown.push(T.more(all.length - limit))
+    source.label = source.label ?? `§ ${section.text}`
+    source.where = `${basename(plan.planMd.target)} § ${section.text}`
+    source.body = `<p class="ref-from"><a href="${escape(section.href)}">${T.openInPlan}</a></p>${plainBlock(shown)}`
   }
 }
 for (const [id, source] of Object.entries(sources)) prepareSource(id, source)
@@ -360,6 +625,15 @@ const expMark = (text) =>
     return `${id}`
   })
 const expFill = (html) => html.replace(/([\w-]+)/g, (_, id) => sources[id]?.letter ?? '?')
+
+/* {{fig:id}} wstawia numer rysunku. Numery nadaje build na końcu, w kolejności rysunków w tekście. */
+const figRefs = new Set()
+const figMark = (text) =>
+  String(text).replace(/\{\{\s*fig\s*:\s*([\w-]+)\s*\}\}/g, (_, id) => {
+    figRefs.add(id)
+    return `${id}`
+  })
+const marks = (text) => plan.refs(figMark(expMark(text)))
 
 /* Pytania */
 const checks = doc.checks ?? {}
@@ -435,6 +709,38 @@ const FORBIDDEN = [
 for (const [pattern, message] of FORBIDDEN) if (pattern.test(essay)) problem(`essay.html: ${message}`)
 if (/display\s*:\s*none/i.test(essay)) warn('essay.html uses display:none; hidden text is skipped by search. Use <details> to fold content.')
 
+const citeAll = (html, used) =>
+  html.replace(/\{\{\s*([\w-]+)\s*\}\}/g, (_, id) => {
+    const mark = cite(id)
+    if (mark && !used.includes(id)) used.push(id)
+    return mark
+  })
+const rowHtml = (html, used, wide) => {
+  const side = used.map((id) => `<a href="#z-${escape(id)}"><span class="num">${numbers.get(id)}</span><span>${escape(sources[id].label ?? sources[id].kindLabel)}</span></a>`).join('')
+  return `<div class="row${wide ? ' wide' : ''}"><div class="col">${html}</div>${side ? `<aside class="src" aria-label="${T.sideLabel}">${side}</aside>` : ''}</div>`
+}
+
+/*
+ * W planie nazwa w <code> bywa nowa, więc akapit bez źródła ostrzega tylko wtedy, gdy ta nazwa
+ * już istnieje w stanie wyjściowym, czyli akapit mówi o dzisiejszym kodzie.
+ */
+const knownNames = new Map()
+const existsInBase = (name) => {
+  if (!knownNames.has(name)) {
+    const list = changeRev === WORKTREE ? ['grep', '-q', '-F', '--untracked', '-e', name] : ['grep', '-q', '-F', '-e', name, changeRev]
+    knownNames.set(name, spawnSync('git', list, { cwd: repo }).status === 0)
+  }
+  return knownNames.get(name)
+}
+const namesInCode = (block) =>
+  [...block.matchAll(/<code>([^<]{3,80})<\/code>/g)]
+    .map((match) => match[1].trim().replace(/\(\)$/, ''))
+    .filter((name) => /^[\w$.\/-]+$/.test(name) && !/^\d/.test(name))
+    .slice(0, 6)
+
+const figures = doc.figures ?? {}
+const MARKER = /^<!--\s*(check|listing|figure|step|decision|sketch|roadmap|files|risks)\s*(?::\s*([\w-]+))?\s*-->$/
+let sketchNumber = 0
 const headings = []
 const blocks = essay.trim().split(/\n\s*\n/)
 const body = blocks
@@ -444,31 +750,47 @@ const body = blocks
     if (heading) {
       const n = headings.length + 1
       headings.push({ n, text: heading[1].trim() })
-      return `<div class="row"><div class="col"><h2 class="ch" id="r${n}"><span class="n">${n}</span>${heading[1].trim()}</h2></div></div>`
+      return `<div class="row"><div class="col"><h2 class="ch" id="r${n}"><span class="n">${n}</span>${marks(heading[1].trim())}</h2></div></div>`
     }
-    const marker = block.match(/^<!--\s*(check|listing)\s*:\s*([\w-]+)\s*-->$/)
+    const marker = block.match(MARKER)
     if (marker) {
-      const html = marker[1] === 'check' ? checkHtml(marker[2]) : listingHtml(marker[2])
-      return `<div class="row"><div class="col">${html}</div></div>`
+      const [, kind, id] = marker
+      if (['check', 'listing', 'figure', 'step', 'decision', 'sketch'].includes(kind) && !id) {
+        problem(`<!--${kind}--> needs an id: <!--${kind}:name-->`)
+        return ''
+      }
+      if (kind === 'check' || kind === 'listing') {
+        const html = kind === 'check' ? checkHtml(id) : listingHtml(id)
+        return `<div class="row"><div class="col">${html}</div></div>`
+      }
+      // Kod szkicu nie przechodzi przez przypisy, bo {{ }} bywa w nim zwykłym kodem.
+      if (kind === 'sketch') return `<div class="row"><div class="col">${plan.sketch(id, ++sketchNumber)}</div></div>`
+      const html = kind === 'figure' ? figureKit.render(id, figures[id]) : kind === 'step' || kind === 'decision' ? plan[kind](id) : plan[kind]()
+      const used = []
+      return rowHtml(citeAll(marks(html), used), used, kind === 'figure' || kind === 'roadmap')
     }
     const used = []
-    const html = expMark(block).replace(/\{\{\s*([\w-]+)\s*\}\}/g, (_, id) => {
-      const mark = cite(id)
-      if (mark && !used.includes(id)) used.push(id)
-      return mark
-    })
+    const html = citeAll(marks(block), used)
     const wide = /^<[a-z]+\b[^>]*\bclass\s*=\s*["'][^"']*\bwide\b/i.test(block)
     const prose = /^<(p|ul|ol)\b/i.test(block)
     // Pytanie otwarte, podsumowanie i akapity z klasą nocite (czego nie sprawdzono) nie twierdzą nic o kodzie.
     const exempt = /^<[a-z]+\b[^>]*(?:\bid\s*=\s*["']otwarte["']|\bclass\s*=\s*["'][^"']*\b(?:nocite|recap)\b)/i.test(block)
-    if (prose && !exempt && used.length === 0 && /<code>/.test(block)) warn(`paragraph about code without a source: "${block.replace(/<[^>]+>/g, '').slice(0, 70)}..."`)
-    const side = used.map((id) => `<a href="#z-${escape(id)}"><span class="num">${numbers.get(id)}</span><span>${escape(sources[id].label ?? sources[id].kindLabel)}</span></a>`).join('')
-    return `<div class="row${wide ? ' wide' : ''}"><div class="col">${html}</div>${side ? `<aside class="src" aria-label="${T.sideLabel}">${side}</aside>` : ''}</div>`
+    if (prose && !exempt && used.length === 0 && /<code>/.test(block)) {
+      const snippet = block.replace(/<[^>]+>/g, '').slice(0, 70)
+      if (!isPlan) warn(`paragraph about code without a source: "${snippet}..."`)
+      else {
+        const known = namesInCode(block).filter(existsInBase)
+        if (known.length > 0) warn(`paragraph names ${known.map((name) => `"${name}"`).join(', ')}, which exist in ${baseName()}, but cites nothing: "${snippet}..."`)
+      }
+    }
+    return rowHtml(html, used, wide)
   })
   .join('\n')
 
 if (headings.length < 2) problem('essay.html needs numbered chapters: at least two <h2> blocks')
-if (headings.length > 8) warn(`${headings.length} chapters; more than eight reads like a manual. Merge the short ones.`)
+const chapterLimit = isPlan ? 9 : 8
+if (headings.length > chapterLimit) warn(`${headings.length} chapters; more than ${chapterLimit} reads like a manual. Merge the short ones.`)
+plan.finish()
 for (const id of Object.keys(sources)) if (!numbers.has(id) && sources[id].body) problem(`source "${id}" is never cited`)
 for (const id of Object.keys(checks)) if (!checks[id].used) warn(`check "${id}" is defined but not placed in essay.html`)
 if (Object.keys(checks).length > 3) warn('more than three questions turns an essay into a quiz')
@@ -481,12 +803,29 @@ for (const id of [...numbers.keys()].filter((key) => sources[key].kind === 'run'
   sources[id].label = sources[id].label ?? `${T.kinds.run} ${letter}`
   sources[id].kindLabel = `${T.kinds.run} ${letter}`
 }
-const abstractHtml = (doc.abstract ?? []).map((paragraph) => `<p>${expFill(expMark(paragraph))}</p>`).join('\n')
 // Napisy na marginesie powstały przed nadaniem liter, więc uzupełniamy je teraz.
-const finalBody = expFill(body).replace(/<span class="num">(\d+)<\/span><span>([^<]*)<\/span>/g, (all, number, label) => {
+const lettered = expFill(body).replace(/<span class="num">(\d+)<\/span><span>([^<]*)<\/span>/g, (all, number, label) => {
   const id = [...numbers].find(([, n]) => String(n) === number)?.[0]
   return id && sources[id].kind === 'run' ? `<span class="num">${number}</span><span>${escape(sources[id].label)}</span>` : all
 })
+
+/* Rysunki z podpisem dostają numery po kolei; ręcznie wpisany numer build poprawia. */
+const figureNumbers = new Map()
+const numbered = lettered.replace(/<figure\b([^>]*)>([\s\S]*?)<\/figure>/g, (all, attrs, inner) => {
+  if (!/\bclass\s*=\s*["'][^"']*\bfig\b/.test(attrs) || !/<figcaption\b/.test(inner)) return all
+  const number = figureNumbers.size + 1
+  const id = /\bid\s*=\s*["']([^"']+)["']/.exec(attrs)?.[1] ?? `#${number}`
+  figureNumbers.set(id, number)
+  return `<figure${attrs}>${inner.replace(/<figcaption\b([^>]*)>\s*(?:(?:Rysunek|Figure)\s+\d+\.\s*)?/, `<figcaption$1>${T.figure} ${number}. `)}</figure>`
+})
+const figFill = (html) =>
+  html.replace(/([\w-]+)/g, (_, id) => {
+    if (!figureNumbers.has(id)) problem(`{{fig:${id}}} names no figure; give the <figure> id="${id}" and a <figcaption>`)
+    return figureNumbers.get(id) ?? '?'
+  })
+const finalBody = figFill(numbered)
+const abstractHtml = (doc.abstract ?? []).map((paragraph) => `<p>${figFill(expFill(marks(paragraph)))}</p>`).join('\n')
+const glanceHtml = plan.glance()
 
 /* Aneks: skrypty eksperymentów w całości, żeby dało się je uruchomić ponownie. */
 const annex = (doc.annex ?? [])
@@ -501,25 +840,6 @@ const annex = (doc.annex ?? [])
   })
   .join('')
 
-/* Ścieżka wyniku: główny checkout, explain/<gałąź>/<temat>.html. Stała ścieżka zachowuje uwagi. */
-const slugify = (text) =>
-  String(text)
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/ł/g, 'l')
-    .replace(/Ł/g, 'L')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60) || 'explain'
-const commonDir = tryGit('rev-parse', '--path-format=absolute', '--git-common-dir')?.trim()
-const toplevel = tryGit('rev-parse', '--show-toplevel')?.trim() ?? repo
-const mainCheckout = commonDir && basename(commonDir) === '.git' ? dirname(commonDir) : toplevel
-const branch = (doc.branch ?? tryGit('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? 'HEAD').replace(/^HEAD$/, changeRev)
-const branchPath = branch.split('/').map((part) => part.replace(/[<>:"|?*\\]/g, '-')).join(sep)
-const slug = slugify(doc.slug ?? doc.title ?? 'explain')
-const out = resolve(option('--out') ?? join(mainCheckout, 'explain', branchPath, `${slug}.html`))
-
 function checkPlace() {
   const folders = dirname(out).split(/[\\/]/).filter(Boolean)
   const below = relative(mainCheckout, out).startsWith('..') ? folders.slice(-3) : relative(mainCheckout, dirname(out)).split(/[\\/]/).filter(Boolean)
@@ -533,14 +853,8 @@ function checkPlace() {
     if (siblings >= BULK_FOLDER_SIZE) problem(`${dirname(out)} would hold ${siblings} HTML files; from ${BULK_FOLDER_SIZE} the library treats the folder as generator output`)
     else if (siblings >= BULK_FOLDER_SIZE - 4) warn(`${dirname(out)} holds ${siblings} HTML files; at ${BULK_FOLDER_SIZE} the library stops showing them`)
   }
-  const home = process.env.BIBLIOTTER_HOME ?? process.env.HTMLDOCS_HOME ?? [join(homedir(), 'Bibliotter'), join(homedir(), 'HtmlDocs')].find((dir) => existsSync(join(dir, 'config.json')))
-  try {
-    const { roots = [] } = JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))
-    const inside = roots.some((root) => !relative(resolve(root), out).startsWith('..') && !isAbsolute(relative(resolve(root), out)))
-    if (!inside) warn(`${out} is outside the folders Bibliotter scans (${roots.join(', ')})`)
-  } catch {
-    // Bez konfiguracji apki nie wiemy, co skanuje, i nie ma czego ostrzegać.
-  }
+  const roots = libraryRoots()
+  if (roots && !roots.some((root) => isInside(root, out))) warn(`${out} is outside the folders Bibliotter scans (${roots.join(', ')})`)
 }
 checkPlace()
 
@@ -566,7 +880,6 @@ const minutes = Math.max(1, Math.round(words / 200))
 const runs = ordered.filter((source) => source.kind === 'run').length
 const project = basename(mainCheckout)
 const writtenBy = doc.writtenBy ?? 'Claude'
-const today = new Date().toISOString().slice(0, 10)
 if (!Array.isArray(doc.abstract) || doc.abstract.length === 0) problem('doc.json needs "abstract": one to three paragraphs with the thesis')
 if (!doc.title) problem('doc.json needs "title"')
 
@@ -574,6 +887,22 @@ const style = existsSync(join(work, 'style.css')) ? readWork('style.css') : ''
 const script = existsSync(join(work, 'script.js')) ? readWork('script.js') : ''
 if (/attachShadow/.test(script)) problem('script.js: no Shadow DOM')
 const kitScript = readFileSync(join(KIT, 'kit.js'), 'utf8').replace('__KIT_TEXT__', JSON.stringify({ again: T.again, recap: T.recap, revisit: T.revisit, waiting: T.waiting }))
+const planMd = plan.planMd
+const progress = plan.progress()
+const bylineRows = [
+  `<b>${isPlan ? T.base : T.change}</b> ${escape(changeLine)}`,
+  planMd ? `<b>${T.planFile}</b> <a href="${escape(planMd.href)}">${escape(basename(planMd.target))}</a> · ${T.sections(planMd.headings.length)}` : '',
+  `<b>${T.text}</b> ${escape(writtenBy)}, ${today}`,
+  `<b>${T.basis}</b> ${T.sources(numbers.size, runs)} · ${T.minutes(minutes)}`,
+  progress ? `<b>${T.progress}</b> ${progress}` : ''
+]
+  .filter(Boolean)
+  .join('<br>')
+const biblioIntro = !isPlan
+  ? T.biblioIntro.replace('{rev}', escape(changeRev === WORKTREE ? T.worktree : changeRev))
+  : changeRev === WORKTREE
+    ? T.biblioIntroPlanWorktree.replace('{date}', today)
+    : T.biblioIntroPlan.replace('{rev}', escape(changeRev))
 const tocItems = [
   ...headings.map(({ n, text }) => `<li><a href="#r${n}"><span class="n">${n}</span><span>${text.replace(/<[^>]+>/g, '')}</span></a></li>`),
   `<li><a href="#bibliografia"><span class="n"></span><span>${T.bibliography}</span></a></li>`,
@@ -585,30 +914,30 @@ const html = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="bibliotter-kind" content="explain">
+<meta name="bibliotter-kind" content="${isPlan ? 'plan' : 'explain'}">
 <meta name="bibliotter-kit" content="${KIT_VERSION}">
 <meta name="bibliotter-doc" content="${escape(slug)}">
-${fullChange ? `<meta name="bibliotter-commit" content="${fullChange}">\n` : ''}<title>${escape(doc.title ?? '')}</title>
+${fullChange ? `<meta name="${isPlan ? 'bibliotter-base' : 'bibliotter-commit'}" content="${fullChange}">\n` : ''}${planMd ? `<meta name="bibliotter-plan" content="${escape(planMd.href)}">\n` : ''}<title>${escape(doc.title ?? '')}</title>
 <style>${fonts}
 ${readFileSync(join(KIT, 'kit.css'), 'utf8')}${style ? `\n/* Styl tego dokumentu */\n${style}` : ''}</style>
 </head>
 <body>
 <main>
 <header>
-<p class="kicker">${escape(doc.kicker ?? `${T.kicker} · ${project} · ${changeRev === WORKTREE ? T.worktree : changeRev}`)}</p>
+<p class="kicker">${escape(doc.kicker ?? `${isPlan ? T.planKicker : T.kicker} · ${project} · ${changeRev === WORKTREE ? T.worktree : changeRev}`)}</p>
 <h1>${escape(doc.title ?? '')}</h1>
 ${doc.subtitle ? `<p class="subtitle">${escape(doc.subtitle)}</p>` : ''}
-<p class="byline"><b>${T.change}</b> ${escape(changeLine)}<br><b>${T.text}</b> ${escape(writtenBy)}, ${today}<br><b>${T.basis}</b> ${T.sources(numbers.size, runs)} · ${T.minutes(minutes)}</p>
+<p class="byline">${bylineRows}</p>
 </header>
 <section class="abstract" aria-label="${T.abstract}">
 <h2>${T.abstract}</h2>
 ${abstractHtml}
 </section>
-<nav class="toc" aria-label="${T.toc}"><ol>${tocItems}</ol></nav>
+${glanceHtml}<nav class="toc" aria-label="${T.toc}"><ol>${tocItems}</ol></nav>
 ${finalBody}
 <section class="biblio" id="bibliografia">
 <h2>${T.bibliography}</h2>
-<p class="intro">${T.biblioIntro.replace('{rev}', escape(changeRev === WORKTREE ? T.worktree : changeRev))}</p>
+<p class="intro">${biblioIntro}</p>
 <ol class="refs">${ordered.map(entry).join('\n')}</ol>
 </section>
 ${annex ? `<section class="annex" id="aneks">\n<h2>${T.annex}</h2>\n${annex}\n</section>\n` : ''}</main>
@@ -645,6 +974,15 @@ if (flag('--check')) {
 
 mkdirSync(dirname(out), { recursive: true })
 writeFileSync(out, html)
+
+/* Kopia planu spoza biblioteki leży obok dokumentu i na górze linkuje do objaśnienia. */
+if (planMd?.copy) {
+  const front = /^---\r?\n[\w-]+:[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(planMd.source)?.[0] ?? ''
+  const shown = planMd.path.startsWith(homedir()) ? `~${planMd.path.slice(homedir().length).replace(/\\/g, '/')}` : planMd.path.replace(/\\/g, '/')
+  const note = `> ${T.planCopyNote(shown, today, encodeURIComponent(basename(out)), String(doc.title ?? '').replace(/[[\]]/g, ''))}\n\n`
+  writeFileSync(planMd.target, `${front}${note}${planMd.source.slice(front.length)}`)
+  console.log(`copied the plan to ${planMd.target}`)
+}
 
 /* Dokument jest dla czytelnika, nie dla historii repozytorium, więc explain/ zostaje lokalnie. */
 const relativeOut = relative(mainCheckout, out)

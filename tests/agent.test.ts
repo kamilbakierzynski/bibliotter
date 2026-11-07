@@ -2,16 +2,17 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentApi } from '../src/main/agentApi'
 import { runCli, USAGE } from '../src/main/agentCli'
 import { handleLine, PROTOCOL_VERSIONS, serveMcp } from '../src/main/mcpServer'
+import { watchSignal } from '../src/main/signals'
 
 let dataDir: string
 let api: AgentApi
 
 beforeEach(async () => {
-  dataDir = await mkdtemp(join(tmpdir(), 'htmldocs-agent-'))
+  dataDir = await mkdtemp(join(tmpdir(), 'bibliotter-agent-'))
   api = new AgentApi(dataDir)
 })
 
@@ -21,6 +22,16 @@ afterEach(async () => {
 
 const addNote = (audience: 'agent' | 'me', text: string) =>
   api.annotations.create('d1', 'sha', { kind: 'comment', audience, color: null, anchor: null, text })
+
+const addDoc = async (id: string, title: string): Promise<void> => {
+  const path = join(dataDir, `${id}.md`)
+  await writeFile(path, `# ${title}\n`)
+  await mkdir(join(dataDir, 'library', id), { recursive: true })
+  await writeFile(
+    join(dataDir, 'library', id, 'meta.json'),
+    JSON.stringify({ id, path, title, firstSeenAt: '2026-11-06T10:00:00.000Z', status: 'to-read', sha: 'abc', mtimeMs: 1, projectPath: null, branch: null, commit: null, versions: [] })
+  )
+}
 
 const rpc = async (method: string, params?: unknown, id: number | undefined = 1): Promise<any> =>
   handleLine(api, JSON.stringify({ jsonrpc: '2.0', id, method, params }))
@@ -36,8 +47,33 @@ describe('runCli', () => {
   })
 
   it('odrzuca nieznaną komendę i brak argumentu', async () => {
-    await expect(runCli(['usuń'], api)).rejects.toThrow('Nieznana komenda')
-    await expect(runCli(['reply', 'a1'], api)).rejects.toThrow('Brakuje argumentu')
+    await expect(runCli(['usuń'], api)).rejects.toThrow('Unknown command')
+    await expect(runCli(['reply', 'a1'], api)).rejects.toThrow('Missing argument')
+    await expect(runCli(['label', 'd1'], api)).rejects.toThrow('Missing argument')
+  })
+
+  it('dodaje, filtruje i zdejmuje etykiety', async () => {
+    await addDoc('d1', 'Plan migracji')
+    await addDoc('d2', 'Pomysł')
+
+    expect(await runCli(['label', 'd1', 'Plan', 'PAY-1'], api)).toBe('Plan, PAY-1')
+    expect(await runCli(['list', '--label', 'plan'], api)).toContain('Plan migracji')
+    expect(await runCli(['list', '--label', 'plan'], api)).not.toContain('Pomysł')
+    expect(await runCli(['list'], api)).toContain('labels: Plan, PAY-1')
+    expect(await runCli(['labels'], api)).toBe('PAY-1  (1)\nPlan  (1)')
+    expect(await runCli(['unlabel', 'd1', 'Plan', 'PAY-1'], api)).toBe('The document has no labels.')
+    expect(await runCli(['labels'], api)).toBe('No labels.')
+  })
+
+  it('etykieta od agenta budzi otwartą apkę', async () => {
+    await addDoc('d1', 'Plan')
+    const onChange = vi.fn()
+    const stop = watchSignal(join(dataDir, 'library'), 'labels', onChange)
+
+    await runCli(['label', 'd1', 'Plan'], api)
+
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 3000 })
+    stop()
   })
 
   it('pomija uwagi prywatne, chyba że użyto --personal', async () => {
@@ -65,7 +101,7 @@ describe('runCli', () => {
       ['agent', 'Które kolumny?'],
       ['agent', 'Gotowe']
     ])
-    expect(await runCli(['comments'], api)).toBe('Brak uwag.')
+    expect(await runCli(['comments'], api)).toBe('No comments.')
   })
 
   it('czyta Markdown jako źródło i szuka w jego treści', async () => {
@@ -91,10 +127,32 @@ describe('runCli', () => {
     expect((await api.search('jednorożec'))[0]?.snippet).toBe('Plan Jednorożec w treści')
   })
 
+  it('czyta dokument po odnośniku ze skróconym id', async () => {
+    const addDocument = async (id: string): Promise<void> => {
+      const path = join(dataDir, `${id}.md`)
+      const meta = { id, path, title: id, firstSeenAt: '', status: 'to-read', sha: 'abc', mtimeMs: 1 }
+      await writeFile(path, `# ${id}\n`)
+      await mkdir(join(dataDir, 'library', id), { recursive: true })
+      await writeFile(
+        join(dataDir, 'library', id, 'meta.json'),
+        JSON.stringify({ ...meta, projectPath: null, branch: null, commit: null, versions: [] })
+      )
+    }
+    await addDocument('d1234567aaaa')
+    await addDocument('d1234567bbbb')
+
+    expect((await api.readDocument('bibliotter:d1234567aa')).title).toBe('d1234567aaaa')
+    expect((await api.readDocument('d1234567bb')).title).toBe('d1234567bbbb')
+    // Odnośniki sprzed zmiany nazwy na Bibliotter.
+    expect((await api.readDocument('htmldocs:d1234567bb')).title).toBe('d1234567bbbb')
+    await expect(api.readDocument('bibliotter:d1234567')).rejects.toThrow('several documents')
+    await expect(api.readDocument('bibliotter:d123')).rejects.toThrow('No document')
+  })
+
   it('zgłasza, że nic nie jest otwarte', async () => {
-    expect(await runCli(['current'], api)).toBe('W apce nie jest otwarty żaden dokument.')
+    expect(await runCli(['current'], api)).toBe('No document is open in the app.')
     expect(JSON.parse(await runCli(['current', '--json'], api))).toBeNull()
-    await expect(runCli(['read', 'current'], api)).rejects.toThrow('nie jest otwarty')
+    await expect(runCli(['read', 'current'], api)).rejects.toThrow('No document is open')
   })
 })
 
@@ -142,9 +200,28 @@ describe('serwer MCP', () => {
     const { result } = await rpc('tools/list')
     const writing = result.tools.filter((tool: any) => !tool.annotations.readOnlyHint).map((tool: any) => tool.name)
 
-    expect(result.tools).toHaveLength(7)
+    expect(result.tools).toHaveLength(9)
     expect(result.tools.every((tool: any) => tool.inputSchema.type === 'object')).toBe(true)
-    expect(writing).toEqual(['reply_comment', 'resolve_comment'])
+    expect(writing).toEqual(['label_document', 'reply_comment', 'resolve_comment'])
+  })
+
+  it('agent nadaje etykiety i widzi je na liście', async () => {
+    await addDoc('d1', 'Plan')
+
+    const added = await callTool('label_document', { document: 'd1', add: ['Plan', 'PAY-1'] })
+    await callTool('label_document', { document: 'd1', add: ['plan'], remove: ['PAY-1'] })
+    const listed = await callTool('list_documents', { label: 'PLAN' })
+    const labels = await callTool('list_labels')
+
+    expect(JSON.parse(added.content[0].text)).toEqual({ labels: ['Plan', 'PAY-1'] })
+    expect(JSON.parse(listed.content[0].text)[0].labels).toEqual(['Plan'])
+    expect(JSON.parse(labels.content[0].text)).toEqual([{ name: 'Plan', count: 1 }])
+  })
+
+  it('label_document odrzuca etykiety, które nie są listą tekstów', async () => {
+    const { error } = await rpc('tools/call', { name: 'label_document', arguments: { document: 'd1', add: 'Plan' } })
+
+    expect(error.message).toContain('add')
   })
 
   it('błąd wykonania wraca jako wynik narzędzia', async () => {

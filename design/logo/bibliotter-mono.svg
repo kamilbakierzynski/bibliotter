@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Bibliotter">
+  <title>Bibliotter</title>
+  <g fill="currentColor">
+    <circle cx="17" cy="28.500" r="5.800"/><g transform="matrix(-1 0 0 1 100 0)"><circle cx="17" cy="28.500" r="5.800"/></g>
+    <path fill-rule="evenodd" d="M10 50c0-20 17-33 40-33s40 13 40 33c-10 2-18 0-26-3-6-2.200-10-3.500-14-3.500s-8 1.300-14 3.500c-8 3-16 5-26 3zM30.1 35a4.4 4.4 0 1 0 8.8 0a4.4 4.4 0 1 0 -8.8 0zM61.1 35a4.4 4.4 0 1 0 8.8 0a4.4 4.4 0 1 0 -8.8 0z"/>
+    <path d="M43.500 41.500h13c1.800 0 2.700 2.200 1.400 3.400l-5 4.300c-1.600 1.400-4.200 1.400-5.800 0l-5-4.300c-1.300-1.200-.4-3.400 1.400-3.400z"/>
+    <path fill-rule="evenodd" d="M20 63H75L86 74V98H14V69a6 6 0 0 1 6-6zM29.2 77h41.6a2.2 2.2 0 0 1 2.2 2.2v0.0a2.2 2.2 0 0 1 -2.2 2.2h-41.6a2.2 2.2 0 0 1 -2.2 -2.2v-0.0a2.2 2.2 0 0 1 2.2 -2.2zM29.2 86.5h22.6a2.2 2.2 0 0 1 2.2 2.2v0.0a2.2 2.2 0 0 1 -2.2 2.2h-22.6a2.2 2.2 0 0 1 -2.2 -2.2v-0.0a2.2 2.2 0 0 1 2.2 -2.2z"/>
+  </g>
+  <path d="M50 49v4.500m0 0c-2 3-7 3.500-10 1.500m10-1.500c2 3 7 3.500 10 1.500" fill="none" stroke="currentColor" stroke-width="2.400" stroke-linecap="round"/>
+  <path d="M10.800 51c.8 4.500 2.700 8 5.700 10.500M89.200 51c-.8 4.500-2.700 8-5.700 10.500M3.500 53h8M96.500 53h-8" fill="none" stroke="currentColor" stroke-width="2.400" stroke-linecap="round"/>
+</svg>

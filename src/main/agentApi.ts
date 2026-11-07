@@ -2,14 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { Annotation, AnnotationKind, AnnotationStatus, Audience } from '../shared/annotations'
+import { countLabels, hasLabel, type LabelCount } from '../shared/labels'
 import { AnnotationStore } from './annotationStore'
 import { analyzeDocument, analyzeHtml } from './classify'
+import { loadConfig } from './config'
+import { LabelStore } from './labelStore'
 import { type DocMeta, MetaStore } from './metaStore'
-import { formatOf, normalizePath } from './scanner'
-import { normalizeText, queryTerms } from './textNormalize'
+import { formatOf, isInside, normalizePath } from './scanner'
+import { sendSignal } from './signals'
+import { normalizeText, queryTerms } from '../shared/textNormalize'
+import { referenceId } from '../shared/reference'
 
 const SEARCH_LIMIT = 30
 const SNIPPET_CONTEXT = 80
+const MIN_SHORT_ID = 8
 
 export interface CurrentDocument {
   docId: string
@@ -31,6 +37,7 @@ export interface AgentDocument {
   /** Oryginał zniknął i dostępna jest tylko zachowana kopia. */
   missing: boolean
   openComments: number
+  labels: string[]
 }
 
 export interface AgentComment {
@@ -83,17 +90,20 @@ const exists = (path: string): Promise<boolean> =>
  */
 export class AgentApi {
   private readonly metas: MetaStore
+  private readonly labelStore: LabelStore
   readonly annotations: AnnotationStore
 
   constructor(private readonly dataDir: string) {
     const libraryDir = join(dataDir, 'library')
     this.metas = new MetaStore(libraryDir)
+    this.labelStore = new LabelStore(libraryDir, () => sendSignal(libraryDir, 'labels'))
     this.annotations = new AnnotationStore(libraryDir)
   }
 
+  /** Folder ukryty w apce znika też z pola widzenia agenta, a dane dokumentów zostają na dysku. */
   private async allMetas(): Promise<DocMeta[]> {
-    await this.metas.load()
-    return this.metas.all()
+    const [{ hiddenFolders }] = await Promise.all([loadConfig(this.dataDir), this.metas.load()])
+    return this.metas.all().filter((meta) => !hiddenFolders.some((folder) => isInside(meta.path, folder)))
   }
 
   async current(): Promise<CurrentDocument | null> {
@@ -116,34 +126,62 @@ export class AgentApi {
       missing: !(await exists(meta.path)),
       openComments: annotations.filter(
         (item) => item.docId === meta.id && item.status === 'open' && item.audience === 'agent'
-      ).length
+      ).length,
+      labels: this.labelStore.get(meta.id)
     }
   }
 
-  async documents(filter: { status?: string; project?: string; branch?: string } = {}): Promise<AgentDocument[]> {
-    const [metas, annotations] = await Promise.all([this.allMetas(), this.annotations.listAll()])
+  async documents(
+    filter: { status?: string; project?: string; branch?: string; label?: string } = {}
+  ): Promise<AgentDocument[]> {
+    const [metas, annotations] = await Promise.all([this.allMetas(), this.annotations.listAll(), this.labelStore.load()])
     const visible = metas.filter((meta) => meta.classificationOverride !== 'ignored')
     const documents = await Promise.all(visible.map((meta) => this.toDocument(meta, annotations)))
     return documents
       .filter((doc) => !filter.status || doc.status === filter.status)
       .filter((doc) => !filter.project || doc.project === filter.project)
       .filter((doc) => !filter.branch || doc.branch === filter.branch)
+      .filter((doc) => !filter.label || hasLabel(doc.labels, filter.label))
       .sort((a, b) => (a.project ?? '').localeCompare(b.project ?? ''))
   }
 
-  /** Przyjmuje identyfikator, ścieżkę albo słowo `current`. */
+  async labels(): Promise<LabelCount[]> {
+    return countLabels((await this.documents()).map((doc) => doc.labels))
+  }
+
+  /** Zwraca etykiety dokumentu po zmianie. */
+  async changeLabels(reference: string, { add = [], remove = [] }: { add?: string[]; remove?: string[] }): Promise<string[]> {
+    const { id } = await this.resolve(reference)
+    if (!id) throw new Error(`Document ${reference} is not in the library`)
+    await this.labelStore.load()
+    const kept = this.labelStore.get(id).filter((label) => !hasLabel(remove, label))
+    return this.labelStore.set(id, [...kept, ...add])
+  }
+
+  /** Odnośnik z wiadomości niesie skrócone id, więc wystarczy jednoznaczny początek. */
+  private findMeta(metas: DocMeta[], reference: string): DocMeta | undefined {
+    const exact = metas.find(
+      (candidate) => candidate.id === reference || normalizePath(candidate.path) === normalizePath(reference)
+    )
+    if (exact) return exact
+    const id = referenceId(reference)
+    if (id.length < MIN_SHORT_ID) return undefined
+    const matches = metas.filter((candidate) => candidate.id.startsWith(id))
+    if (matches.length > 1) throw new Error(`Short id ${id} matches several documents`)
+    return matches[0]
+  }
+
+  /** Przyjmuje identyfikator, jego jednoznaczny początek, ścieżkę albo słowo `current`. */
   private async resolve(reference: string): Promise<{ id: string | null; path: string; title: string | null }> {
     const metas = await this.allMetas()
     if (reference === 'current') {
       const current = await this.current()
-      if (!current) throw new Error('W apce nie jest otwarty żaden dokument')
+      if (!current) throw new Error('No document is open in the app')
       const meta = metas.find((candidate) => candidate.id === current.docId)
       return { id: meta?.id ?? null, path: meta ? await this.readablePath(meta) : current.path, title: current.title }
     }
-    const meta = metas.find(
-      (candidate) => candidate.id === reference || normalizePath(candidate.path) === normalizePath(reference)
-    )
-    if (!meta) throw new Error(`Nie ma dokumentu ${reference}`)
+    const meta = this.findMeta(metas, reference)
+    if (!meta) throw new Error(`No document ${reference}`)
     return { id: meta.id, path: await this.readablePath(meta), title: meta.title }
   }
 
@@ -162,10 +200,13 @@ export class AgentApi {
 
   async comments(filter: CommentFilter = {}): Promise<AgentComment[]> {
     const metas = new Map((await this.allMetas()).map((meta) => [meta.id, meta]))
+    // Uwaga może dotyczyć dokumentu spoza biblioteki, więc pomijamy tylko te z ukrytych folderów.
+    const hidden = new Set(this.metas.all().flatMap((meta) => (metas.has(meta.id) ? [] : [meta.id])))
     const docId = filter.doc ? (await this.resolve(filter.doc)).id : null
     const status = filter.status ?? 'open'
 
     return (await this.annotations.listAll())
+      .filter((item) => !hidden.has(item.docId))
       .filter((item) => docId === null || item.docId === docId)
       .filter((item) => status === 'all' || item.status === status)
       .filter((item) => filter.includePersonal || item.audience === 'agent')

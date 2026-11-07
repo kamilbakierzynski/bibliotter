@@ -1,12 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Annotation, Audience } from '../../../shared/annotations'
+import { t } from '../../../shared/i18n'
 import { clamp } from '../motion/spring'
 import { G, insRope, type Sheet, viewPill } from '../shell/layout'
 import { closeThread, cancelDraft, documentNote, hang, noteNumber, selectNote, setInsp, setNotesView, submitDraft, syncViewSeg } from '../shell/notes'
-import { data, type Draft, focusedId, MOD, notify, ui, useShell } from '../shell/state'
+import { data, type Draft, focusedId, MOD, noteText, notify, ui, useShell } from '../shell/state'
 import { relativeTime } from '../tree'
 import { useSynced } from './hooks'
 import { Icon, Keys } from './icons'
+import { LinksPanel } from './Links'
+import { OutlinePanel } from './Outline'
+import { RoutePanel } from './Route'
 
 const BUBBLE_W = 272
 const BUBBLE_H = 128
@@ -19,7 +23,7 @@ const roomBelow = (height: number): number => height - G.dockZone - THREAD_INSET
 
 function AudienceSwitch({ value, onChange }: { value: Audience; onChange: (next: Audience) => void }): React.JSX.Element {
   return (
-    <div className="seg" role="radiogroup" aria-label="Odbiorca uwagi">
+    <div className="seg" role="radiogroup" aria-label={t('Odbiorca uwagi')}>
       {(['agent', 'me'] as const).map((option) => (
         <button
           key={option}
@@ -28,7 +32,7 @@ function AudienceSwitch({ value, onChange }: { value: Audience; onChange: (next:
           className={value === option ? 'on' : ''}
           onClick={() => onChange(option)}
         >
-          {option === 'agent' ? 'Dla agenta' : 'Dla mnie'}
+          {option === 'agent' ? t('Dla agenta') : t('Dla mnie')}
         </button>
       ))}
     </div>
@@ -46,15 +50,15 @@ function Composer({ draft, className }: { draft: Draft; className?: string }): R
   }, [])
 
   const submit = (): void => submitDraft(text, audience, draft.color)
-  const heading = draft.kind === 'sticky' ? 'Co chcesz zapamiętać?' : 'Co trzeba zmienić lub wyjaśnić?'
+  const heading = draft.kind === 'sticky' ? t('Co chcesz zapamiętać?') : t('Co trzeba zmienić lub wyjaśnić?')
 
   return (
     <div className={`bubble ${className ?? ''}`}>
       <textarea
         ref={input}
         rows={2}
-        aria-label="Treść uwagi"
-        placeholder={draft.anchor ? heading : 'Uwaga do całego dokumentu'}
+        aria-label={t('Treść uwagi')}
+        placeholder={draft.anchor ? heading : t('Uwaga do całego dokumentu')}
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
@@ -76,7 +80,7 @@ function Composer({ draft, className }: { draft: Draft; className?: string }): R
             input.current?.focus()
           }}
         />
-        <button className="hint" aria-label="Zapisz" disabled={!text.trim()} onClick={submit}>
+        <button className="hint" aria-label={t('Zapisz')} disabled={!text.trim()} onClick={submit}>
           <Keys keys={[MOD, '↵']} />
         </button>
       </div>
@@ -111,7 +115,9 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
   const [armed, setArmed] = useState(false)
   const element = useRef<HTMLElement>(null)
   const on = ui.selNote === note.id
-  const [first, ...rest] = note.messages
+  const highlight = note.kind === 'highlight'
+  const first = note.messages[0]
+  const rest = highlight ? note.messages : note.messages.slice(1)
   const fromAgent = note.messages.at(-1)?.author === 'agent'
   const open = note.status === 'open'
   const sha = data.entries.get(note.docId)?.sha ?? null
@@ -130,7 +136,9 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
 
   const classes = ['thread', on && 'on', !open && 'resolved'].filter(Boolean).join(' ')
   const mark =
-    note.kind === 'sticky' ? (
+    highlight ? (
+      <span className={`th-mark dab ${note.color ?? 'yellow'}`} />
+    ) : note.kind === 'sticky' ? (
       <span className={`th-mark sticky ${note.color ?? 'yellow'}`} />
     ) : (
       <span className={`th-mark${note.audience === 'me' ? ' me' : ''}${fromAgent && open ? ' hot' : ''}`}>{noteNumber(note.id)}</span>
@@ -140,14 +148,14 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
     <article ref={element} className={classes} data-thread={note.id}>
       <button className="th-head" aria-expanded={on} onClick={() => selectNote(note.id)}>
         {mark}
-        <span className="th-text">{first?.text}</span>
+        <span className="th-text">{highlight ? note.anchor?.quote || t('Zakreślony obszar') : noteText(note)}</span>
       </button>
       <div className="th-meta">
-        <span>{note.audience === 'agent' ? 'Dla agenta' : 'Dla mnie'}</span>
-        {first && <span>{relativeTime(Date.parse(first.createdAt))}</span>}
-        {fromAgent && open && <span className="th-flag">Agent odpisał</span>}
-        {orphaned && <span className="th-flag">Nie ma tego miejsca w tej wersji</span>}
-        {outdated && !orphaned && <span className="th-flag">Do starszej wersji</span>}
+        <span>{note.audience === 'agent' ? t('Dla agenta') : t('Dla mnie')}</span>
+        <span>{relativeTime(Date.parse(first?.createdAt ?? note.createdAt))}</span>
+        {fromAgent && open && <span className="th-flag">{t('Agent odpisał')}</span>}
+        {orphaned && <span className="th-flag">{t('Nie ma tego miejsca w tej wersji')}</span>}
+        {outdated && !orphaned && <span className="th-flag">{t('Do starszej wersji')}</span>}
       </div>
       <div className="th-body">
         <div>
@@ -156,7 +164,7 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
             <div className={`msg ${message.author}`} key={message.id}>
               <b>
                 <Icon name={message.author === 'agent' ? 'term' : 'me'} />
-                {message.author === 'agent' ? 'Agent' : 'Ty'}
+                {message.author === 'agent' ? 'Agent' : t('Ty')}
               </b>
               {message.text}
             </div>
@@ -164,8 +172,8 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
           <div className="reply">
             <input
               type="text"
-              placeholder="Odpowiedz"
-              aria-label="Odpowiedź"
+              placeholder={highlight && !first ? t('Dopisz notatkę') : t('Odpowiedz')}
+              aria-label={t('Odpowiedź')}
               value={reply}
               onChange={(event) => setReply(event.target.value)}
               onKeyDown={(event) => {
@@ -178,7 +186,7 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
             />
             <button
               className="mini"
-              aria-label={open ? 'Zamknij uwagę' : 'Otwórz ponownie'}
+              aria-label={open ? t('Zamknij uwagę') : t('Otwórz ponownie')}
               onClick={() => void window.api.setAnnotationStatus(note.id, open ? 'resolved' : 'open')}
             >
               <Icon name={open ? 'check' : 'refresh'} />
@@ -186,7 +194,7 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
           </div>
           <div className="th-acts">
             <button onClick={() => void window.api.setAnnotationAudience(note.id, note.audience === 'agent' ? 'me' : 'agent')}>
-              {note.audience === 'agent' ? 'Tylko dla mnie' : 'Pokaż agentowi'}
+              {note.audience === 'agent' ? t('Tylko dla mnie') : t('Pokaż agentowi')}
             </button>
             <button
               className="danger"
@@ -195,7 +203,7 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
                 else setArmed(true)
               }}
             >
-              {armed ? 'Na pewno?' : 'Usuń'}
+              {armed ? t('Na pewno?') : t('Usuń')}
             </button>
           </div>
         </div>
@@ -230,7 +238,7 @@ export function ThreadPop({ note, sheet }: { note: Annotation; sheet: Sheet }): 
   )
 }
 
-export function Insp(): React.JSX.Element {
+function NotesPanel(): React.JSX.Element {
   useShell()
   const docId = focusedId()
   const all = docId ? data.annotations.filter((note) => note.docId === docId) : []
@@ -245,7 +253,86 @@ export function Insp(): React.JSX.Element {
   })
 
   return (
-    <aside className="insp" id="insp" aria-label="Uwagi">
+    <>
+      <header className="insp-head">
+        <strong>
+          {t('Uwagi')} <span>{open.length || ''}</span>
+        </strong>
+        <div className="seg view-seg" id="viewSeg" role="radiogroup" aria-label={t('Układ uwag')}>
+          <i className="view-pill" ref={viewPill.bind} />
+          {(
+            [
+              ['wall', 'wall', t('Przy cytatach')],
+              ['list', 'right', t('Lista w panelu')]
+            ] as const
+          ).map(([view, icon, label]) => (
+            <button
+              key={view}
+              className={ui.notesView === view ? 'mini on' : 'mini'}
+              data-view-mode={view}
+              role="radio"
+              aria-checked={ui.notesView === view}
+              aria-label={label}
+              onClick={() => setNotesView(view)}
+            >
+              <Icon name={icon} />
+            </button>
+          ))}
+        </div>
+        <button className="mini" aria-label={t('Zamknij uwagi')} onClick={() => setInsp(false)}>
+          <Icon name="x" />
+        </button>
+      </header>
+      <div className="threads" id="threads">
+        {visible.map((note) => (
+          <ThreadCard key={note.id} note={note} />
+        ))}
+        {visible.length === 0 && !draft && (
+          <p className="empty">{t('Naciśnij C albo N i kliknij miejsce w dokumencie. Możesz też najpierw zaznaczyć tekst.')}</p>
+        )}
+      </div>
+      <footer className="insp-foot">
+        {draft ? (
+          <Composer key={draft.docId} draft={draft} className="inline" />
+        ) : (
+          <div className="insp-acts">
+            <button className="ask" disabled={docId === null} onClick={documentNote}>
+              <span>{t('Uwaga do całego dokumentu')}</span>
+            </button>
+            {resolved > 0 && (
+              <button
+                className="ask"
+                onClick={() => {
+                  ui.showResolved = !ui.showResolved
+                  notify()
+                }}
+              >
+                <span>{ui.showResolved ? t('Ukryj zamknięte') : t('Zamknięte: {n}', { n: resolved })}</span>
+              </button>
+            )}
+          </div>
+        )}
+      </footer>
+    </>
+  )
+}
+
+export function Insp(): React.JSX.Element {
+  useShell()
+  return (
+    <aside
+      className="insp"
+      id="insp"
+      aria-label={
+        ui.inspView === 'links'
+          ? t('Linki')
+          : ui.inspView === 'outline'
+            ? t('Spis treści')
+            : ui.inspView === 'route'
+              ? t('Trasa prezentacji')
+              : t('Uwagi')
+      }
+    >
       <svg className="shape" aria-hidden="true">
         <path
           id="inspPath"
@@ -255,65 +342,15 @@ export function Insp(): React.JSX.Element {
         />
       </svg>
       <div className="insp-in" id="inspIn">
-        <header className="insp-head">
-          <strong>
-            Uwagi <span>{open.length || ''}</span>
-          </strong>
-          <div className="seg view-seg" id="viewSeg" role="radiogroup" aria-label="Układ uwag">
-            <i className="view-pill" ref={viewPill.bind} />
-            {(
-              [
-                ['wall', 'wall', 'Przy cytatach'],
-                ['list', 'right', 'Lista w panelu']
-              ] as const
-            ).map(([view, icon, label]) => (
-              <button
-                key={view}
-                className={ui.notesView === view ? 'mini on' : 'mini'}
-                data-view-mode={view}
-                role="radio"
-                aria-checked={ui.notesView === view}
-                aria-label={label}
-                onClick={() => setNotesView(view)}
-              >
-                <Icon name={icon} />
-              </button>
-            ))}
-          </div>
-          <button className="mini" aria-label="Zamknij uwagi" onClick={() => setInsp(false)}>
-            <Icon name="x" />
-          </button>
-        </header>
-        <div className="threads" id="threads">
-          {visible.map((note) => (
-            <ThreadCard key={note.id} note={note} />
-          ))}
-          {visible.length === 0 && !draft && (
-            <p className="empty">Naciśnij C albo N i kliknij miejsce w dokumencie. Możesz też najpierw zaznaczyć tekst.</p>
-          )}
-        </div>
-        <footer className="insp-foot">
-          {draft ? (
-            <Composer key={draft.docId} draft={draft} className="inline" />
-          ) : (
-            <div className="insp-acts">
-              <button className="ask" disabled={docId === null} onClick={documentNote}>
-                <span>Uwaga do całego dokumentu</span>
-              </button>
-              {resolved > 0 && (
-                <button
-                  className="ask"
-                  onClick={() => {
-                    ui.showResolved = !ui.showResolved
-                    notify()
-                  }}
-                >
-                  <span>{ui.showResolved ? 'Ukryj zamknięte' : `Zamknięte: ${resolved}`}</span>
-                </button>
-              )}
-            </div>
-          )}
-        </footer>
+        {ui.inspView === 'links' ? (
+          <LinksPanel docId={focusedId()} />
+        ) : ui.inspView === 'outline' ? (
+          <OutlinePanel docId={focusedId()} />
+        ) : ui.inspView === 'route' ? (
+          <RoutePanel docId={focusedId()} />
+        ) : (
+          <NotesPanel />
+        )}
       </div>
     </aside>
   )

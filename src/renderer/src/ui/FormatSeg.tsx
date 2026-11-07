@@ -1,9 +1,10 @@
 import { DOC_FORMATS, FORMAT_LABELS } from '../../../shared/types'
+import { t } from '../../../shared/i18n'
 import { setFormat } from '../shell/home'
 import { type FormatFilter, hasBothFormats, ui } from '../shell/state'
 
-const OPTIONS: { id: FormatFilter; label: string }[] = [
-  { id: 'all', label: 'Wszystkie' },
+const choices = (): { id: FormatFilter; label: string }[] => [
+  { id: 'all', label: t('Wszystkie') },
   ...DOC_FORMATS.map((id) => ({ id, label: FORMAT_LABELS[id] }))
 ]
 
@@ -11,8 +12,8 @@ const OPTIONS: { id: FormatFilter; label: string }[] = [
 export function FormatSeg(): React.JSX.Element | null {
   if (!hasBothFormats()) return null
   return (
-    <div className="seg format-seg" role="radiogroup" aria-label="Format dokumentów">
-      {OPTIONS.map(({ id, label }) => (
+    <div className="seg format-seg" role="radiogroup" aria-label={t('Format dokumentów')}>
+      {choices().map(({ id, label }) => (
         <button
           key={id}
           role="radio"

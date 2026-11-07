@@ -1,3 +1,4 @@
+import { syncFind } from './find'
 import { goHome, openHome, thumbOf } from './home'
 import { applyLayout, paintGlow, reflow, SHUT, OFF, sheets, sL, sR, syncCam, syncChrome, syncSel } from './layout'
 import { clearFrames, dropView, ensureView, syncCurrent, viewIsOpen } from './native'
@@ -25,6 +26,7 @@ export function syncFocus(): void {
   syncCam()
   syncCurrent()
   afterFocusChange()
+  syncFind()
   rememberLayout()
   notify()
 }
@@ -54,7 +56,8 @@ export function openDoc(id: string, pane = ui.focus): void {
   ui.focus = pane
   closeThread()
   setSelNote(null)
-  setTool('move')
+  // Prezentacja, zakreślanie i kształty idą dalej przez kolejne dokumenty, a uwaga należy do tego, który się zamyka.
+  if (ui.tool !== 'pointer' && ui.tool !== 'highlight' && ui.tool !== 'shape') setTool('move')
   setPane(pane, id)
   syncFocus()
   applyLayout()
@@ -97,6 +100,16 @@ export function peekDoc(id: string): void {
     { k: 170, z: 0.72 }
   )
   syncFocus()
+}
+
+/** Link działa jak wiersz listy: klik otwiera na miejscu arkusza z linkiem, a Ctrl zerka. */
+export function followLink(from: string, id: string, peek: boolean): void {
+  if (peek) {
+    peekDoc(id)
+    return
+  }
+  const pane = ui.panes.indexOf(from)
+  openDoc(id, pane >= 0 ? pane : ui.focus)
 }
 
 export function closePeek(): void {

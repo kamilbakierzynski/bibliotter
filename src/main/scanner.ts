@@ -3,6 +3,7 @@ import { type Dirent } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import type { DocFormat } from '../shared/types'
+import { startQueue } from './concurrency'
 
 const IGNORED_DIRECTORIES = new Set([
   'node_modules',
@@ -82,13 +83,18 @@ interface PendingDirectory {
   repoDir: string | null
 }
 
-/** Znajduje dokumenty w wybranych folderach. Nie czyta ich zawartości. */
-export async function walkRoots(roots: string[]): Promise<WalkResult> {
+/** Znajduje dokumenty w wybranych folderach. Nie czyta ich zawartości i nie wchodzi do ukrytych. */
+export async function walkRoots(
+  roots: string[],
+  hidden: string[] = [],
+  onFound?: (file: FoundFile) => void
+): Promise<WalkResult> {
   const files: FoundFile[] = []
   const unavailableRoots: string[] = []
-  const seenDirectories = new Set<string>()
+  // Ukryty folder obejmuje podfoldery, bo skan schodzi w dół i po prostu do nich nie dojdzie.
+  const seenDirectories = new Set(hidden.map(normalizePath))
   const queue: PendingDirectory[] = []
-  let active = 0
+  let visited = 0
 
   // Foldery mogą się nakładać, więc każdy katalog odwiedzamy tylko raz.
   const enqueue = (directory: PendingDirectory): void => {
@@ -141,26 +147,14 @@ export async function walkRoots(roots: string[]): Promise<WalkResult> {
       })
     )
     for (const file of found) {
-      if (file) files.push(file)
-    }
-  }
-
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const next = queue.shift()
-      if (next) {
-        active += 1
-        await visit(next)
-        active -= 1
-      } else if (active === 0) {
-        return
-      } else {
-        await new Promise((done) => setImmediate(done))
-      }
+      if (!file) continue
+      files.push(file)
+      onFound?.(file)
     }
   }
 
   for (const root of roots) {
+    if (hidden.some((folder) => isInside(root, folder))) continue
     try {
       await readdir(root)
       enqueue({ path: root, root, repoDir: null })
@@ -169,7 +163,10 @@ export async function walkRoots(roots: string[]): Promise<WalkResult> {
     }
   }
 
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+  await new Promise<void>((finished) => {
+    const take = (): PendingDirectory | undefined => (visited < queue.length ? queue[visited++] : undefined)
+    startQueue(CONCURRENCY, take, visit, finished)()
+  })
   return { files, unavailableRoots }
 }
 

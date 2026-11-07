@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Bibliotter">
+  <title>Bibliotter</title>
+  <defs>
+    <clipPath id="tile"><rect width="32" height="32" rx="7.400"/></clipPath>
+    <clipPath id="head"><path d="M16 5c7.700 0 13 4.300 13 10.500 0 2.700-1.300 4.700-3.300 6.500H6.300C4.300 20.200 3 18.200 3 15.500 3 9.300 8.300 5 16 5z"/></clipPath>
+  </defs>
+  <rect width="32" height="32" rx="7.400" fill="#0c0c0e"/>
+  <g clip-path="url(#tile)">
+    <path d="M.9 17.500h3M31.100 17.500h-3" fill="none" stroke="#eeeef1" stroke-width="1.100" stroke-linecap="round"/>
+    <circle cx="5.500" cy="8.500" r="2.300" fill="#7b7b84"/><circle cx="26.500" cy="8.500" r="2.300" fill="#7b7b84"/>
+    <path d="M3 15.500c0 2.700 1.300 4.700 3.300 6.500h19.400c2-1.800 3.300-3.800 3.300-6.500L16 12z" fill="#eeeef1"/>
+    <path d="M3 15.500C3 9.300 8.300 5 16 5s13 4.300 13 10.500c-3 .8-5.500.2-8-1-2-.9-3.500-1.500-5-1.500s-3 .6-5 1.500c-2.500 1.200-5 1.800-8 1z" fill="#808089"/>
+    <circle cx="10.500" cy="11" r="1.700" fill="#0c0c0e"/><circle cx="21.500" cy="11" r="1.700" fill="#0c0c0e"/>
+    <path d="M13.800 13h4.400c.8 0 1.200.9.600 1.500l-1.800 1.700c-.6.500-1.400.5-2 0l-1.800-1.700c-.6-.6-.2-1.500.6-1.500z" fill="#0c0c0e"/>
+    <path d="M6.500 20H23.500L28 24.500V34H4V22.500A2.500 2.500 0 0 1 6.500 20z" fill="none" stroke="#0c0c0e" stroke-width="2" clip-path="url(#head)"/>
+    <path d="M6.500 20.500H23.500L27 24V34H5V22a1.500 1.500 0 0 1 1.500-1.500z" fill="#fbfbfc"/>
+    <path d="M23.500 20.500V22.500a1.500 1.500 0 0 0 1.500 1.500h2z" fill="#b9b9c1"/>
+    <rect x="9" y="26" width="14" height="2" rx="1" fill="#bfbfc6"/><rect x="9" y="29.500" width="8" height="2" rx="1" fill="#bfbfc6"/>
+    <rect x="8" y="18" width="5" height="4.500" rx="2.200" fill="#7b7b84"/><rect x="19" y="18" width="5" height="4.500" rx="2.200" fill="#7b7b84"/>
+  </g>
+</svg>

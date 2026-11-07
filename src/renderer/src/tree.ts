@@ -1,3 +1,4 @@
+import { locale, plural, t } from '../../shared/i18n'
 import type { DocEntry, DocStatus, ProjectGroup, PullRequest } from '../../shared/types'
 
 export type SortMode = 'recent' | 'name'
@@ -8,6 +9,10 @@ export interface FolderNode {
   key: string
   name: string
   children: TreeNode[]
+  /** Foldery na dysku. Zwykle jeden, ale dokumenty z worktree trafiają do wspólnego wiersza. */
+  paths: string[]
+  /** Nazwa nadana w apce. */
+  renamed: boolean
   /** Ustawione, gdy węzeł to branch, a nie folder. */
   branch?: { pullRequest: PullRequest | undefined; latestMtime: number }
   /** Grupa zarchiwizowanych dokumentów na końcu projektu. */
@@ -26,17 +31,17 @@ export interface DocNode {
 
 export type TreeNode = FolderNode | DocNode
 
-export const STATUS_LABELS: Record<DocStatus, string> = {
-  'to-read': 'Do przeczytania',
-  read: 'Przeczytane',
-  'to-decide': 'Do decyzji',
-  decided: 'Zdecydowane',
-  archived: 'Archiwum'
-}
+/** Ręczna kolejność: klucze dzieci według klucza rodzica. Projekty mają rodzica `PROJECTS_KEY`. */
+export type ManualOrder = Record<string, string[]>
+export const PROJECTS_KEY = ':projects'
 
 export interface TreeOptions {
   sort?: SortMode
   toneOf?: (doc: DocEntry) => Tone
+  /** Nazwy folderów nadane w apce, według ścieżki. */
+  names?: Record<string, string>
+  /** Kolejność ułożona ręcznie. Czego w niej nie ma, stoi przed ułożonymi, według `sort`. */
+  order?: ManualOrder
 }
 
 const collator = new Intl.Collator('pl', { numeric: true })
@@ -44,18 +49,58 @@ const TONE_ORDER: Tone[] = ['none', 'read', 'decide']
 const stronger = (a: Tone, b: Tone): Tone => (TONE_ORDER.indexOf(a) > TONE_ORDER.indexOf(b) ? a : b)
 const latestOf = (node: TreeNode): number => (node.kind === 'folder' ? node.latest : node.doc.mtimeMs)
 
-function sortNodes(nodes: TreeNode[], sort: SortMode): TreeNode[] {
+/** Segment ścieżki względnej, który nie jest folderem w projekcie: kopia spoza niego albo inny dysk. */
+const OUTSIDE = /^(?:\.\.|[a-z]:)$/i
+
+/** Folder `up` poziomów nad plikiem. Renderer nie ma `path`, a ścieżka niesie ukośniki systemu. */
+function parentPath(path: string, up: number): string {
+  let end = path.length
+  for (let i = 0; i < up; i++) end = Math.max(path.lastIndexOf('/', end - 1), path.lastIndexOf('\\', end - 1))
+  return path.slice(0, end)
+}
+
+export const lastSegment = (path: string): string => path.split(/[\\/]/).at(-1) ?? path
+
+/** Foldery, z których pochodzą dokumenty projektu: repozytorium, jego worktree albo przypięty folder. */
+export function projectFolders(project: ProjectGroup): string[] {
+  const live = project.docs.filter((doc) => !doc.missing)
+  if (live.length === 0) return [project.path]
+  return [...new Set(live.map((doc) => parentPath(doc.path, doc.relPath.split('/').length)))]
+}
+
+/** Branche, foldery i dokumenty stoją w osobnych grupach, a ręczna kolejność działa w obrębie grupy. */
+export const nodeGroup = (node: TreeNode): number => (node.kind === 'doc' ? 2 : node.branch ? 0 : 1)
+
+/**
+ * Układa listę według ręcznej kolejności. Lista musi już stać w kolejności sortowania, bo węzły
+ * spoza zapisanej kolejności, czyli zwykle nowe, zachowują ją i stają przed ułożonymi.
+ */
+export function arrange<T>(items: T[], keyOf: (item: T) => string, groupOf: (item: T) => number, saved: string[] | undefined): T[] {
+  if (!saved || saved.length === 0) return items
+  const place = new Map(saved.map((key, i) => [key, i]))
+  const base = new Map(items.map((item, i) => [item, i]))
+  const rank = (item: T): number => place.get(keyOf(item)) ?? -1
+  return items.sort((a, b) => {
+    const group = groupOf(a) - groupOf(b)
+    if (group !== 0) return group
+    const ra = rank(a)
+    const rb = rank(b)
+    if (ra < 0 || rb < 0) return ra < 0 && rb < 0 ? (base.get(a) as number) - (base.get(b) as number) : ra < 0 ? -1 : 1
+    return ra - rb
+  })
+}
+
+function sortNodes(nodes: TreeNode[], sort: SortMode, parent: string, order: ManualOrder | undefined): TreeNode[] {
   const label = (node: TreeNode): string => (node.kind === 'folder' ? node.name : displayName(node.doc))
   nodes.sort((a, b) => {
-    const aBranch = a.kind === 'folder' && a.branch ? 0 : 1
-    const bBranch = b.kind === 'folder' && b.branch ? 0 : 1
-    if (aBranch !== bBranch) return aBranch - bBranch
-    if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+    const group = nodeGroup(a) - nodeGroup(b)
+    if (group !== 0) return group
     if (sort === 'recent' && latestOf(a) !== latestOf(b)) return latestOf(b) - latestOf(a)
     return collator.compare(label(a), label(b))
   })
+  if (order) arrange(nodes, (node) => node.key, nodeGroup, order[parent])
   for (const node of nodes) {
-    if (node.kind === 'folder') sortNodes(node.children, sort)
+    if (node.kind === 'folder') sortNodes(node.children, sort, node.key, order)
   }
   return nodes
 }
@@ -86,27 +131,42 @@ function compactNodes(nodes: TreeNode[]): TreeNode[] {
     const children = compactNodes(node.children)
     const [only] = children
     if (node.branch || children.length !== 1 || !only) return { ...node, children }
-    if (only.kind === 'doc') return only
+    if (only.kind === 'doc' || only.renamed) return only
     return only.branch ? { ...node, children } : { ...only, name: `${node.name}/${only.name}` }
   })
 }
 
-function insertDoc(root: TreeNode[], folders: Map<string, FolderNode>, parentKey: string, doc: DocEntry): void {
+function insertDoc(
+  root: TreeNode[],
+  folders: Map<string, FolderNode>,
+  parentKey: string,
+  doc: DocEntry,
+  names: Record<string, string>
+): void {
   const segments = doc.relPath.split('/')
   segments.pop()
 
   let siblings = root
   let key = parentKey
-  for (const segment of segments) {
+  segments.forEach((segment, depth) => {
     key = `${key}/${segment}`
     let folder = folders.get(key)
     if (!folder) {
-      folder = { kind: 'folder', key, name: segment, children: [], count: 0, latest: 0, tone: 'none' }
+      folder = { kind: 'folder', key, name: segment, children: [], paths: [], renamed: false, count: 0, latest: 0, tone: 'none' }
       folders.set(key, folder)
       siblings.push(folder)
     }
+    const path = OUTSIDE.test(segment) ? null : parentPath(doc.path, segments.length - depth)
+    if (path && !folder.paths.includes(path)) {
+      folder.paths.push(path)
+      const alias = names[path]
+      if (alias) {
+        folder.name = alias
+        folder.renamed = true
+      }
+    }
     siblings = folder.children
-  }
+  })
   siblings.push({ kind: 'doc', key: doc.id, doc })
 }
 
@@ -114,11 +174,12 @@ function insertDoc(root: TreeNode[], folders: Map<string, FolderNode>, parentKey
 export function buildTree(project: ProjectGroup, options: TreeOptions = {}): TreeNode[] {
   const root: TreeNode[] = []
   const folders = new Map<string, FolderNode>()
+  const names = options.names ?? {}
 
   for (const doc of project.docs) {
     const onSideBranch = doc.branch !== null && doc.branch !== project.defaultBranch
     if (!onSideBranch || doc.branch === null) {
-      insertDoc(root, folders, project.id, doc)
+      insertDoc(root, folders, project.id, doc, names)
       continue
     }
     const branchKey = `${project.id}#${doc.branch}`
@@ -129,6 +190,8 @@ export function buildTree(project: ProjectGroup, options: TreeOptions = {}): Tre
         key: branchKey,
         name: doc.branch,
         children: [],
+        paths: [],
+        renamed: false,
         branch: { pullRequest: project.pullRequests[doc.branch], latestMtime: 0 },
         count: 0,
         latest: 0,
@@ -140,12 +203,12 @@ export function buildTree(project: ProjectGroup, options: TreeOptions = {}): Tre
     if (branchNode.branch) {
       branchNode.branch.latestMtime = Math.max(branchNode.branch.latestMtime, doc.mtimeMs)
     }
-    insertDoc(branchNode.children, folders, branchKey, doc)
+    insertDoc(branchNode.children, folders, branchKey, doc, names)
   }
 
   const nodes = compactNodes(root)
   summarize(nodes, options.toneOf ?? (() => 'none'))
-  return sortNodes(nodes, options.sort ?? 'name')
+  return sortNodes(nodes, options.sort ?? 'name', project.id, options.order)
 }
 
 /** Większy folder startuje zwinięty i pokazuje tylko licznik. */
@@ -179,7 +242,7 @@ export interface LibraryModel {
  * Układa bibliotekę. Archiwum to zwykle większość plików, więc nie miesza się z bieżącą pracą:
  * ląduje na końcu projektu w jednej grupie, a projekt z samym archiwum po prostu jest zwinięty.
  */
-export function buildLibrary(projects: ProjectGroup[], options: Required<TreeOptions>): LibraryModel {
+export function buildLibrary(projects: ProjectGroup[], options: Required<Pick<TreeOptions, 'sort' | 'toneOf'>> & TreeOptions): LibraryModel {
   const defaults = new Set<string>()
   const chains = new Map<string, string[]>()
 
@@ -191,7 +254,7 @@ export function buildLibrary(projects: ProjectGroup[], options: Required<TreeOpt
     if (!stale && archived.length > 0) {
       const key = `${project.id}#:archive`
       const children = buildTree({ ...project, id: key, docs: archived }, options)
-      const archive: FolderNode = { kind: 'folder', key, name: 'Archiwum', children, archive: true, count: 0, latest: 0, tone: 'none' }
+      const archive: FolderNode = { kind: 'folder', key, name: t('Archiwum'), children, paths: [], renamed: false, archive: true, count: 0, latest: 0, tone: 'none' }
       summarize([archive], options.toneOf)
       nodes.push(archive)
     }
@@ -223,7 +286,9 @@ export function buildLibrary(projects: ProjectGroup[], options: Required<TreeOpt
     options.sort === 'name'
       ? (a: ProjectModel, b: ProjectModel): number => collator.compare(a.project.name, b.project.name)
       : (a: ProjectModel, b: ProjectModel): number => Number(a.stale) - Number(b.stale) || b.latest - a.latest
-  return { projects: models.sort(order), defaults, chains }
+  const sorted = models.sort(order)
+  if (options.order) arrange(sorted, (model) => model.project.id, () => 0, options.order[PROJECTS_KEY])
+  return { projects: sorted, defaults, chains }
 }
 
 interface RowPlace {
@@ -269,7 +334,9 @@ interface WalkContext {
 export function flattenLibrary(
   library: LibraryModel,
   isClosed: (key: string, byDefault: boolean) => boolean,
-  closing: ReadonlySet<string>
+  closing: ReadonlySet<string>,
+  /** Wiersze ukryte przed chwilą. Skan dużej biblioteki chwilę trwa, a one mają zniknąć od razu. */
+  leaving: ReadonlySet<string> = new Set()
 ): LibraryRows {
   const rows: LibraryRow[] = []
   let line = 0
@@ -286,7 +353,7 @@ export function flattenLibrary(
   const walk = (nodes: TreeNode[], context: WalkContext): void => {
     const { top, guides, chain, parentY, ghostY } = context
     nodes.forEach((node, index) => {
-      if (full(context)) return
+      if (full(context) || leaving.has(node.key)) return
       const next = nodes[index + 1]
       const bare = top && node.kind === 'folder'
       const indent = top ? (bare ? TOP_X : TOP_X + TREE_STEP) : context.x
@@ -316,6 +383,7 @@ export function flattenLibrary(
 
   for (const model of library.projects) {
     const { id } = model.project
+    if (leaving.has(id)) continue
     const closed = isClosed(id, library.defaults.has(id))
     const y = place(null)
     rows.push({ key: id, y, from: y, indent: 0, guides: [], elbow: null, chain: [], ghost: false, type: 'project', model, closed })
@@ -334,15 +402,12 @@ export function inboxDocs(projects: ProjectGroup[]): DocEntry[] {
 }
 
 export function blockedLabel(count: number): string {
-  const lastTwo = count % 100
-  const last = count % 10
-  if (count === 1) return 'Zablokowano 1 żądanie'
-  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return `Zablokowano ${count} żądania`
-  return `Zablokowano ${count} żądań`
+  return t('Zablokowano {count} {requests}', { count, requests: plural(count, 'żądanie', 'żądania', 'żądań') })
 }
 
 /** Tytuł dokumentu mówi więcej niż nazwa pliku, szczególnie przy `index.html`. */
 export function displayName(doc: DocEntry): string {
+  if (doc.alias) return doc.alias
   if (doc.title) return doc.title
   const name = doc.name.replace(/\.(?:html?|md|markdown)$/i, '')
   return name.toLowerCase() === 'index' ? (doc.relPath.split('/').at(-2) ?? name) : name
@@ -350,11 +415,11 @@ export function displayName(doc: DocEntry): string {
 
 export function relativeTime(mtimeMs: number, now = Date.now()): string {
   const minutes = Math.round((now - mtimeMs) / 60_000)
-  if (minutes < 1) return 'przed chwilą'
-  if (minutes < 60) return `${minutes} min temu`
+  if (minutes < 1) return t('przed chwilą')
+  if (minutes < 60) return t('{n} min temu', { n: minutes })
   const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} godz. temu`
+  if (hours < 24) return t('{n} godz. temu', { n: hours })
   const days = Math.round(hours / 24)
-  if (days < 30) return days === 1 ? 'wczoraj' : `${days} dni temu`
-  return new Date(mtimeMs).toLocaleDateString('pl-PL')
+  if (days < 30) return days === 1 ? t('wczoraj') : t('{n} dni temu', { n: days })
+  return new Date(mtimeMs).toLocaleDateString(locale())
 }

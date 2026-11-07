@@ -105,7 +105,7 @@ describe('AnnotationStore', () => {
   })
 
   it('odrzuca pustą treść', async () => {
-    await expect(store.create('d1', 's', { ...comment, text: '   ' })).rejects.toThrow('pusta')
+    await expect(store.create('d1', 's', { ...comment, text: '   ' })).rejects.toThrow('empty')
   })
 
   it('dopisuje wiadomości i zmienia status', async () => {
@@ -220,7 +220,7 @@ describe('AgentApi', () => {
   it('zgłasza brak otwartego dokumentu', async () => {
     await writeCurrentDocument(home, null)
 
-    await expect(api.readDocument('current')).rejects.toThrow('żaden dokument')
+    await expect(api.readDocument('current')).rejects.toThrow('No document is open')
     expect(await api.current()).toBeNull()
   })
 

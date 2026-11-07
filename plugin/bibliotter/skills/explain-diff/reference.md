@@ -53,6 +53,7 @@ Every source needs `kind` and `note`. The note is one sentence saying what this 
 | `run` | `file` (one path or a list), `command` | a saved experiment output; labelled Experiment A, B... in citation order. A list keeps several output files of one experiment under one letter |
 | `said` | `quote`, `who`, `when` | the user's exact words from this conversation, for intent |
 | `doc` | `href`, `title` | another document, usually from the library |
+| `web` | `url`, `title`, `accessed`, `quote` | documentation of a library or platform; quote one sentence at most |
 
 Excerpt fields:
 
@@ -92,6 +93,8 @@ Kit classes for your own blocks:
 <figcaption>Figure 1. The same steps before and after, from experiments {{exp:before}} and {{exp:after}}.</figcaption>
 </figure>
 ```
+- Figures with a `<figcaption>` are numbered by the build, so `Rysunek 1.` at the start of a caption is optional. Give a figure an `id` and write `{{fig:id}}` to refer to its number.
+- `<!--figure:id-->` places a flow or sequence diagram defined in `doc.json` `figures`, laid out by the build. The format is in the Figures section of `../explain-plan/reference.md`. In an explanation of a change, a `file` on a node is checked against the change: `new` means the change adds the file, `removed` that it deletes it.
 - Colours: the document is black and white with Geist. Do not use orange, paper colours or amber, because the app gives them fixed meanings. Colours you draw as part of the subject, such as a dark theme, are fine in `style.css`.
 
 ## Questions

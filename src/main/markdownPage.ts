@@ -4,6 +4,8 @@ import monoLatinExt from '../../node_modules/@fontsource-variable/geist-mono/fil
 import monoLatin from '../../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?inline'
 import type { ThemeMode } from '../shared/types'
 import { renderMarkdown } from './markdown'
+import { escapeHtml } from './markdownMath'
+import { MATH_SHEET, renderMath } from './mathPage'
 
 const LATIN = 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD'
 const LATIN_EXT = 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF'
@@ -48,6 +50,10 @@ li:has(> input[type='checkbox']) { list-style: none; margin-left: -1.4em; }
 input[type='checkbox'] { margin: 0 .55em 0 0; accent-color: var(--ink); vertical-align: -1px; }
 a { color: inherit; text-decoration: underline; text-decoration-color: var(--link); text-underline-offset: .18em; }
 a:hover { text-decoration-color: currentColor; }
+a { --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 3.4h5.2l3.8 3.8V15a1.6 1.6 0 0 1-1.6 1.6H6A1.6 1.6 0 0 1 4.4 15V5A1.6 1.6 0 0 1 6 3.4Z'/%3E%3Cpath d='M11 3.6v2.9a.9.9 0 0 0 .9.9h2.9'/%3E%3C/svg%3E"); }
+a:is([href^='http:' i], [href^='https:' i]) { --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 14 14 6'/%3E%3Cpath d='M7.4 6H14v6.6'/%3E%3C/svg%3E"); }
+a[href]:not([href^='#'], [href^='mailto:' i], [href^='tel:' i], :has(> img))::after { content: ''; display: inline-block; width: .8em; height: .8em; margin-left: .16em; vertical-align: -.05em; background: currentColor; opacity: .5; mask: var(--mark) center / contain no-repeat; }
+a:hover::after { opacity: .85; }
 strong { font-weight: 600; }
 hr { height: 1px; margin: 2.4em 0; border: 0; background: var(--hair); }
 img, video { display: block; max-width: 100%; height: auto; border-radius: 8px; }
@@ -63,18 +69,17 @@ th { font-weight: 600; border-bottom-color: var(--hair-2); }
 th:last-child, td:last-child { padding-right: 0; }
 `
 
-const escapeHtml = (text: string): string =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-
 /** Składa z Markdownu kompletną stronę arkusza. */
 export function markdownPage(source: string, fallbackTitle: string): string {
-  const { title, html } = renderMarkdown(source)
+  const { title, html } = renderMarkdown(source, renderMath)
+  // Czcionki wzorów ważą kilkaset kilobajtów, więc dostają je tylko strony, które ich używają.
+  const math = html.includes('class="katex') ? MATH_SHEET : ''
   return `<!doctype html>
 <html lang="pl">
 <head>
 <meta charset="utf-8">
 <title>${escapeHtml(title ?? fallbackTitle)}</title>
-<style>${FONTS}${SHEET}</style>
+<style>${FONTS}${SHEET}${math}</style>
 </head>
 <body><main>${html}</main></body>
 </html>`

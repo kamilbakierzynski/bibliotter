@@ -1,20 +1,20 @@
-import type { DocStatus, LibrarySnapshot } from '../../../shared/types'
-import { homeDocs } from './home'
+import type { DocStatus, LibrarySnapshot, ScanProgress } from '../../../shared/types'
+import { t } from '../../../shared/i18n'
 import { centerDock, els, navT, setNav, syncChrome, syncSel } from './layout'
+import { dropStaleViews } from './native'
 import { dropMissing } from './sheets'
 import { countDocs, data, libraryDocs, notify, readLastDocs, ui } from './state'
 
-const FRESH_MS = 2400
-const SCAN_GAP_MS = 170
-const SCAN_TOTAL_MS = 1800
-const SCAN_TAIL_MS = 330
+const FRESH_MS = 1400
 
-let first = true
+let shown = ''
+let restored = false
 let freshTimer = 0
-let scanTimers: number[] = []
 
 /** Układ z poprzedniego uruchomienia czeka pod `H`, ale start zawsze pokazuje ścianę. */
 function restoreLast(): void {
+  if (restored || data.entries.size === 0) return
+  restored = true
   const docs = readLastDocs()
     .filter((id) => data.entries.has(id))
     .slice(0, ui.panes.length)
@@ -30,69 +30,58 @@ function freshWall(ms: number): void {
   freshTimer = window.setTimeout(() => home.classList.remove('fresh'), ms)
 }
 
-/** Pierwsze skanowanie: kartka znika, a dokumenty wieszają się jeden po drugim. */
-function playScan(): void {
-  for (const timer of scanTimers) clearTimeout(timer)
-  const { home } = els
-  const count = homeDocs().length
-  const gap = Math.min(SCAN_GAP_MS, SCAN_TOTAL_MS / Math.max(1, count))
-  const after = (ms: number, step: () => void): void => {
-    scanTimers.push(window.setTimeout(step, ms))
-  }
-  home.classList.add('scan')
-  home.style.setProperty('--gap', `${gap}ms`)
-  freshWall(count * gap + FRESH_MS)
-  ui.scanned = 0
-  for (let i = 1; i <= count; i++) {
-    after(i * gap, () => {
-      ui.scanned = i
-      notify()
-    })
-  }
-  after(SCAN_TAIL_MS + count * gap, () => {
-    home.classList.remove('scan')
-    home.style.removeProperty('--gap')
-    ui.scanned = null
-    notify()
-    if (!ui.nav) setNav(true)
-  })
+/** Szkielet, który zdążył się pokazać, stoi już tam, gdzie zawisną kartki, więc nie wieszają się drugi raz. */
+function skeletonShown(): boolean {
+  const wall = els.home.querySelector('.sk-wall')
+  return wall !== null && getComputedStyle(wall).opacity !== '0'
 }
 
-export function setLibrary(snapshot: LibrarySnapshot): void {
-  const wasFirst = first
+/** Migawka przychodzi jako tekst, bo pod wpływem skanu zmienia się wiele razy na sekundę. */
+export function setLibrary(json: string): void {
+  if (json === shown) return
+  const wasFirst = shown === ''
+  shown = json
+  const snapshot = JSON.parse(json) as LibrarySnapshot
   const wasSetup = ui.setup
-  first = false
+  const addedRoot = snapshot.roots.length > (data.library?.roots.length ?? snapshot.roots.length)
   data.library = snapshot
   const docs = [...snapshot.projects.flatMap((project) => project.docs), ...snapshot.review]
   data.entries = new Map(docs.map((doc) => [doc.id, doc]))
   ui.setup = snapshot.roots.length === 0 ? 'first' : libraryDocs().length === 0 ? 'empty' : null
-  if (wasFirst) restoreLast()
+  ui.streaming ||= addedRoot || (wasSetup !== null && ui.setup === null)
+  restoreLast()
   dropMissing()
+  dropStaleViews()
   syncChrome()
-  if (wasFirst && !ui.setup) freshWall(FRESH_MS)
+  if (ui.streaming || (wasFirst && !ui.setup && !skeletonShown())) freshWall(FRESH_MS)
   notify()
   syncSel(true)
   if (wasFirst && !ui.setup) setNav(true, navT.x + 30)
   else if (wasFirst) centerDock()
-  else if (wasSetup && !ui.setup) playScan()
+  else if (wasSetup && !ui.setup) setNav(true)
   else if (!wasSetup && ui.setup && ui.nav) setNav(false)
 }
 
-export function load(request: () => Promise<LibrarySnapshot>): void {
-  data.scanning = true
-  notify()
+export function setScanProgress(progress: ScanProgress): void {
+  const changed = progress.active !== data.scan.active
+  data.scan = progress
+  if (!progress.active) ui.streaming = false
+  // Liczby widać tylko na pustej ścianie, a reszta powłoki nie musi rysować się przy każdej z nich.
+  if (changed || ui.setup) notify()
+}
+
+/** Skutki poleceń wracają jako nowa migawka, więc nie ma tu na co czekać. */
+export function load(request: () => Promise<unknown>, done?: () => void): void {
   request()
-    .then(setLibrary)
+    .catch(() => {})
     .finally(() => {
-      data.scanning = false
+      done?.()
       notify()
     })
-    .catch(() => {})
 }
 
 export const rescan = (): void => load(window.api.rescan)
-export const setDocStatus = (docId: string, status: DocStatus): void =>
-  load(() => window.api.setStatus(docId, status))
+export const setDocStatus = (docId: string, status: DocStatus): void => load(() => window.api.setStatus(docId, status))
 export const classifyDoc = (docId: string, classification: 'document' | 'ignored'): void =>
   load(() => window.api.setClassification(docId, classification))
 
@@ -102,4 +91,4 @@ export function dropFolders(files: FileList): void {
   if (paths.length > 0) load(() => window.api.addPaths(paths))
 }
 
-export const scanLabel = (n: number): string => (n === 0 ? 'Szukam dokumentów' : `Szukam, ${countDocs(n)}`)
+export const scanLabel = (n: number): string => (n === 0 ? t('Szukam dokumentów') : t('Szukam, {docs}', { docs: countDocs(n) }))

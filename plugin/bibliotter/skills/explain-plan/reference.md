@@ -1,0 +1,238 @@
+# Work folder format for a plan
+
+The build script is the same as for explain-diff. `"kind": "plan"` switches it to a plan:
+
+```
+plan-<slug>/
+  doc.json        metadata, sources, figures, steps, decisions, risks, sketches
+  essay.html      the chapters
+  plan.md         the Markdown plan, when it does not live anywhere else
+  runs/*.txt      saved outputs of your experiments
+  harness.cjs     the experiment script, any name and language
+  sketches/*.ts   short sketches of new code
+  style.css       optional, styles for your own figures
+```
+
+Build with `node <kit>/build.cjs <folder>`. Flags: `--check` validates without writing, `--out <file.html>` overrides the path, `--repo <path>` sets the repository when `doc.json` has no `repo`, `--no-exclude` leaves `.git/info/exclude` alone.
+
+## doc.json
+
+```json
+{
+  "kind": "plan",
+  "lang": "pl",
+  "repo": "C:/path/to/repo",
+  "base": { "rev": "HEAD" },
+  "plan": "C:/Users/me/.claude/plans/heading-jump.md",
+  "slug": "skok-do-naglowka",
+  "title": "Skok do nagłówka z palety",
+  "subtitle": "Jak paleta nauczy się rozdziałów",
+  "writtenBy": "Claude Opus 5.5",
+  "abstract": ["What is missing today.", "The approach in one sentence and what the reader decides."],
+  "sources": {},
+  "figures": {},
+  "steps": [],
+  "decisions": {},
+  "risks": [],
+  "sketches": {},
+  "listings": {},
+  "annex": [{ "title": "Experiment script", "file": "harness.cjs", "note": "How to run it and what it stubs." }]
+}
+```
+
+- `base`: the state the plan starts from. `{ "rev": "HEAD" }` (default) or any commit, or `{ "worktree": true }` when the plan builds on uncommitted work. Every excerpt defaults to it, and the file checks of steps and figures run against it. With a commit as the base, the build warns when a quoted file has uncommitted changes, because the starting point may then be different from what the user has.
+- `plan`: the Markdown plan, absolute or relative to the repository. Give `{ "file": "...", "copy": true }` to force a copy. When the file lies outside the folders Bibliotter scans, or in a folder the scanner skips such as `~/.claude`, the build copies it to `plan-<slug>.md` next to the document and puts a line at the top of the copy that links back. The document's header links to the plan, and its `<meta name="bibliotter-plan">` names it. Rebuild after the plan changes, because the copy and the section links are made at build time.
+- `slug`: stable file name. The output is `<main checkout>/explain/<branch>/plan-<slug>.html`; the `plan-` prefix is added when missing.
+- `branch`: optional. By default the branch checked out now.
+- `abstract`, question texts, step and decision texts may contain inline HTML such as `<code>` or `<kbd>`. Source notes are plain text.
+
+## Sources
+
+Every source needs `kind` and `note`, one sentence saying what this source shows.
+
+| kind | fields | shows |
+|---|---|---|
+| `code` | `file`, `anchor` or `lines`, `count`, `before`, `nth`, `rev`, `expect` | an excerpt of today's code |
+| `test` | same as `code` | an excerpt of a test |
+| `commit` | `rev` | a commit message |
+| `git` | `args`, `maxLines`, `width` | output of `git grep`, `log`, `show`, `diff`, `blame` or `ls-files`; `{base}` is replaced by the starting revision and dropped for `worktree` |
+| `run` | `file` (one path or a list), `command` | a saved experiment output, lettered A, B... in citation order |
+| `plan` | `heading`, `count` | a section of the Markdown plan; the citation links to that heading in the plan file |
+| `said` | `quote`, `who`, `when` | the user's exact words, for intent and decisions |
+| `web` | `url`, `title`, `accessed`, `quote` | documentation of a library or platform; quote one sentence at most |
+| `doc` | `href`, `title` | another document, usually from the library |
+
+- `anchor` is text that the first line contains; prefer it over `lines`, because the build then fails when the code is gone. `before` moves the start, `count` is the number of lines, `nth` picks a later match. `rev` defaults to the base.
+- `heading` in a `plan` source is the heading text as written in the Markdown, without `#`, or its anchor id. The excerpt shows the start of that section, `count` lines (default 14).
+
+## essay.html
+
+Blocks are separated by a blank line. Each block becomes a row with its sources in the margin.
+
+- `<h2>Title</h2>` starts a chapter, numbered automatically. `<h3>` inside a chapter if needed.
+- `{{id}}` cites a source. `{{exp:id}}` prints an experiment's letter. `{{step:id}}` prints a step's number as a link, `{{decision:id}}` a decision's number, `{{fig:id}}` a figure's number. They also work in the abstract, captions and step texts. Never type these numbers by hand.
+- Markers, each on its own block:
+
+| marker | places |
+|---|---|
+| `<!--figure:id-->` | a flow or sequence figure from `figures` |
+| `<!--roadmap-->` | the order of the steps, with steps that can run in parallel side by side |
+| `<!--step:id-->` | a step's card: number, size, dependencies, files, link into the plan, "done when" |
+| `<!--files-->` | every file the steps touch, grouped by folder, with line counts at the base |
+| `<!--decision:id-->` | a decision with its options |
+| `<!--risks-->` | the risk table, worst first |
+| `<!--sketch:id-->` | a sketch of new code from `sketches` |
+| `<!--listing:id-->` | a short listing of today's code from `listings` |
+| `<!--check:id-->` | a comprehension question from `checks`, as in explain-diff; use one at most |
+
+- Figures with a `<figcaption>` are numbered by the build. Give a hand-made figure an `id` to refer to it with `{{fig:id}}`.
+- A block whose first element has the class `wide` spans the margin too. A block whose first element has the class `nocite` makes no claim about the code, such as the list of what you did not verify.
+- No `<script>`, `<style>`, `<link>`, `<iframe>`, Shadow DOM or remote resources. Images must be `data:` URIs. Fold long content with `<details>`, never `display: none`.
+- Kit classes from explain-diff work here too: `.note` with a `.label`, `table.compare`, `figure.fig` with `.plate` for a grid of states.
+- Colours: black and white with Geist. State is carried by mass: new is solid, changed has a thick outline, removed is dashed, unchanged is a thin grey line. Do not use orange, paper colours or amber.
+
+## Figures
+
+Both figure types take `caption` (inline HTML, may cite) and `alt`, a sentence for screen readers; without `alt` the caption is used. Every node, actor, edge and message takes `state`: `same` (default), `changed`, `new` or `removed`. A node or actor may name a `file`. The build then checks it against the base: a `new` file must not exist yet, any other state needs the file to exist.
+
+### Flow
+
+Boxes in lanes. Lanes are columns, ideally the boundaries that matter: Electron processes, services, client and server. Rows go down and are set by hand.
+
+```json
+"today": {
+  "type": "flow",
+  "caption": "Zapytanie z palety idzie przez most do wątku biblioteki. Nowy jest tylko indeks nagłówków.",
+  "lanes": ["Okno", "Preload", "Proces główny", "Wątek biblioteki"],
+  "nodes": [
+    { "id": "pal", "label": "Paleta", "sub": "Palette.tsx", "lane": 0, "row": 0, "state": "changed", "file": "src/renderer/src/ui/Palette.tsx" },
+    { "id": "lib", "label": "Indeks treści", "sub": "searchIndex.ts", "lane": 3, "row": 0 },
+    { "id": "heads", "label": "Indeks nagłówków", "lane": 3, "row": 1, "state": "new" }
+  ],
+  "edges": [
+    { "from": "pal", "to": "lib", "label": "search(q)" },
+    { "from": "lib", "to": "pal", "label": "wyniki" },
+    { "from": "lib", "to": "heads", "label": "przy skanie", "state": "new" }
+  ]
+}
+```
+
+- `label` is a word or three, `sub` a file or function in mono. Two nodes cannot share a lane and row.
+- Edges between boxes in one row run straight; two edges between the same pair are drawn apart with their labels above and below. An edge between rows goes down first, then sideways into the target; `"route": "hv"` goes sideways first. `"both": true` puts an arrowhead on each end, and `"dashed": true` marks something that is not a call, such as an event or a file read.
+- The build warns when an edge crosses another box; move a node to another row or change `route`.
+- Leave out what the argument does not turn on. Four lanes and six to eight nodes is plenty.
+
+### Sequence
+
+Actors in columns and messages from top to bottom, numbered, for the order of calls across a boundary.
+
+```json
+"query": {
+  "type": "sequence",
+  "caption": "Jedno zapytanie po zmianie. Nowe są kroki 3 i 4.",
+  "actors": [
+    { "id": "r", "label": "Paleta", "sub": "renderer" },
+    { "id": "w", "label": "Wątek biblioteki", "sub": "libraryWorker" },
+    { "id": "h", "label": "Indeks nagłówków", "state": "new" }
+  ],
+  "messages": [
+    { "from": "r", "to": "w", "label": "palette:query('rozdział')" },
+    { "note": "Wątek łączy dwa źródła wyników w jedną listę.", "over": ["w", "h"] },
+    { "from": "w", "to": "h", "label": "headings(q)", "state": "new" },
+    { "from": "h", "to": "w", "label": "12 nagłówków", "reply": true, "state": "new" },
+    { "from": "w", "to": "w", "label": "scal i posortuj" },
+    { "divider": "gdy użytkownik wciśnie Enter" },
+    { "from": "w", "to": "r", "label": "wyniki", "reply": true }
+  ]
+}
+```
+
+- `reply` draws a dashed return. A message to the same actor draws a loop. `note` with `over` (one or two actor ids) explains a moment; `divider` separates phases.
+
+## Steps
+
+```json
+"steps": [
+  {
+    "id": "index",
+    "title": "Zbierz nagłówki w wątku biblioteki",
+    "goal": "Każdy dokument w indeksie ma listę nagłówków z identyfikatorami.",
+    "size": "M",
+    "plan": "Krok 1: indeks nagłówków",
+    "files": [
+      { "path": "src/main/headings.ts", "change": "new", "note": "czyta <code>h1</code>–<code>h3</code>" },
+      "src/main/searchIndex.ts"
+    ],
+    "verify": "Nowy test <code>tests/headings.test.ts</code> przechodzi w <code>npm test</code>.",
+    "status": "todo"
+  },
+  { "id": "palette", "title": "...", "after": ["index"] }
+]
+```
+
+- Steps are numbered in the order of the list. A step without `after` follows the previous one; `"after": []` means it depends on nothing, and a list of ids names its dependencies. Steps whose dependencies are done at the same time stand side by side in the roadmap.
+- `files`: a path means `changed`; an object takes `change` (`new`, `changed`, `removed`) and an optional `note`. The build fails when a new file already exists or a changed one does not, so a typo in a path cannot pass.
+- `plan`: a heading of the Markdown plan; the card links to it.
+- `goal` is what is true once the step is done, `verify` how anyone can see it. `size` is S, M or L.
+- `status` (`todo`, `doing`, `done`) and `commit` (a revision) show progress while you implement. The header then shows how many steps are done.
+
+## Decisions
+
+```json
+"decisions": {
+  "store": {
+    "title": "Gdzie trzymać nagłówki",
+    "question": "Czy nagłówki mają trafić do indeksu, czy powstawać przy każdym otwarciu palety?",
+    "plan": "Otwarte pytania",
+    "options": [
+      { "text": "W indeksie", "detail": "Raz przy skanie, potem tylko zapytanie.", "pros": ["szybkie zapytanie"], "cons": ["większa baza"], "recommended": true },
+      { "text": "Przy otwarciu palety", "detail": "Czytamy tylko otwarty dokument.", "pros": ["bez migracji"], "cons": ["tylko bieżący dokument"] }
+    ],
+    "why": "Skaner i tak czyta każdy plik.{{scan}}"
+  }
+}
+```
+
+- Two to four options, at most one `recommended`, and `why` for it, which may cite. Options have similar weight; do not set up a straw man.
+- Decisions are numbered in the order of `decisions`, so place them in that order.
+- An open decision shows how to answer: select the question, press <kbd>C</kbd>, choose Agent and write. When the user decides, add a `said` source with their words and set `"decided": { "option": 0, "source": "said-id" }`; `option` is the index or the exact text.
+
+## Risks
+
+```json
+"risks": [
+  { "text": "Indeks rośnie w dużych bibliotekach.", "likelihood": "mid", "impact": "mid", "mitigation": "Tylko <code>h1</code>–<code>h3</code>, zmierzone w eksperymencie {{exp:size}}.{{size}}", "step": "index" }
+]
+```
+
+`likelihood` and `impact` are `low`, `mid` or `high`. The table sorts by both. `step` links the risk to a step. Name real risks you found while reading and running, not a generic list.
+
+## Sketches
+
+```json
+"sketches": {
+  "hit": { "file": "sketches/hit.ts", "target": "src/shared/types.ts", "caption": "Kształt wyniku w palecie." }
+}
+```
+
+The file lives in the work folder; `target` is where the code will go. The sketch is drawn in a dashed frame and labelled as code that does not exist yet. Keep it under 16 lines.
+
+## The end of the document
+
+End the last chapter with how to respond, then the list of what you did not verify:
+
+```html
+<p>Na decyzje odpowiedz uwagą przy pytaniu: zaznacz je, wciśnij <kbd>C</kbd>, wybierz odbiorcę Agent i napisz. Uwagę możesz zostawić przy każdym kroku, tu albo w pliku planu. Potem poproś agenta w czacie, żeby przeczytał odpowiedzi i poprawił plan.</p>
+
+<ul class="nocite"><li>Nie mierzyłem ...</li></ul>
+```
+
+In English: "Answer a decision with a comment at its question: select it, press <kbd>C</kbd>, choose Agent as the recipient and write. You can comment on any step, here or in the plan file. Then ask the agent in the chat to read the answers and revise the plan."
+
+## Experiments
+
+- Load the code at the base: from Git for a commit, from disk for `worktree`. Stub only what cannot run outside the app and say so in the appendix note.
+- Wait for real completion instead of fixed sleeps, and run twice to confirm the output is stable.
+- Print tables a reader can scan: one line per case, with the number that matters.
+- A mutation is a copy of the source with one change applied by the harness, which fails loudly when the text to change is not found.
+- On Windows PowerShell 5.1, read and write files with `-Encoding UTF8`.

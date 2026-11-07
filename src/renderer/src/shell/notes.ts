@@ -1,11 +1,13 @@
-import type { Anchor, AnnotationKind, Audience, OverlayEvent, OverlayRect, StickyColor } from '../../../shared/annotations'
+import type { Anchor, Audience, NoteKind, OverlayEvent, OverlayRect, ShapeType, StickyColor } from '../../../shared/annotations'
 import { rectIn } from '../motion/pill'
 import { clamp, followFor, Spring, wake } from '../motion/spring'
 import { inLayer } from './layer'
+import { drawings, findShape, revealDrawings, setShapeType } from './drawings'
 import { applyLayout, els, G, sheets, toolPill, trayW, viewPill } from './layout'
 import { refreshFrame, touch } from './native'
+import { endPick } from './route'
 import { focusPane } from './sheets'
-import { data, findNote, focusedId, notify, openNotes, pinned, type Tool, ui } from './state'
+import { data, findNote, focusedId, notify, openNotes, pinned, type InspView, type Tool, ui } from './state'
 
 /*
  * Uwagi łączą dwa tryby. Przy zamkniętym panelu wątek wyrasta spod pinezki, a otwarcie panelu
@@ -24,7 +26,7 @@ let tracked: string | null = null
 
 /** Wątki wiszą na wolnej ścianie. Szereg i wąskie okno jej nie mają, więc uwagi stają wtedy na panelu. */
 export const canWall = (): boolean => !G.overlay && pinned() < 3
-export const onWall = (): boolean => ui.notesView === 'wall' && canWall()
+export const onWall = (): boolean => ui.inspView === 'notes' && ui.notesView === 'wall' && canWall()
 
 export function syncPanelMode(): void {
   document.documentElement.dataset.panel = onWall() ? 'wall' : 'list'
@@ -64,7 +66,7 @@ export function setNotesView(view: 'wall' | 'list'): void {
 }
 
 export function toggleNotesView(): void {
-  if (!ui.insp) setInsp(true)
+  showPanel('notes')
   if (canWall()) setNotesView(ui.notesView === 'wall' ? 'list' : 'wall')
 }
 
@@ -161,6 +163,24 @@ export function setInsp(open: boolean): void {
   touch()
 }
 
+export function showPanel(view: InspView): void {
+  ui.inspView = view
+  if (ui.insp) {
+    syncPanelMode()
+    applyLayout()
+    notify()
+    touch()
+  } else {
+    setInsp(true)
+  }
+}
+
+/** Uwagi i linki dzielą jeden panel. Klawisz drugiego widoku przełącza panel, zamiast go zamykać. */
+export function togglePanel(view: InspView): void {
+  if (ui.insp && ui.inspView === view) setInsp(false)
+  else showPanel(view)
+}
+
 export function closeThread(): void {
   if (!ui.selNote) return
   ui.threadRect = null
@@ -174,6 +194,7 @@ export function selectNote(id: string): void {
 export function setSelNote(id: string | null): void {
   if (ui.selNote === id) return
   const docId = focusedId()
+  if (id && ui.insp) showPanel('notes')
   ui.selNote = id
   ui.threadRect = null
   if (docId) window.api.focusAnnotation(docId, id)
@@ -204,7 +225,10 @@ export function syncTools(instant = false): void {
 
 /** Taca pokazuje tylko to, co ma sens w tej chwili. */
 function trayKind(): string {
+  if (ui.tool === 'pointer') return ''
   if (ui.tool === 'sticky') return 'sticky'
+  if (ui.tool === 'highlight') return 'highlight'
+  if (ui.tool === 'shape') return 'shape'
   if (ui.tool === 'comment') return 'comment'
   return ui.sel ? 'sel' : ''
 }
@@ -221,9 +245,25 @@ export function setTool(tool: Tool): void {
   if (ui.tool === tool && tool === 'move') return
   ui.tool = tool
   els.app.dataset.tool = tool
+  const pointer = tool === 'pointer'
+  const marker = tool === 'highlight'
+  const shaping = tool === 'shape'
   const docId = focusedId()
-  if (docId) window.api.setOverlayMode(docId, tool === 'move' ? null : tool)
-  if (tool !== 'move') cancelDraft()
+  if (docId) window.api.setOverlayMode(docId, tool === 'comment' || tool === 'sticky' ? tool : null)
+  window.api.setPointer(pointer)
+  window.api.setMarker(marker ? ui.color : null)
+  syncShaper()
+  if (shaping) revealDrawings(docId)
+  if (pointer || marker || shaping) {
+    // Oba żyją tylko na żywym dokumencie, a wątek i panel nad arkuszem trzymają go na zrzucie.
+    closeThread()
+    if (ui.insp && G.overlay) setInsp(false)
+  }
+  if (tool !== 'move') {
+    cancelDraft()
+    // Narzędzie zabiera mysz, więc formularz trasy przestaje czekać na wskazanie kadru.
+    endPick()
+  }
   syncTools()
   syncTray()
   notify()
@@ -237,7 +277,19 @@ export function setSelection(active: boolean): void {
 
 export function setColor(color: StickyColor): void {
   ui.color = color
+  if (ui.tool === 'highlight') window.api.setMarker(color)
+  syncShaper()
   notify()
+}
+
+/** Narzędzie kształtu żyje w dokumentach, więc każdą zmianę rodzaju i koloru trzeba im przekazać. */
+function syncShaper(): void {
+  window.api.setShaper(ui.tool === 'shape' ? { type: drawings.type, color: ui.color } : null)
+}
+
+export function chooseShape(type: ShapeType): void {
+  setShapeType(type)
+  syncShaper()
 }
 
 export function setAudience(audience: Audience): void {
@@ -250,7 +302,7 @@ export function selectionAction(action: 'comment' | 'sticky' | 'copy'): void {
   if (docId) window.api.selectionAction(docId, action)
 }
 
-function startDraft(docId: string, kind: AnnotationKind, anchor: Anchor | null, rect: OverlayRect | null): void {
+function startDraft(docId: string, kind: NoteKind, anchor: Anchor | null, rect: OverlayRect | null): void {
   ui.tool = 'move'
   els.app.dataset.tool = 'move'
   ui.selNote = null
@@ -296,9 +348,39 @@ export function handleOverlayEvent(docId: string, event: OverlayEvent): void {
     case 'place':
       startDraft(docId, event.kind, event.anchor, event.rect)
       break
+    case 'highlight':
+      void window.api.createAnnotation(docId, {
+        kind: 'highlight',
+        audience: 'me',
+        color: event.color,
+        anchor: event.anchor,
+        strokes: event.strokes,
+        anchorWidth: event.anchorWidth,
+        text: ''
+      })
+      break
+    case 'shape':
+      // Rysunki mogły zostać schowane przy włączonym narzędziu, a nowy kształt ma być widać.
+      revealDrawings(docId)
+      void window.api.createAnnotation(docId, {
+        kind: 'shape',
+        audience: 'me',
+        color: event.color,
+        anchor: event.anchor,
+        shape: event.shape,
+        text: ''
+      })
+      break
+    case 'erase': {
+      // Prośba przychodzi z dokumentu, więc wolno mu usunąć tylko własne zakreślenie albo kształt.
+      const note = findNote(event.id) ?? findShape(event.id)
+      if (note?.docId === docId && (note.kind === 'highlight' || note.kind === 'shape')) void window.api.deleteAnnotation(note.id)
+      break
+    }
     case 'select': {
       const slot = ui.panes.indexOf(docId)
       if (slot >= 0) focusPane(slot)
+      if (ui.insp) showPanel('notes')
       ui.selNote = event.id
       ui.threadRect = ui.insp ? null : event.rect
       if (ui.insp) followFor(620, () => hang())
@@ -309,7 +391,7 @@ export function handleOverlayEvent(docId: string, event: OverlayEvent): void {
     case 'focused':
       if (event.id !== ui.selNote) break
       if (!event.rect && !ui.insp) {
-        setInsp(true)
+        showPanel('notes')
         break
       }
       ui.threadRect = ui.insp ? null : event.rect

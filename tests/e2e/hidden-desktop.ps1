@@ -91,5 +91,5 @@ public static class HiddenDesktop {
 '@
 
 $quoted = $Command | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }
-$name = "htmldocs-e2e-$PID"
+$name = "bibliotter-e2e-$PID"
 exit [HiddenDesktop]::Run($name, ($quoted -join ' '), (Get-Location).Path)

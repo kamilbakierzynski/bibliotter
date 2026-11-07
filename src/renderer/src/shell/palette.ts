@@ -1,26 +1,38 @@
 import type { Annotation } from '../../../shared/annotations'
+import { cleanLabel, hasLabel, isTicket, sameLabel } from '../../../shared/labels'
 import { DOC_FORMATS, DOC_STATUSES, type DocEntry, type DocFormat, type DocStatus, FORMAT_LABELS, type SearchHit } from '../../../shared/types'
+import { t } from '../../../shared/i18n'
 import { rectIn } from '../motion/pill'
 import { clamp } from '../motion/spring'
 import { goHome, toggleHomeView } from './home'
-import { hideCaps, hideFly, hideTip, togglePop } from './keys'
+import { hideCard } from './hoverCard'
+import { hideCaps, hideFly, hideTip, stepNotes, togglePop } from './keys'
+import { autoLabelDoc, closeLabelPop, toggleLabel, toggleLabelPop } from './labels'
 import { inLayer } from './layer'
-import { actPill, cmdPill, mH, mW, setNav } from './layout'
-import { cover, uncover } from './native'
-import { setInsp, setTool, toggleNotesView } from './notes'
+import { actPill, cmdPill, mH, mW, setNav, setView } from './layout'
+import { aimAt, cover, uncover } from './native'
+import { toggleDrawings } from './drawings'
+import { setTool, toggleNotesView, togglePanel } from './notes'
+import { toggleMinimap } from './outline'
+import { openOptions } from './options'
+import { openFind } from './find'
+import { clearPocket, togglePocket } from './pocket'
+import { startPresentation } from './present'
+import { copyReference } from './reference'
+import { openSearch } from './search'
 import { closeSheet, openDoc, openNote, peekDoc, splitKey } from './sheets'
-import { data, focusedDoc, libraryDocs, MOD, notify, plural, STATUS, ui } from './state'
+import { canAnnotate, data, focusedDoc, labelCatalog, libraryDocs, MOD, noteText, notify, plural, STATUS, ticketHref, ui } from './state'
 import { displayName, relativeTime } from '../tree'
 import { classifyDoc, rescan, setDocStatus } from './library'
 import { toggleMode } from './theme'
 
 /*
  * Paleta rośnie z doku i jest z nim jednym obiektem. Szukanie to Żetony: `status:`, `projekt:`,
- * `gałąź:`, `format:` i `rodzaj:` zamieniają się w żeton po wyborze wartości. Panel akcji jest wspólny
+ * `gałąź:`, `format:`, `etykieta:` i `rodzaj:` zamieniają się w żeton po wyborze wartości. Panel akcji jest wspólny
  * dla każdego wyniku, jak w Raycast.
  */
 
-export type FilterKey = 'project' | 'status' | 'branch' | 'format' | 'kind'
+export type FilterKey = 'project' | 'status' | 'branch' | 'format' | 'label' | 'kind'
 type Kind = 'doc' | 'note' | 'action'
 
 export interface PaletteAction {
@@ -36,7 +48,8 @@ export type Row =
   | { type: 'group'; label: string }
   | { type: 'more'; left: number }
   | { type: 'value'; key: FilterKey; v: string; count: number }
-  | { type: 'doc'; doc: DocEntry; hit: SearchHit | null }
+  /** `file`: zapytanie pasuje do nazwy pliku albo folderu, a nie do tytułu. */
+  | { type: 'doc'; doc: DocEntry; hit: SearchHit | null; file?: boolean }
   | { type: 'note'; note: Annotation }
   | { type: 'action'; action: PaletteAction }
 
@@ -65,48 +78,63 @@ const unique = (list: string[]): string[] => [...new Set(list)]
 interface Filter {
   label: string
   op: string
+  /** Nazwy operatora w każdym języku, bo nawyk nie idzie za ustawieniem. */
+  names: string[]
   name: (value: string) => string
   values: () => string[]
 }
 
-export const FILTERS: Record<FilterKey, Filter> = {
+export const filters = (): Record<FilterKey, Filter> => ({
   project: {
-    label: 'Projekt',
-    op: 'projekt',
+    label: t('Projekt'),
+    op: t('projekt'),
+    names: ['projekt', 'project'],
     name: (v) => v,
     values: () => unique(libraryDocs().map((doc) => doc.projectName))
   },
   status: {
     label: 'Status',
     op: 'status',
+    names: ['status'],
     name: (v) => STATUS[v as DocStatus].label,
     values: () => [...DOC_STATUSES]
   },
   branch: {
-    label: 'Gałąź',
-    op: 'gałąź',
+    label: t('Gałąź'),
+    op: t('gałąź'),
+    names: ['gałąź', 'branch'],
     name: (v) => v,
     values: () => unique(libraryDocs().flatMap((doc) => doc.branch ?? []))
   },
   format: {
     label: 'Format',
     op: 'format',
+    names: ['format'],
     name: (v) => FORMAT_LABELS[v as DocFormat],
     values: () => [...DOC_FORMATS]
   },
+  label: {
+    label: t('Etykieta'),
+    op: t('etykieta'),
+    names: ['etykieta', 'label'],
+    name: (v) => v,
+    values: () => labelCatalog().map(({ name }) => name)
+  },
   kind: {
-    label: 'Rodzaj',
-    op: 'rodzaj',
-    name: (v) => ({ doc: 'Dokumenty', note: 'Uwagi', action: 'Akcje' })[v as Kind],
+    label: t('Rodzaj'),
+    op: t('rodzaj'),
+    names: ['rodzaj', 'kind'],
+    name: (v) => ({ doc: t('Dokumenty'), note: t('Uwagi'), action: t('Akcje') })[v as Kind],
     values: () => ['doc', 'note', 'action']
   }
-}
+})
 
 const emptyFilters = (): Record<FilterKey, Set<string>> => ({
   project: new Set(),
   status: new Set(),
   branch: new Set(),
   format: new Set(),
+  label: new Set(),
   kind: new Set()
 })
 
@@ -122,6 +150,8 @@ export const cmd = {
   /** Wszystkie wyniki, także te, które czekają pod „Pokaż kolejne”. */
   total: 0,
   hits: [] as SearchHit[],
+  /** Szukanie w treści jeszcze nie odpowiedziało, więc pusta lista niczego nie przesądza. */
+  pending: false,
   flash: '',
   /** Wyniki się zmieniły, więc znacznik wyboru nie ma skąd jechać. */
   instant: true,
@@ -137,57 +167,107 @@ let flashTimer = 0
 const inputEl = (): HTMLInputElement | null => inLayer<HTMLInputElement>('cmdInput')
 const actInputEl = (): HTMLInputElement | null => inLayer<HTMLInputElement>('actInput')
 
-export const ACTIONS: PaletteAction[] = [
-  { id: 'a-split', title: 'Podziel lub złóż widok', sub: 'Przypina zerknięcie, a kilka arkuszy składa do jednego.', icon: 'split', keys: [MOD, '\\'], run: () => splitKey() },
-  { id: 'a-close', title: 'Zamknij arkusz', sub: 'Pozostałe arkusze przejmują jego miejsce.', icon: 'x', keys: ['X'], run: () => closeSheet(ui.focus) },
-  { id: 'a-nav', title: 'Zwiń lub rozwiń nawigację', sub: 'Zostawia sam pasek ikon.', icon: 'left', keys: [MOD, 'B'], run: () => setNav(!ui.nav) },
-  { id: 'a-comment', title: 'Dodaj komentarz', sub: 'Kliknij miejsce w dokumencie.', icon: 'comment', keys: ['C'], run: () => setTool('comment') },
-  { id: 'a-sticky', title: 'Dodaj karteczkę', sub: 'Przypnij notatkę do dokumentu.', icon: 'sticky', keys: ['N'], run: () => setTool('sticky') },
-  { id: 'a-notes', title: 'Pokaż lub ukryj uwagi', sub: 'Wątki zawisną obok dokumentu.', icon: 'bubble', keys: ['I'], run: () => setInsp(!ui.insp) },
-  { id: 'a-notes-view', title: 'Uwagi przy cytatach albo w panelu', sub: 'Przełącza układ otwartych uwag.', icon: 'right', keys: ['Shift', 'I'], run: () => toggleNotesView() },
-  { id: 'a-home', title: 'Ekran startowy', sub: 'Wraca na ścianę dokumentów.', icon: 'gallery', keys: ['H'], run: () => goHome() },
-  { id: 'a-home-view', title: 'Ściana lub spis', sub: 'Przełącza widok ekranu startowego.', icon: 'index', keys: ['Shift', 'H'], run: () => toggleHomeView() },
-  { id: 'a-keys', title: 'Pokaż skróty', sub: 'Wszystkie skróty w jednym miejscu.', icon: 'keyboard', keys: ['?'], run: () => openMap() },
-  { id: 'a-theme', title: 'Przełącz motyw', sub: 'Jasny albo ciemny.', icon: 'moon', keys: ['T'], run: () => toggleMode() },
-  { id: 'a-read', title: 'Oznacz jako przeczytane', sub: 'Zmienia status otwartego dokumentu.', icon: 'check', keys: [], run: () => { const doc = focusedDoc(); if (doc) setDocStatus(doc.id, 'read') } },
-  { id: 'a-scan', title: 'Skanuj foldery', sub: 'Szuka nowych dokumentów.', icon: 'refresh', keys: [], run: () => rescan() },
-  { id: 'a-folder', title: 'Pokaż w folderze', sub: 'Otwiera lokalizację pliku.', icon: 'reveal', keys: [], run: () => { const doc = focusedDoc(); if (doc) void window.api.revealDoc(doc.id) } },
-  { id: 'a-skip', title: 'Pomiń dokument', sub: 'Usuwa otwarty dokument z biblioteki.', icon: 'x', keys: [], run: () => { const doc = focusedDoc(); if (doc) classifyDoc(doc.id, 'ignored') } }
+export const actions = (): PaletteAction[] => [
+  { id: 'a-split', title: t('Podziel lub złóż widok'), sub: t('Przypina zerknięcie, a kilka arkuszy składa do jednego.'), icon: 'split', keys: [MOD, '\\'], run: () => splitKey() },
+  { id: 'a-close', title: t('Zamknij arkusz'), sub: t('Pozostałe arkusze przejmują jego miejsce.'), icon: 'x', keys: ['X'], run: () => closeSheet(ui.focus) },
+  { id: 'a-nav', title: t('Zwiń lub rozwiń nawigację'), sub: t('Zostawia sam pasek ikon.'), icon: 'left', keys: [MOD, 'B'], run: () => setNav(!ui.nav) },
+  { id: 'a-comment', title: t('Dodaj komentarz'), sub: t('Kliknij miejsce w dokumencie.'), icon: 'comment', keys: ['C'], run: () => setTool('comment') },
+  { id: 'a-sticky', title: t('Dodaj karteczkę'), sub: t('Przypnij notatkę do dokumentu.'), icon: 'sticky', keys: ['N'], run: () => setTool('sticky') },
+  { id: 'a-labels', title: t('Etykiety dokumentu'), sub: t('Nadaje, zdejmuje i tworzy etykiety otwartego dokumentu.'), icon: 'tag', keys: ['L'], run: () => toggleLabelPop() },
+  { id: 'a-auto-label', title: t('Etykietuj automatycznie'), sub: t('Haiku czyta otwarty dokument i wybiera z Twoich etykiet.'), icon: 'tag', keys: [], run: () => { const doc = focusedDoc(); if (doc) void autoLabelDoc(doc) } },
+  { id: 'a-highlight', title: t('Zakreślacz'), sub: t('Przeciągnij po dokumencie. Zakreślenie zostaje, a prawy przycisk je usuwa.'), icon: 'marker', keys: ['M'], run: () => { if (focusedDoc()) setTool('highlight') } },
+  { id: 'a-shape', title: t('Kształt'), sub: t('Strzałka, prostokąt, elipsa albo linia. Przeciągnij po dokumencie, Shift wyrównuje, a prawy przycisk usuwa.'), icon: 'shape', keys: ['A'], run: () => { if (canAnnotate(focusedDoc())) setTool('shape') } },
+  { id: 'a-drawings', title: t('Pokaż lub schowaj rysunki'), sub: t('Kształty i strzałki tego dokumentu. Apka pamięta wybór.'), icon: 'eye-off', keys: ['D'], run: () => toggleDrawings() },
+  { id: 'a-undo', title: t('Cofnij zmianę uwag'), sub: t('Dodanie, usunięcie, zamknięcie albo odpowiedź w otwartym dokumencie.'), icon: 'undo', keys: [MOD, 'Z'], run: () => stepNotes(false) },
+  { id: 'a-redo', title: t('Przywróć zmianę uwag'), sub: t('Wraca do tego, co właśnie cofnięto.'), icon: 'redo', keys: [MOD, 'Shift', 'Z'], run: () => stepNotes(true) },
+  { id: 'a-pointer', title: t('Wskaźnik prezentera'), sub: t('Kliknięcie stuka w ekran, przytrzymanie rysuje, a prawy przycisk kasuje linie.'), icon: 'point', keys: ['P'], run: () => { if (focusedDoc()) setTool('pointer') } },
+  { id: 'a-notes', title: t('Pokaż lub ukryj uwagi'), sub: t('Wątki zawisną obok dokumentu.'), icon: 'bubble', keys: ['I'], run: () => togglePanel('notes') },
+  { id: 'a-links', title: t('Pokaż lub ukryj linki'), sub: t('Linki z dokumentu i do niego.'), icon: 'link', keys: ['O'], run: () => togglePanel('links') },
+  { id: 'a-outline', title: t('Pokaż lub ukryj spis treści'), sub: t('Nagłówki dokumentu. Kliknięcie przenosi do rozdziału.'), icon: 'toc', keys: ['G'], run: () => togglePanel('outline') },
+  { id: 'a-route', title: t('Trasa prezentacji'), sub: t('Kroki prezentacji dokumentu: kadr kamery, reszta strony i uwagi do pokazania.'), icon: 'route', keys: ['Shift', 'P'], run: () => togglePanel('route') },
+  { id: 'a-present', title: t('Prezentuj'), sub: t('Prowadzi przez trasę dokumentu krok po kroku. Strzałki i spacja zmieniają krok, a Esc kończy.'), icon: 'play', keys: ['F5'], run: () => void startPresentation() },
+  { id: 'a-minimap', title: t('Pokaż lub ukryj minimapę'), sub: t('Szkic całego dokumentu przy prawej krawędzi arkusza.'), icon: 'toc', keys: ['Shift', 'G'], run: () => toggleMinimap() },
+  { id: 'a-notes-view', title: t('Uwagi przy cytatach albo w panelu'), sub: t('Przełącza układ otwartych uwag.'), icon: 'right', keys: ['Shift', 'I'], run: () => toggleNotesView() },
+  { id: 'a-home', title: t('Ekran startowy'), sub: t('Wraca na ścianę dokumentów.'), icon: 'gallery', keys: ['H'], run: () => goHome() },
+  { id: 'a-home-view', title: t('Ściana lub spis'), sub: t('Przełącza widok ekranu startowego.'), icon: 'index', keys: ['Shift', 'H'], run: () => toggleHomeView() },
+  { id: 'a-keys', title: t('Pokaż skróty'), sub: t('Wszystkie skróty w jednym miejscu.'), icon: 'keyboard', keys: ['?'], run: () => openMap() },
+  { id: 'a-options', title: t('Opcje'), sub: t('Motyw, język, start apki i dozwolone adresy.'), icon: 'gear', keys: [MOD, ','], run: () => openOptions() },
+  { id: 'a-agent', title: t('Połącz z agentem'), sub: t('Instalacja pluginu, CLI i serwera MCP.'), icon: 'term', keys: [], run: () => openOptions('agent') },
+  { id: 'a-find', title: t('Szukaj w dokumencie'), sub: t('Podświetla frazę i przeskakuje po trafieniach.'), icon: 'textsearch', keys: [MOD, 'F'], run: () => openFind() },
+  { id: 'a-search', title: t('Szukaj we wszystkich dokumentach'), sub: t('Przeszukuje treść całej biblioteki.'), icon: 'textsearch', keys: [MOD, 'Shift', 'F'], run: () => openSearch() },
+  { id: 'a-theme', title: t('Przełącz motyw'), sub: t('Jasny albo ciemny.'), icon: 'moon', keys: ['T'], run: () => toggleMode() },
+  { id: 'a-pocket', title: t('Włóż do kieszeni lub wyjmij'), sub: t('Otwarty dokument trafia do kieszeni, a Ctrl z cyfrą otwiera go jednym skrótem.'), icon: 'pocket', keys: ['K'], run: () => { const doc = focusedDoc(); if (doc) togglePocket(doc.id) } },
+  { id: 'a-pocket-show', title: t('Pokaż kieszeń'), sub: t('Dokumenty, które masz pod ręką.'), icon: 'pocket', keys: [], run: () => setView('pocket') },
+  { id: 'a-pocket-clear', title: t('Opróżnij kieszeń'), sub: t('Wyjmuje wszystkie dokumenty z kieszeni. Same dokumenty zostają w bibliotece.'), icon: 'pocket', keys: [], run: () => clearPocket() },
+  { id: 'a-read', title: t('Oznacz jako przeczytane'), sub: t('Zmienia status otwartego dokumentu.'), icon: 'check', keys: [], run: () => { const doc = focusedDoc(); if (doc) setDocStatus(doc.id, 'read') } },
+  { id: 'a-scan', title: t('Skanuj foldery'), sub: t('Szuka nowych dokumentów.'), icon: 'refresh', keys: [], run: () => rescan() },
+  { id: 'a-folder', title: t('Pokaż w folderze'), sub: t('Otwiera lokalizację pliku.'), icon: 'reveal', keys: [], run: () => { const doc = focusedDoc(); if (doc) void window.api.revealDoc(doc.id) } },
+  { id: 'a-skip', title: t('Pomiń dokument'), sub: t('Usuwa otwarty dokument z biblioteki.'), icon: 'x', keys: [], run: () => { const doc = focusedDoc(); if (doc) classifyDoc(doc.id, 'ignored') } }
 ]
 
 /** Skróty: jedna tabela dla ściągi. */
-export const KEYMAP: { group: string; items: { keys: string[]; title: string; icon: string }[] }[] = [
-  { group: 'Ogólne', items: [
-    { keys: [MOD, 'K'], title: 'Paleta poleceń', icon: 'search' },
-    { keys: [MOD, 'B'], title: 'Zwiń nawigację', icon: 'left' },
-    { keys: ['H'], title: 'Ekran startowy', icon: 'gallery' },
-    { keys: ['Shift', 'H'], title: 'Ściana lub spis', icon: 'index' },
-    { keys: ['T'], title: 'Motyw', icon: 'moon' },
-    { keys: ['?'], title: 'Mapa skrótów', icon: 'keyboard' },
-    { keys: ['Esc'], title: 'Cofnij krok', icon: 'x' }
+export const keymap = (): { group: string; items: { keys: string[]; title: string; icon: string }[] }[] => [
+  { group: t('Ogólne'), items: [
+    { keys: [MOD, 'K'], title: t('Paleta poleceń'), icon: 'search' },
+    { keys: [MOD, 'F'], title: t('Szukaj w dokumencie'), icon: 'textsearch' },
+    { keys: [MOD, 'Shift', 'F'], title: t('Szukaj we wszystkich dokumentach'), icon: 'textsearch' },
+    { keys: ['F3'], title: t('Następne trafienie w dokumencie'), icon: 'chev' },
+    { keys: ['Shift', 'F3'], title: t('Poprzednie trafienie w dokumencie'), icon: 'prev' },
+    { keys: ['F4'], title: t('Następne trafienie w bibliotece'), icon: 'chev' },
+    { keys: ['Shift', 'F4'], title: t('Poprzednie trafienie w bibliotece'), icon: 'prev' },
+    { keys: [MOD, 'B'], title: t('Zwiń nawigację'), icon: 'left' },
+    { keys: ['H'], title: t('Ekran startowy'), icon: 'gallery' },
+    { keys: ['Shift', 'H'], title: t('Ściana lub spis'), icon: 'index' },
+    { keys: ['T'], title: t('Motyw'), icon: 'moon' },
+    { keys: [MOD, ','], title: t('Opcje'), icon: 'gear' },
+    { keys: ['?'], title: t('Mapa skrótów'), icon: 'keyboard' },
+    { keys: ['Esc'], title: t('Cofnij krok'), icon: 'x' }
   ] },
-  { group: 'Praca', items: [
-    { keys: ['V'], title: 'Interakcja', icon: 'cursor' },
-    { keys: ['C'], title: 'Komentarz', icon: 'comment' },
-    { keys: ['N'], title: 'Karteczka', icon: 'sticky' },
-    { keys: ['S'], title: 'Status dokumentu', icon: 'check' },
-    { keys: ['I'], title: 'Uwagi', icon: 'bubble' },
-    { keys: ['Shift', 'I'], title: 'Uwagi przy cytatach lub w panelu', icon: 'wall' }
+  { group: t('Praca'), items: [
+    { keys: ['V'], title: t('Interakcja'), icon: 'cursor' },
+    { keys: ['C'], title: t('Komentarz'), icon: 'comment' },
+    { keys: ['N'], title: t('Karteczka'), icon: 'sticky' },
+    { keys: ['M'], title: t('Zakreślacz'), icon: 'marker' },
+    { keys: ['A'], title: t('Kształt'), icon: 'shape' },
+    { keys: ['D'], title: t('Pokaż lub schowaj rysunki'), icon: 'eye-off' },
+    { keys: ['P'], title: t('Wskaźnik'), icon: 'point' },
+    { keys: [MOD, 'Z'], title: t('Cofnij zmianę uwag'), icon: 'undo' },
+    { keys: [MOD, 'Shift', 'Z'], title: t('Przywróć zmianę uwag'), icon: 'redo' },
+    { keys: ['S'], title: t('Status dokumentu'), icon: 'check' },
+    { keys: ['L'], title: t('Etykiety dokumentu'), icon: 'tag' },
+    { keys: ['R'], title: t('Kopiuj odnośnik dla agenta'), icon: 'link' },
+    { keys: ['I'], title: t('Uwagi'), icon: 'bubble' },
+    { keys: ['O'], title: t('Linki z dokumentu i do niego'), icon: 'link' },
+    { keys: ['G'], title: t('Spis treści'), icon: 'toc' },
+    { keys: ['Shift', 'P'], title: t('Trasa prezentacji'), icon: 'route' },
+    { keys: ['Shift', 'G'], title: t('Minimapa'), icon: 'toc' },
+    { keys: ['Shift', 'I'], title: t('Uwagi przy cytatach lub w panelu'), icon: 'wall' }
   ] },
-  { group: 'Arkusze', items: [
-    { keys: [MOD, 'klik'], title: 'Zerknij na dokument', icon: 'file' },
-    { keys: [MOD, '\\'], title: 'Przypnij, złóż lub rozłóż', icon: 'split' },
-    { keys: [MOD, '←'], title: 'Poprzedni arkusz', icon: 'prev' },
-    { keys: [MOD, '→'], title: 'Następny arkusz', icon: 'chev' },
-    { keys: ['X'], title: 'Zamknij arkusz', icon: 'x' }
+  { group: t('Arkusze'), items: [
+    { keys: [MOD, t('klik')], title: t('Zerknij na dokument'), icon: 'file' },
+    { keys: [MOD, '\\'], title: t('Przypnij, złóż lub rozłóż'), icon: 'split' },
+    { keys: [MOD, '←'], title: t('Poprzedni arkusz'), icon: 'prev' },
+    { keys: [MOD, '→'], title: t('Następny arkusz'), icon: 'chev' },
+    { keys: ['X'], title: t('Zamknij arkusz'), icon: 'x' },
+    { keys: ['K'], title: t('Włóż do kieszeni lub wyjmij'), icon: 'pocket' },
+    { keys: [MOD, '1–9'], title: t('Otwórz dokument z kieszeni'), icon: 'pocket' }
   ] },
-  { group: 'W palecie', items: [
-    { keys: [MOD, '↵'], title: 'Zerknij na wynik', icon: 'file' },
-    { keys: [MOD, 'K'], title: 'Akcje wyniku', icon: 'layers' },
-    { keys: [MOD, 'Shift', 'F'], title: 'Pokaż w Eksploratorze', icon: 'reveal' },
-    { keys: [MOD, 'Shift', 'C'], title: 'Kopiuj ścieżkę', icon: 'file' },
-    { keys: ['Tab'], title: 'Uzupełnij filtr', icon: 'chev' },
-    { keys: ['Backspace'], title: 'Usuń ostatni żeton', icon: 'x' }
+  { group: t('Prezentacja'), items: [
+    { keys: ['F5'], title: t('Prezentuj od pierwszego kroku'), icon: 'play' },
+    { keys: ['Shift', 'F5'], title: t('Prezentuj od wybranego kroku'), icon: 'play' },
+    { keys: ['→'], title: t('Następny krok, także spacja i PgDn'), icon: 'chev' },
+    { keys: ['←'], title: t('Poprzedni krok, także PgUp'), icon: 'prev' },
+    { keys: ['D'], title: t('Pokaż wszystkie uwagi dokumentu'), icon: 'eye' },
+    { keys: ['Esc'], title: t('Zakończ prezentację'), icon: 'x' }
+  ] },
+  { group: t('W palecie'), items: [
+    { keys: [MOD, '↵'], title: t('Zerknij na wynik'), icon: 'file' },
+    { keys: [MOD, 'K'], title: t('Akcje wyniku'), icon: 'layers' },
+    { keys: [MOD, 'Shift', 'F'], title: t('Pokaż w Eksploratorze'), icon: 'reveal' },
+    { keys: [MOD, 'Shift', 'C'], title: t('Kopiuj ścieżkę'), icon: 'file' },
+    { keys: [MOD, 'Shift', 'R'], title: t('Kopiuj odnośnik dla agenta'), icon: 'link' },
+    { keys: ['Tab'], title: t('Uzupełnij filtr'), icon: 'chev' },
+    { keys: ['Backspace'], title: t('Usuń ostatni żeton'), icon: 'x' }
   ] }
 ]
 
@@ -196,14 +276,17 @@ function filterCount(key: FilterKey, value: string): number {
   if (key === 'branch') return libraryDocs().filter((doc) => doc.branch === value).length
   if (key === 'status') return libraryDocs().filter((doc) => doc.status === value).length
   if (key === 'format') return libraryDocs().filter((doc) => doc.format === value).length
+  if (key === 'label') return labelCatalog().find(({ name }) => name === value)?.count ?? 0
   if (value === 'doc') return libraryDocs().length
   if (value === 'note') return data.annotations.filter((note) => note.status === 'open').length
-  return ACTIONS.length
+  return actions().length
 }
 
 export function filterKey(op: string | undefined): FilterKey | undefined {
   if (!op) return undefined
-  return (Object.keys(FILTERS) as FilterKey[]).find((key) => norm(FILTERS[key].op).startsWith(norm(op)))
+  const typed = norm(op)
+  const all = filters()
+  return (Object.keys(all) as FilterKey[]).find((key) => all[key].names.some((name) => norm(name).startsWith(typed)))
 }
 
 function fuzzy(q: string, text: string): number {
@@ -218,11 +301,39 @@ function fuzzy(q: string, text: string): number {
 
 /** Dopasowanie w nazwie wygrywa z dopasowaniem luźnym, a to z trafieniem w treści. */
 const matchTier = (score: number): number => (score === 0 ? 0 : score < 500 ? 1 : score < 700 ? 2 : 3)
+/** Nazwa pliku to tak samo mocny trop jak fragment tytułu, bo zwykle wpisuje się ją z pamięci. */
+const FILE_SCORE = 450
+
+/**
+ * Gdzie w tekście stoją słowa zapytania: całe zapytanie w jednym kawałku albo każde słowo osobno,
+ * jak w indeksie treści. Pusta lista znaczy, że tekst nie pasuje.
+ */
+export function wordMarks(text: string, q: string): [number, number][] {
+  if (!q) return []
+  const target = norm(text)
+  const whole = target.indexOf(q)
+  if (whole >= 0) return [[whole, whole + q.length]]
+  const words = q.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  if (words.length < 2) return []
+  const marks: [number, number][] = []
+  for (const word of words) {
+    const at = target.indexOf(word)
+    if (at < 0) return []
+    marks.push([at, at + word.length])
+  }
+  return marks.sort((a, b) => a[0] - b[0])
+}
+
+/** Plik na pierwszym miejscu, bo to w nim zwykle jest trafienie, a długi folder i tak się utnie. */
+export function fileLine(doc: DocEntry): string {
+  const dir = doc.relPath.split('/').slice(0, -1).join('/')
+  return [doc.name, dir, doc.projectName].filter(Boolean).join(' · ')
+}
 
 function buildRows(): Row[] {
   if (cmd.pick) {
     const { key, q } = cmd.pick
-    const filter = FILTERS[key]
+    const filter = filters()[key]
     const needle = norm(q)
     const rows = filter
       .values()
@@ -233,13 +344,14 @@ function buildRows(): Row[] {
   const f = cmd.filters
   const q = norm(cmd.query.trim())
   const out: Row[] = []
-  const docFilter = f.project.size > 0 || f.status.size > 0 || f.branch.size > 0 || f.format.size > 0
+  const docFilter = f.project.size > 0 || f.status.size > 0 || f.branch.size > 0 || f.format.size > 0 || f.label.size > 0
   const narrowed = q !== '' || docFilter || f.kind.size > 0
   const want = (kind: Kind): boolean => f.kind.size === 0 || f.kind.has(kind)
   const pass = (doc: DocEntry): boolean =>
     (f.project.size === 0 || f.project.has(doc.projectName)) &&
     (f.status.size === 0 || f.status.has(doc.status)) &&
     (f.format.size === 0 || f.format.has(doc.format)) &&
+    (f.label.size === 0 || doc.labels.some((label) => f.label.has(label))) &&
     (f.branch.size === 0 || (doc.branch !== null && f.branch.has(doc.branch)))
 
   if (want('doc')) {
@@ -247,9 +359,12 @@ function buildRows(): Row[] {
     const list = libraryDocs()
       .filter(pass)
       .map((doc) => {
-        const score = fuzzy(q, `${displayName(doc)} ${doc.projectName} ${doc.branch ?? ''}`)
-        const hit = q.length >= 3 && score < 0 ? (hits.get(doc.id) ?? null) : null
-        return { doc, hit, score: score >= 0 ? score : hit ? 700 : -1 }
+        const score = fuzzy(q, `${displayName(doc)} ${doc.projectName} ${doc.branch ?? ''} ${doc.labels.join(' ')}`)
+        const named = score >= 0 && score < 500
+        // Indeks treści zna też ścieżkę, więc bez tego trafienie po nazwie pliku pokazywało przypadkowy fragment tekstu.
+        const file = q !== '' && !named && wordMarks(doc.relPath, q).length > 0
+        const hit = q.length >= 3 && score < 0 && !file ? (hits.get(doc.id) ?? null) : null
+        return { doc, hit, file, score: named ? score : file ? FILE_SCORE : score >= 0 ? score : hit ? 700 : -1 }
       })
       .filter((row) => row.score >= 0)
       .sort(
@@ -260,8 +375,8 @@ function buildRows(): Row[] {
       )
     const limit = narrowed ? cmd.docLimit : 4
     if (list.length > 0) {
-      out.push({ type: 'group', label: narrowed ? 'Dokumenty' : 'Ostatnie' })
-      out.push(...list.slice(0, limit).map(({ doc, hit }): Row => ({ type: 'doc', doc, hit })))
+      out.push({ type: 'group', label: narrowed ? t('Dokumenty') : t('Ostatnie') })
+      out.push(...list.slice(0, limit).map(({ doc, hit, file }): Row => ({ type: 'doc', doc, hit, file })))
       if (narrowed && list.length > limit) out.push({ type: 'more', left: list.length - limit })
     }
   }
@@ -271,20 +386,20 @@ function buildRows(): Row[] {
         const doc = data.entries.get(note.docId)
         return note.status === 'open' && doc !== undefined && pass(doc)
       })
-      .filter((note) => fuzzy(q, note.messages.map((message) => message.text).join(' ')) >= 0)
+      .filter((note) => fuzzy(q, [noteText(note), ...note.messages.map((message) => message.text)].join(' ')) >= 0)
     if (!narrowed) list = list.slice(0, 2)
     if (list.length > 0) {
-      out.push({ type: 'group', label: 'Uwagi' })
+      out.push({ type: 'group', label: t('Uwagi') })
       out.push(...list.map((note): Row => ({ type: 'note', note })))
     }
   }
   if (want('action') && !docFilter) {
-    let list = ACTIONS.map((action) => ({ action, score: fuzzy(q, `${action.title} ${action.sub}`) }))
+    let list = actions().map((action) => ({ action, score: fuzzy(q, `${action.title} ${action.sub}`) }))
       .filter((row) => row.score >= 0)
       .sort((a, b) => a.score - b.score)
     if (!narrowed) list = list.slice(0, 5)
     if (list.length > 0) {
-      out.push({ type: 'group', label: 'Akcje' })
+      out.push({ type: 'group', label: t('Akcje') })
       out.push(...list.map(({ action }): Row => ({ type: 'action', action })))
     }
   }
@@ -322,23 +437,29 @@ export function cmdSelect(i: number): void {
   if (next === cmd.idx) return
   cmd.idx = next
   const item = cmd.items[next]
-  if (item?.type === 'doc') window.api.requestThumbs([item.doc.id])
+  if (item?.type === 'doc') {
+    window.api.requestThumbs([item.doc.id])
+    aimAt(item.doc.id)
+  }
   notify()
 }
 
 function searchBodies(query: string): void {
   clearTimeout(searchTimer)
   const token = ++searchToken
-  if (query.trim().length < 3) {
+  cmd.pending = query.trim().length >= 3
+  if (!cmd.pending) {
     cmd.hits = []
     return
   }
+  const answer = (hits: SearchHit[]): void => {
+    if (token !== searchToken) return
+    cmd.hits = hits
+    cmd.pending = false
+    renderCmd()
+  }
   searchTimer = window.setTimeout(() => {
-    void window.api.search(query).then((hits) => {
-      if (token !== searchToken) return
-      cmd.hits = hits
-      renderCmd()
-    })
+    void window.api.search(query).then(answer, () => answer([]))
   }, SEARCH_DELAY_MS)
 }
 
@@ -353,6 +474,7 @@ function resetSearch(): void {
   cmd.pick = null
   cmd.query = ''
   cmd.hits = []
+  cmd.pending = false
   cmd.idx = 0
   cmd.docLimit = DOC_PAGE
   setQuery('')
@@ -397,7 +519,7 @@ export function dropFilter(key: FilterKey, value: string): void {
 }
 
 export function startFilter(key: FilterKey): void {
-  const value = `${FILTERS[key].op}:`
+  const value = `${filters()[key].op}:`
   setQuery(value)
   onCmdInput(value)
   inputEl()?.focus()
@@ -436,31 +558,72 @@ export function flash(text: string): void {
   notify()
 }
 
+/** Etykiety działają na dokument z wyniku, także nieotwarty. Pole akcji tworzy nową, gdy takiej nie ma. */
+function labelActions(doc: DocEntry): ItemAction[] {
+  if (!canAnnotate(doc)) return []
+  const known = labelCatalog()
+  const typed = cleanLabel(cmd.actQuery)
+  const toggle = (name: string) => (): void => {
+    toggleLabel(doc, name)
+    closeActs()
+    flash(hasLabel(doc.labels, name) ? t('Dodano etykietę {name}', { name }) : t('Zdjęto etykietę {name}', { name }))
+  }
+  const offered = known.filter(({ name }) => typed || !isTicket(name) || hasLabel(doc.labels, name))
+  const tickets = doc.labels.flatMap((name) => {
+    const href = ticketHref(name)
+    if (!href) return []
+    const run = (): void => {
+      closeActs()
+      void window.api.openExternal(href)
+    }
+    return [{ icon: 'reveal', title: t('Otwórz {code} w Jira', { code: name }), run }]
+  })
+  return [
+    { group: t('Etykiety') },
+    { icon: 'tag', title: t('Etykietuj automatycznie'), run: () => { closeActs(); void autoLabelDoc(doc) } },
+    ...tickets,
+    ...offered.map(({ name }) => ({ icon: 'tag', title: name, check: hasLabel(doc.labels, name), run: toggle(name) })),
+    ...(typed && !known.some(({ name }) => sameLabel(name, typed))
+      ? [{ icon: 'tag', title: t('Utwórz etykietę „{name}”', { name: typed }), run: toggle(typed) }]
+      : [])
+  ]
+}
+
 function itemActions(item: Item | undefined): ItemAction[] {
   if (!item) return []
   if (item.type === 'doc') {
     const { doc } = item
     return [
-      { icon: 'file', title: 'Otwórz', keys: ['↵'], run: () => runCmd(false) },
-      { icon: 'split', title: 'Otwórz obok', keys: [MOD, '↵'], run: () => runCmd(true) },
+      { icon: 'file', title: t('Otwórz'), keys: ['↵'], run: () => runCmd(false) },
+      { icon: 'split', title: t('Otwórz obok'), keys: [MOD, '↵'], run: () => runCmd(true) },
       {
         icon: 'reveal',
-        title: 'Pokaż w Eksploratorze',
+        title: t('Pokaż w Eksploratorze'),
         keys: [MOD, 'Shift', 'F'],
         run: () => {
           void window.api.revealDoc(doc.id)
           closeActs()
-          flash('Otwarto w Eksploratorze')
+          flash(t('Otwarto w Eksploratorze'))
         }
       },
       {
         icon: 'file',
-        title: 'Kopiuj ścieżkę',
+        title: t('Kopiuj ścieżkę'),
         keys: [MOD, 'Shift', 'C'],
         run: () => {
-          void navigator.clipboard.writeText(doc.path).catch(() => {})
+          window.api.copyText(doc.path)
           closeActs()
-          flash('Skopiowano ścieżkę')
+          flash(t('Skopiowano ścieżkę'))
+        }
+      },
+      {
+        icon: 'link',
+        title: t('Kopiuj odnośnik dla agenta'),
+        keys: [MOD, 'Shift', 'R'],
+        run: () => {
+          copyReference(doc)
+          closeActs()
+          flash(t('Skopiowano odnośnik'))
         }
       },
       { group: 'Status' },
@@ -472,16 +635,17 @@ function itemActions(item: Item | undefined): ItemAction[] {
           setDocStatus(doc.id, id)
           closeActs()
         }
-      }))
+      })),
+      ...labelActions(doc)
     ]
   }
   if (item.type === 'note') {
     const { note } = item
     return [
-      { icon: 'bubble', title: 'Pokaż w dokumencie', keys: ['↵'], run: () => runCmd(false) },
+      { icon: 'bubble', title: t('Pokaż w dokumencie'), keys: ['↵'], run: () => runCmd(false) },
       {
         icon: 'check',
-        title: 'Zamknij uwagę',
+        title: t('Zamknij uwagę'),
         run: () => {
           void window.api.setAnnotationStatus(note.id, 'resolved')
           closeActs()
@@ -489,7 +653,7 @@ function itemActions(item: Item | undefined): ItemAction[] {
       }
     ]
   }
-  if (item.type === 'action') return [{ icon: item.action.icon, title: 'Uruchom', keys: ['↵'], run: () => runCmd(false) }]
+  if (item.type === 'action') return [{ icon: item.action.icon, title: t('Uruchom'), keys: ['↵'], run: () => runCmd(false) }]
   return []
 }
 
@@ -558,7 +722,9 @@ export function openCmd(): void {
   if (ui.cmd) return
   ui.cmd = true
   hideTip()
+  hideCard()
   togglePop(false)
+  closeLabelPop()
   hideFly()
   hideCaps()
   ui.map = false

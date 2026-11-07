@@ -98,8 +98,7 @@ const review = (reason: string): Classification => ({ classification: 'review', 
 type Features = Omit<HtmlFeatures, 'text' | 'title'>
 
 /** Markdown nie ma własnego stylu, więc dokument poznajemy po ilości treści i jej strukturze. */
-function classifyMarkdown({ textLength, headings }: Features, fileName: string): Classification {
-  if (REPO_FILE.test(fileName)) return ignored('Plik opisujący repozytorium')
+function classifyMarkdown({ textLength, headings }: Features): Classification {
   if (textLength < MIN_PAGE_TEXT) return ignored('Za mało treści')
   if (textLength >= MIN_DOCUMENT_TEXT && headings >= MIN_DOCUMENT_HEADINGS) {
     return { classification: 'document', reason: 'Dokument Markdown' }
@@ -107,11 +106,8 @@ function classifyMarkdown({ textLength, headings }: Features, fileName: string):
   return review('Ma treść, ale mało struktury')
 }
 
-/** Dzieli pliki na dokumenty, niepewne i pomijane na podstawie ich budowy. */
-export function classify(
-  features: Features,
-  { relPath, siblings, format }: ClassifyContext
-): Classification {
+/** Werdykt z samej ścieżki. Taki plik nie wymaga czytania, a w repozytoriach to ponad połowa plików. */
+export function classifyByPath({ relPath, siblings, format }: ClassifyContext): Classification | null {
   const folders = relPath.split('/').slice(0, -1)
   if (folders.some((folder) => NON_DOCUMENT_FOLDERS.has(folder.toLowerCase()))) {
     return ignored('Folder z plikami tymczasowymi lub stroną publiczną')
@@ -119,9 +115,18 @@ export function classify(
   if (folders.some((folder) => TEST_OUTPUT_FOLDER.test(folder))) {
     return ignored('Wynik testów')
   }
+  if (format === 'markdown') {
+    return REPO_FILE.test(relPath.split('/').at(-1) ?? '') ? ignored('Plik opisujący repozytorium') : null
+  }
   // Duży folder Markdownów to zwykle notatki albo dokumentacja, a nie wynik generatora.
-  if (format === 'markdown') return classifyMarkdown(features, relPath.split('/').at(-1) ?? '')
-  if (siblings >= BULK_FOLDER_SIZE) return ignored('Masowy wynik generatora')
+  return siblings >= BULK_FOLDER_SIZE ? ignored('Masowy wynik generatora') : null
+}
+
+/** Dzieli pliki na dokumenty, niepewne i pomijane na podstawie ich budowy. */
+export function classify(features: Features, context: ClassifyContext): Classification {
+  const byPath = classifyByPath(context)
+  if (byPath) return byPath
+  if (context.format === 'markdown') return classifyMarkdown(features)
   if (features.appMount) return ignored('Punkt wejścia aplikacji')
 
   const { textLength } = features

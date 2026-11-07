@@ -58,6 +58,10 @@ const layerIds = {
   trayIn: 'trayIn',
   camBox: 'camBox',
   camIn: 'camIn',
+  present: 'present',
+  presentIn: 'presentIn',
+  cmdBox: 'cmdBox',
+  cmdBtn: 'cmdBtn',
   cmd: 'cmd',
   tip: 'tip'
 } as const
@@ -146,6 +150,8 @@ export const tipX = new Spring(0, 460, 0.84)
 export const camX = new Spring(0, 135, 0.8)
 export const camW = new Spring(0, 300, 0.7)
 export const ctxP = new Spring(0, 240, 0.84)
+/** Dok jako pilot prezentacji: 1 to pilot, 0 to zwykłe narzędzia i szukanie. */
+export const presP = new Spring(0, 240, 0.84)
 export const glowD = new Spring(0, 42, 1)
 
 export const sheets: Sheet[] = Array.from({ length: MAX_SHEETS }, (_, i) => ({
@@ -175,6 +181,8 @@ export const hoverPill = new Pill()
 export const toolPill = new Pill('x')
 export const cmdPill = new Pill()
 export const popPill = new Pill()
+export const labelPill = new Pill()
+export const menuPill = new Pill()
 export const actPill = new Pill()
 export const viewPill = new Pill('x')
 export const homePill = new Pill('x')
@@ -222,10 +230,13 @@ export function measure(): void {
   els.cmd.style.height = `${G.cmdH}px`
 }
 
+/** W prezentacji szyna chowa się w lewą krawędź, a arkusz bierze całą szerokość okna. */
+const navEdge = (): number => (ui.presenting ? G.shapeLeft : ui.nav ? G.open : G.closed)
+
 const stageEdges = (): { left: number; right: number; base: number } => {
-  const edge = ui.nav ? G.open : G.closed
   const base = G.W - G.stageRight
-  return { left: edge + G.stageGap, right: base - (ui.insp && !G.overlay ? G.insW + G.stageGap : 0), base }
+  if (ui.presenting) return { left: G.stageGap, right: base, base }
+  return { left: navEdge() + G.stageGap, right: base - (ui.insp && !G.overlay ? G.insW + G.stageGap : 0), base }
 }
 
 export function applyLayout(pullY?: number): void {
@@ -236,7 +247,7 @@ export function applyLayout(pullY?: number): void {
   navB.to(G.H - G.navBot)
   navR.to(G.r)
   const { left, right, base } = stageEdges()
-  rope.to(ui.nav ? G.open : G.closed, pullY)
+  rope.to(navEdge(), pullY)
   insB.to(base)
   insT.to(G.insTop)
   insE.to(G.H - G.insBot)
@@ -259,7 +270,7 @@ export function applyResize(): void {
   navB.set(G.H - G.navBot)
   navR.set(G.r)
   const { left, right, base } = stageEdges()
-  rope.place(ui.nav ? G.open : G.closed)
+  rope.place(navEdge())
   insB.set(base)
   insT.set(G.insTop)
   insE.set(G.H - G.insBot)
@@ -450,7 +461,8 @@ export function syncChrome(): void {
   home.classList.toggle('setup', ui.setup !== null)
   root.classList.toggle('at-home', atHome)
   root.classList.toggle('no-lib', ui.setup !== null)
-  ctxP.to(atHome || !canAnnotate(focusedDoc()) ? 0 : 1)
+  ctxP.to(atHome || ui.presenting || !canAnnotate(focusedDoc()) ? 0 : 1)
+  presP.to(ui.presenting ? 1 : 0)
   const many = (pinned() > 1 && !ui.home) || ui.peek !== null
   const last = ui.peek === null ? ui.order[pinned() - 1] : ui.peek
   for (const s of sheets) {
@@ -480,8 +492,9 @@ const dockLeft = (center: number, width: number): number =>
   clamp(center - width / 2, DOCK_EDGE, Math.max(DOCK_EDGE, G.W - width - DOCK_EDGE))
 
 /** Wycięcie obejmuje dok, a w ruchu także miejsce, do którego dok zmierza. */
-function fitLayer(left: number, cw: number, ch: number, barW: number, ctx: number): void {
-  const barAim = barW + trayW.t - trayW.x + camW.t - camW.x + (ctxP.t - ctx) * els.barCtxIn.offsetWidth
+function fitLayer(left: number, cw: number, ch: number, barW: number, ctx: number, pres: number): void {
+  const swap = (presP.t - pres) * (els.presentIn.offsetWidth - els.cmdBtn.offsetWidth)
+  const barAim = barW + trayW.t - trayW.x + camW.t - camW.x + (ctxP.t - ctx) * els.barCtxIn.offsetWidth + swap
   const aimW = mW.t > 0 ? G.cmdW : barAim
   const aimH = mH.t > 0 ? G.cmdH : DOCK_H
   const aimL = dockLeft(lerp(dockC.t, G.W / 2, mW.t), aimW)
@@ -525,7 +538,8 @@ export function render(): void {
   const { stage } = els
   stage.style.left = `${sL.x}px`
   stage.style.width = `${w}px`
-  stage.style.clipPath = `inset(-80px -4000px -80px ${G.shapeLeft + 8 - sL.x}px)`
+  // Szyna w prezentacji zeszła, więc arkusz nie ma czego omijać.
+  stage.style.clipPath = `inset(-80px -4000px -80px ${ui.presenting ? -80 : G.shapeLeft + 8 - sL.x}px)`
   const m = clamp(mH.x)
   stage.style.transform = m > 0.001 ? `scale(${1 - 0.022 * m})` : ''
   layoutSheets(w)
@@ -540,12 +554,18 @@ export function render(): void {
   // Szerokości przed pomiarem, bo inaczej dok spóźnia się o klatkę i przycina własną treść.
   els.tray.style.width = `${Math.max(0, trayW.x)}px`
   els.camBox.style.width = `${Math.max(0, camW.x)}px`
+  // Pilot wjeżdża w miejsce szukania, a oba mierzą się przed szerokością doku.
+  const pres = clamp(presP.x)
+  els.present.style.width = pres > 0.999 ? '' : `${els.presentIn.offsetWidth * pres}px`
+  els.present.style.opacity = String(clamp(pres * 1.4 - 0.4))
+  els.cmdBox.style.width = pres < 0.001 ? '' : `${els.cmdBtn.offsetWidth * (1 - pres)}px`
+  els.cmdBox.style.opacity = String(clamp((1 - pres) * 1.4 - 0.4))
   const barW = els.bar.offsetWidth
   const cw = lerp(barW, G.cmdW, mW.x)
   const ch = lerp(DOCK_H, G.cmdH, mH.x)
   const { dock, bar, cmd } = els
   const left = dockLeft(lerp(dockC.x, G.W / 2, clamp(mW.x)), cw)
-  fitLayer(left, cw, ch, barW, ctx)
+  fitLayer(left, cw, ch, barW, ctx, pres)
   dock.style.width = `${cw}px`
   dock.style.height = `${ch}px`
   dock.style.left = `${left}px`

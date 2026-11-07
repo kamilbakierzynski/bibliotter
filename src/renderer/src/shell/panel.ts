@@ -1,7 +1,9 @@
+import { language } from '../../../shared/i18n'
 import { followFor } from '../motion/spring'
-import { buildLibrary, flattenLibrary, type LibraryModel, type LibraryRows, ROW_H, type SortMode } from '../tree'
+import { buildLibrary, flattenLibrary, type LibraryModel, type LibraryRows, type ManualOrder, ROW_H, type SortMode } from '../tree'
 import { els, hoverPill, syncSel } from './layout'
-import { data, isClosed, memo, notify, saveCollapsed, saveSort, toneOf, ui, visibleProjects } from './state'
+import { load } from './library'
+import { data, isClosed, memo, notify, saveCollapsed, saveSort, type ShellSort, toneOf, ui, visibleProjects } from './state'
 
 /*
  * Biblioteka to płaska lista wierszy, a na ekranie jest tylko jej wycinek. Wiersze stoją na
@@ -9,18 +11,29 @@ import { data, isClosed, memo, notify, saveCollapsed, saveSort, toneOf, ui, visi
  * na swoje nowe miejsce. Zwijane wiersze przez chwilę zostają jako duchy pod rodzicem.
  */
 
-const FOLD_MS = 620
+export const FOLD_MS = 620
 /** Tyle duch zdąża dojechać pod rodzica i zniknąć. */
-const GHOST_MS = 320
+export const GHOST_MS = 320
+
+/** Przeciąganie w toku: kolejność na podgląd i folder zwinięty na czas ruchu. Pisze je `arrange.ts`. */
+export const arranging = {
+  order: null as ManualOrder | null,
+  closed: null as string | null
+}
+
+const baseSort = (): SortMode => (ui.sort === 'manual' ? ui.sortBase : ui.sort)
+const manualOrder = (): ManualOrder | undefined => arranging.order ?? (ui.sort === 'manual' ? ui.manual : undefined)
 
 const model = memo(
-  () => [visibleProjects(), data.annotations, ui.sort] as const,
-  (projects, _notes, sort): LibraryModel => buildLibrary(projects, { sort, toneOf })
+  () => [visibleProjects(), data.annotations, baseSort(), manualOrder(), data.library?.folderNames, language()] as const,
+  (projects, _notes, sort, order, names): LibraryModel => buildLibrary(projects, { sort, toneOf, names, order })
 )
+
+const closedNow = (key: string, byDefault: boolean): boolean => key === arranging.closed || isClosed(key, byDefault)
 
 const flatRows = memo(
   () => [model(), ui.folds] as const,
-  (library): LibraryRows => flattenLibrary(library, isClosed, ui.closing)
+  (library): LibraryRows => flattenLibrary(library, closedNow, ui.closing, ui.leaving)
 )
 
 export const libraryRows = (): LibraryRows => flatRows()
@@ -59,11 +72,29 @@ export function toggleFold(key: string): void {
   followFor(FOLD_MS, () => syncSel(true))
 }
 
+/** Ręcznie wchodzi do kolejki dopiero, gdy coś ułożono, i dziedziczy sortowanie, z którego przyszło. */
 export function toggleSort(): void {
-  const sort: SortMode = ui.sort === 'recent' ? 'name' : 'recent'
+  const arranged = Object.keys(ui.manual).length > 0
+  const sort: ShellSort = ui.sort === 'recent' ? 'name' : ui.sort === 'name' && arranged ? 'manual' : 'recent'
+  if (sort !== 'manual') ui.sortBase = sort
   ui.sort = sort
   saveSort(sort)
   notify()
+  followFor(FOLD_MS, () => syncSel(true))
+}
+
+/** Wiersz znika od razu, a skan dużej biblioteki zdejmuje dokumenty z reszty apki chwilę później. */
+export function hideFolders(key: string, paths: string[]): void {
+  ui.leaving.add(key)
+  ui.folds++
+  hoverPill.hide()
+  load(
+    () => window.api.hideFolders(paths),
+    () => {
+      ui.leaving.delete(key)
+      ui.folds++
+    }
+  )
   followFor(FOLD_MS, () => syncSel(true))
 }
 

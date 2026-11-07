@@ -1,0 +1,538 @@
+<title>Bestiariusz HTML Docs</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Układ: ściana z Galerii nocą, na której wiszą arkusze z gatunkami. Sygnał pojawia się tylko przy decyzji. */
+:root {
+  --wall: #e7e7e9;
+  --surface: #ffffff;
+  --ink: #131316;
+  --ink-2: #63636b;
+  --ink-3: #85858d;
+  --line: #d9d9dd;
+  --signal: #f0480a;
+  --free: #131316;
+  --sheet-shadow: 0 1px 2px rgba(19,19,22,.05), 0 18px 40px -22px rgba(19,19,22,.28);
+  --mark-glow: 0 18px 40px -18px rgba(19,19,22,.5);
+  --bar-dark: #1d1d20;
+  --bar-light: #f2f2f4;
+  --sans: "Geist", "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --wall: #08080a;
+    --surface: #151517;
+    --ink: #f4f4f5;
+    --ink-2: #a4a4ac;
+    --ink-3: #7c7c84;
+    --line: #2a2a2e;
+    --signal: #ff6b30;
+    --free: #f4f4f5;
+    --sheet-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 70px -14px rgba(255,255,255,.1);
+    --mark-glow: 0 0 60px -10px rgba(255,255,255,.2);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --wall: #08080a;
+  --surface: #151517;
+  --ink: #f4f4f5;
+  --ink-2: #a4a4ac;
+  --ink-3: #7c7c84;
+  --line: #2a2a2e;
+  --signal: #ff6b30;
+  --free: #f4f4f5;
+  --sheet-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 0 70px -14px rgba(255,255,255,.1);
+  --mark-glow: 0 0 60px -10px rgba(255,255,255,.2);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--wall);
+  color: var(--ink);
+  font: 400 15px/1.6 var(--sans);
+  letter-spacing: -.005em;
+  -webkit-font-smoothing: antialiased;
+}
+.page {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding-block: clamp(32px, 6vw, 72px) 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: clamp(48px, 7vw, 80px);
+}
+.page > * { min-width: 0; }
+section { display: grid; gap: 22px; min-width: 0; }
+h1, h2, h3 { margin: 0; font-weight: 550; text-wrap: balance; }
+h1 { font-size: clamp(34px, 5.4vw, 56px); line-height: 1.04; letter-spacing: -.035em; }
+h2 { font-size: clamp(22px, 3vw, 28px); line-height: 1.15; letter-spacing: -.025em; }
+h3 { font-size: clamp(26px, 3.4vw, 34px); line-height: 1.1; letter-spacing: -.03em; }
+p { margin: 0; max-width: 66ch; }
+a { color: inherit; text-underline-offset: 2px; text-decoration-color: var(--ink-3); }
+a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 3px; }
+code { font: 400 .92em var(--mono); }
+.lede { font-size: clamp(16px, 2vw, 18px); color: var(--ink-2); }
+.meta { font: 400 11.5px/1.5 var(--mono); color: var(--ink-3); letter-spacing: 0; }
+.meta b { font-weight: 500; color: var(--ink); margin-right: 6px; }
+
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: clamp(24px, 5vw, 64px); align-items: center; }
+.hero-text { display: grid; gap: 18px; min-width: 0; }
+.hero-mark { width: clamp(150px, 22vw, 232px); height: auto; aspect-ratio: 1; border-radius: 23%; box-shadow: var(--mark-glow); display: block; max-width: 100%; }
+.pill {
+  justify-self: start;
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 500 11.5px/1 var(--mono);
+  color: var(--signal);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.rules > div { display: grid; gap: 6px; align-content: start; min-width: 0; border-top: 1px solid var(--line); padding-top: 12px; }
+.rules strong { font-weight: 550; }
+.rules p { color: var(--ink-2); font-size: 14.5px; }
+
+.shelf { display: grid; gap: 18px; }
+.sheet {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: clamp(20px, 3.4vw, 40px);
+  background: var(--surface);
+  border-radius: 16px;
+  padding: clamp(18px, 3vw, 32px);
+  box-shadow: var(--sheet-shadow);
+  scroll-margin-top: 16px;
+}
+.spec { display: grid; gap: 14px; align-content: start; justify-items: start; }
+.mark { width: 100%; max-width: 196px; height: auto; aspect-ratio: 1; display: block; border-radius: 23%; }
+.ruler { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.sm { --detail: none; --small: inline; display: block; flex: none; }
+.entry { display: grid; gap: 10px; min-width: 0; align-content: start; }
+.entry > p:not(.meta) { color: var(--ink); }
+dl { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 6px 12px; margin: 4px 0 0; }
+dt { font: 400 11.5px/1.9 var(--mono); color: var(--ink-3); }
+dd { margin: 0; color: var(--ink-2); font-size: 14.5px; min-width: 0; }
+.avail { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.avail li { font: 400 11.5px/1 var(--mono); padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); color: var(--ink-3); }
+.avail li span { color: inherit; }
+.avail li.free { color: var(--free); border-color: var(--ink-3); }
+.avail li.free span { font-weight: 500; }
+
+.scroll { overflow-x: auto; border-radius: 12px; background: var(--surface); box-shadow: var(--sheet-shadow); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 9px 14px; white-space: nowrap; border-bottom: 1px solid var(--line); }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+thead th { font: 400 11.5px/1.4 var(--mono); color: var(--ink-3); }
+tbody th { font-weight: 500; }
+.names td, .names tbody th { font: 400 12.5px/1.4 var(--mono); padding-block: 6px; }
+.names tbody th { font-weight: 500; }
+td.n { color: var(--ink-3); }
+td.num { color: var(--ink-2); }
+.dots { display: inline-flex; gap: 4px; vertical-align: middle; }
+.dots i { width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--ink-3); }
+.dots i.on { background: var(--ink); border-color: var(--ink); }
+
+.bars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; padding: 12px; border-radius: 12px; min-width: 0; }
+.bar.d { background: var(--bar-dark); }
+.bar.l { background: var(--bar-light); box-shadow: inset 0 0 0 1px var(--line); }
+
+.groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
+.groups > div { display: grid; gap: 4px; min-width: 0; }
+.groups strong { font-weight: 550; }
+.groups p { color: var(--ink-2); font-size: 14.5px; }
+
+.lost { display: grid; gap: 14px; }
+.lost > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 16px; align-items: start; }
+.lost svg { display: block; }
+.lost .t { display: grid; gap: 2px; min-width: 0; }
+.lost strong { font-weight: 550; }
+.lost p { color: var(--ink-2); font-size: 14.5px; }
+.lost .t:only-child { grid-column: 2; }
+
+.notes { display: grid; gap: 8px; margin: 0; padding-left: 18px; color: var(--ink-2); max-width: 70ch; }
+.decision { background: var(--surface); box-shadow: var(--sheet-shadow); border-radius: 16px; padding: clamp(18px, 3vw, 32px); display: grid; gap: 14px; }
+.sources { columns: 2; column-gap: 32px; margin: 0; padding: 0; list-style: none; font-size: 13.5px; color: var(--ink-2); }
+.sources li { break-inside: avoid; padding-bottom: 6px; }
+
+@media (max-width: 760px) {
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-mark { grid-row: 1; }
+  .rules, .bars, .groups { grid-template-columns: minmax(0, 1fr); }
+  .sheet { grid-template-columns: minmax(0, 1fr); }
+  .spec { grid-template-columns: 120px minmax(0, 1fr); align-items: end; }
+  .sources { columns: 1; }
+  .lost .t:only-child { grid-column: 1 / -1; }
+}
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff" stop-opacity=".2"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+  <clipPath id="pang-clip"><path d="M26 62c4-20 18-35 35-34 16 1 26 16 30 33 1.500 7 4 13 6 20-20 2-40 2-58 1z"/></clipPath>
+  <clipPath id="tile-clip"><rect width="100" height="100" rx="23"/></clipPath>
+
+  <symbol id="i-otter" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="50" cy="66" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <circle cx="19" cy="37" r="6" fill="#7d7d86"/><circle cx="81" cy="37" r="6" fill="#7d7d86"/>
+      <ellipse cx="50" cy="45" rx="33" ry="24" fill="#7d7d86"/>
+      <ellipse cx="50" cy="54" rx="23" ry="13" fill="#ececee"/>
+      <circle cx="36" cy="38.5" r="4.2" fill="#0c0c0e"/><circle cx="64" cy="38.5" r="4.2" fill="#0c0c0e"/>
+      <circle cx="37.4" cy="37.2" r="1.3" fill="#fff" style="display:var(--detail,inline)"/><circle cx="65.4" cy="37.2" r="1.3" fill="#fff" style="display:var(--detail,inline)"/>
+      <path d="M43 45.5h14c1.6 0 2.3 1.8 1.2 2.9l-5.2 4.6c-1.2 1.1-3.2 1.1-4.4 0l-5.2-4.6c-1.1-1.1-.4-2.9 1.2-2.9z" fill="#0c0c0e"/>
+      <path d="M50 53v3m0 0c-2.2 2.8-6 2.8-8.5 1m8.500-1c2.200 2.800 6 2.800 8.500 1" fill="none" stroke="#0c0c0e" stroke-width="1.8" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <path d="M31 52 9 47m22 11-21 3m59-9 22-5m-22 11 21 3" fill="none" stroke="#e4e4e7" stroke-width="1.6" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <path d="M22 66h56a6 6 0 0 1 6 6v32H16V72a6 6 0 0 1 6-6z" fill="#f4f4f5"/>
+      <path d="M29 80h42M29 90h27" fill="none" stroke="#c4c4ca" stroke-width="4" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <rect x="24" y="60" width="17" height="13" rx="6.5" fill="#7d7d86"/><rect x="59" y="60" width="17" height="13" rx="6.5" fill="#7d7d86"/>
+      <path d="M30 67v5m5-5v5m29-5v5m5-5v5" fill="none" stroke="#54545b" stroke-width="1.4" stroke-linecap="round" style="display:var(--detail,inline)"/>
+    </g>
+  </symbol>
+
+  <symbol id="i-dog" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="52" cy="50" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <path d="M46 63v10m38-10v10" fill="none" stroke="#6f6f77" stroke-width="6" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <path d="M37 63v11m39-11v11" fill="none" stroke="#f4f4f5" stroke-width="6.5" stroke-linecap="round"/>
+      <path d="M90 49c3.5-1 5.5-4.5 6-9.5" fill="none" stroke="#f4f4f5" stroke-width="4.5" stroke-linecap="round"/>
+      <path d="M33 44h50l9 9v6a6 6 0 0 1-6 6H33a7 7 0 0 1-7-7V51a7 7 0 0 1 7-7z" fill="#f4f4f5"/>
+      <path d="M83 44v5a4 4 0 0 0 4 4h5z" fill="#a9a9b1"/>
+      <path d="M40 27c-7-2.2-14 0-22 5.5l-11 6.8c-3.6 2.4-2.6 7.6 2 7.8l19 .6L26 58h18l2-21c.5-5-1.8-8.7-6-10z" fill="#f4f4f5"/>
+      <path d="M36 26.5c6-1.6 11.5.7 13.2 6.2 1.5 4.8.5 11.5-1.8 16.3-.9 1.8-3.3 2-4.4.4-4-5.3-7.3-10.6-8.2-16.6-.4-2.9-.3-5.5 1.2-6.3z" fill="#8d8d96"/>
+      <circle cx="24.5" cy="34.5" r="2.7" fill="#0c0c0e"/>
+      <circle cx="6.5" cy="41.5" r="3.3" fill="#0c0c0e"/>
+      <path d="M53 53h26M53 59.5h16" fill="none" stroke="#b6b6bd" stroke-width="3.2" stroke-linecap="round" style="display:var(--detail,inline)"/>
+    </g>
+  </symbol>
+
+  <symbol id="i-bat" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="50" cy="48" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <g>
+        <path d="M47 42C36 32 21 28 5 32c4.5 10 6 20 3.5 32 5-3.5 12-3.700 16 2 4-3.700 10.500-3.300 14 3 3-2.700 6-2.700 9.500 1z" fill="#f4f4f5"/>
+        <path d="M15 40c9-1 18 1 23 6M15.5 48c8-.8 15 1 20 5.5M16 56c7-.6 12 .8 16 4.5" fill="none" stroke="#b6b6bd" stroke-width="2.5" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      </g>
+      <g transform="matrix(-1 0 0 1 100 0)">
+        <path d="M47 42C36 32 21 28 5 32c4.5 10 6 20 3.5 32 5-3.5 12-3.700 16 2 4-3.700 10.500-3.300 14 3 3-2.700 6-2.700 9.500 1z" fill="#f4f4f5"/>
+        <path d="M15 40c9-1 18 1 23 6M15.5 48c8-.8 15 1 20 5.5M16 56c7-.6 12 .8 16 4.5" fill="none" stroke="#b6b6bd" stroke-width="2.5" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      </g>
+      <rect x="41" y="50" width="18" height="25" rx="9" fill="#8d8d96"/>
+      <path d="M36.5 38 34.5 20.8c-.2-1.6 1.7-2.5 2.800-1.300L46.500 28h7l9.200-8.500c1.100-1.200 3-.3 2.800 1.300L63.500 38z" fill="#8d8d96"/>
+      <circle cx="50" cy="41" r="15.5" fill="#8d8d96"/>
+      <circle cx="43.8" cy="39" r="3.3" fill="#0c0c0e"/><circle cx="56.2" cy="39" r="3.3" fill="#0c0c0e"/>
+      <circle cx="44.9" cy="38" r="1" fill="#fff" style="display:var(--detail,inline)"/><circle cx="57.3" cy="38" r="1" fill="#fff" style="display:var(--detail,inline)"/>
+      <path d="M47.8 45.5h4.400l-2.200 2.300z" fill="#0c0c0e" style="display:var(--detail,inline)"/>
+      <path d="M46 49.3l1.200 3 1.300-2.700zM54 49.3l-1.200 3-1.300-2.700z" fill="#f4f4f5" style="display:var(--detail,inline)"/>
+    </g>
+  </symbol>
+
+  <symbol id="i-cat" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="50" cy="52" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <path d="M20 22c0-3.500 3.800-5.400 6.600-3.300L41 29h18l14.400-10.300c2.800-2.100 6.600-.2 6.600 3.300v58a7 7 0 0 1-7 7H27a7 7 0 0 1-7-7z" fill="#f4f4f5"/>
+      <path d="M26.500 25.500v11l9-5.800zM73.500 25.500v11l-9-5.800z" fill="#8d8d96"/>
+      <path d="M29 49c5-6 12.500-6 17 1-4.500 5-12 5-17-1zM71 49c-5-6-12.500-6-17 1 4.500 5 12 5 17-1z" fill="#0c0c0e"/>
+      <circle cx="38.5" cy="48" r="1.6" fill="#fff" style="display:var(--detail,inline)"/><circle cx="60.5" cy="48" r="1.6" fill="#fff" style="display:var(--detail,inline)"/>
+      <path d="M46 58.500h8l-4 4.300z" fill="#0c0c0e"/>
+      <path d="M50 62.500v2.500m0 0c-1.800 2.500-5 2.700-7 1m7-1c1.800 2.500 5 2.700 7 1" fill="none" stroke="#0c0c0e" stroke-width="1.7" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <path d="M50 33v6M43 34.5v3.500M57 34.5v3.500" fill="none" stroke="#8d8d96" stroke-width="2.6" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <path d="M28 62h9M28 69h6M63 62h9M66 69h6M36 78h28" fill="none" stroke="#b6b6bd" stroke-width="3" stroke-linecap="round" style="display:var(--detail,inline)"/>
+    </g>
+  </symbol>
+
+  <symbol id="i-pangolin" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="52" cy="56" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <path d="M44 79v7m26-7v7" stroke="#8d8d96" stroke-width="7" stroke-linecap="round"/>
+      <path d="M5 76c4-7 12-13 23-17l10 23H15c-8 0-12-3-10-6z" fill="#a9a9b1"/>
+      <circle cx="19.5" cy="71.5" r="2.5" fill="#0c0c0e"/>
+      <g clip-path="url(#pang-clip)">
+        <rect width="100" height="100" fill="#f4f4f5"/>
+        <g fill="#f4f4f5" stroke="#0c0c0e" stroke-width="2.6" style="display:var(--detail,inline)"><rect x="50" y="57" width="20" height="18" rx="5.5" transform="rotate(66 60 90)"/><rect x="50" y="57" width="20" height="18" rx="5.5" transform="rotate(21 60 90)"/><rect x="50" y="57" width="20" height="18" rx="5.5" transform="rotate(-24 60 90)"/><rect x="50" y="57" width="20" height="18" rx="5.5" transform="rotate(-69 60 90)"/><rect x="49" y="38" width="22" height="20" rx="5.5" transform="rotate(76 60 90)"/><rect x="49" y="38" width="22" height="20" rx="5.5" transform="rotate(48 60 90)"/><rect x="49" y="38" width="22" height="20" rx="5.5" transform="rotate(20 60 90)"/><rect x="49" y="38" width="22" height="20" rx="5.5" transform="rotate(-8 60 90)"/><rect x="49" y="38" width="22" height="20" rx="5.5" transform="rotate(-36 60 90)"/><rect x="49" y="38" width="22" height="20" rx="5.5" transform="rotate(-64 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(80 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(60 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(40 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(20 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(0 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(-20 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(-40 60 90)"/><rect x="48" y="20" width="24" height="20" rx="5.5" transform="rotate(-60 60 90)"/></g>
+        <path d="M31 90a29 29 0 0 1 58 0M15 90a45 45 0 0 1 90 0" fill="none" stroke="#0c0c0e" stroke-width="5" style="display:var(--small,none)"/>
+      </g>
+    </g>
+  </symbol>
+
+  <symbol id="i-axolotl" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="50" cy="56" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <g fill="none" stroke="#a9a9b1" stroke-width="5.5" stroke-linecap="round">
+        <path d="M26 46 9 33M23 57H4.500M26 68 10 80M74 46l17-13M77 57h18.500M74 68l16 12"/>
+      </g>
+      <g fill="none" stroke="#a9a9b1" stroke-width="2.6" stroke-linecap="round" style="display:var(--detail,inline)">
+        <path d="m17 39-1 7m-1-11-6.500 4M13 57l-4 5m4-5-4-5m6 18-1-7m-1 11-7-3M83 39l1 7m1-11 6.500 4M87 57l4 5m-4-5 4-5M85 70l1-7m1 11 7-3"/>
+      </g>
+      <path d="M45 33h22l12 12v21a18 18 0 0 1-18 18H39a18 18 0 0 1-18-18V51a18 18 0 0 1 18-18z" fill="#f4f4f5"/>
+      <path d="M67 33v6a6 6 0 0 0 6 6h6z" fill="#c4c4ca"/>
+      <circle cx="37" cy="56" r="4" fill="#0c0c0e"/><circle cx="63" cy="56" r="4" fill="#0c0c0e"/>
+      <path d="M38 66c7 6.500 17 6.500 24 0" fill="none" stroke="#0c0c0e" stroke-width="2.8" stroke-linecap="round"/>
+    </g>
+  </symbol>
+
+  <symbol id="i-moth" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="23" fill="#0c0c0e"/>
+    <g clip-path="url(#tile-clip)">
+      <circle cx="50" cy="50" r="50" fill="url(#glow)" style="display:var(--detail,inline)"/>
+      <path d="M46.500 33 15 21c-3-1.100-6 1.300-5.400 4.400L15 57c.4 2.200 2.600 3.600 4.800 3.100L46.500 55zM53.500 33 85 21c3-1.100 6 1.300 5.400 4.400L85 57c-.4 2.200-2.600 3.600-4.800 3.100L53.500 55z" fill="#f4f4f5"/>
+      <path d="M46.500 58 23 62.500c-2.700.5-4 3.600-2.500 5.900l9 14c1.600 2.400 5.100 2.500 6.800.2L46.500 70zM53.500 58 77 62.500c2.700.5 4 3.600 2.500 5.900l-9 14c-1.600 2.400-5.100 2.500-6.800.2L53.500 70z" fill="#c9c9cf"/>
+      <path d="M18 31l22 7M19.500 39.500l21 5M21 48l19 2.500M82 31l-22 7M80.500 39.500l-21 5M79 48l-19 2.500" fill="none" stroke="#a9a9b1" stroke-width="2.5" stroke-linecap="round" style="display:var(--detail,inline)"/>
+      <rect x="45.5" y="30" width="9" height="42" rx="4.5" fill="#8d8d96"/>
+      <path d="M48 31C46 24 42 19 35 16M52 31c2-7 6-12 13-15" fill="none" stroke="#8d8d96" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
+  </symbol>
+</defs>
+</svg>
+
+<main class="page">
+  <header class="hero">
+    <div class="hero-text">
+      <p class="meta">html-docs-app · nazwa i ikona · 7 listopada 2026</p>
+      <h1>Proponuję nazwę Bibliotter</h1>
+      <p class="lede">Biblioteka plus otter. Nazwa mówi, czym jest apka, ma tyle samo liter co Docusaurus, a npm, .com, .app i .dev są wolne. Maskotką jest wydra, która czyta, wystając znad kartki.</p>
+      <p class="pill">Czeka na Twój wybór</p>
+    </div>
+    <svg class="hero-mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony Bibliotter: wydra trzymająca kartkę"><use href="#i-otter"/></svg>
+  </header>
+
+  <section>
+    <h2>Co robią dobre nazwy ze zwierzętami</h2>
+    <div class="rules">
+      <div><strong>Nazwa rozkłada się sama</strong><p>Docusaurus to dokumentacja i końcówka dinozaurów, tak tłumaczą to jego autorzy. Czytasz i wiesz.</p></div>
+      <div><strong>Zwierzę wykonuje pracę produktu</strong><p>Moby Dock, wieloryb Dockera, nosi kontenery na grzbiecie. Maskotka jest przy okazji instrukcją.</p></div>
+      <div><strong>Historia mieści się w jednym zdaniu</strong><p>DuckDB nazywa się tak, bo jego współtwórca miał kaczkę o imieniu Wilbur. Takie rzeczy ludzie powtarzają.</p></div>
+    </div>
+    <p>Szukałem zwierząt przez cztery cechy tej apki: zbiera z wielu folderów, żyje nocą w galerii, składa się z arkuszy i przypina uwagi do tekstu. Sprawdziłem 40 nazw w npm, rejestrach domen i na GitHubie. Do finału przeszło sześć.</p>
+  </section>
+
+  <section>
+    <h2>Sześciu finalistów, w mojej kolejności</h2>
+    <div class="shelf">
+    <article class="sheet" id="bibliotter">
+      <div class="spec">
+        <svg class="mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony: wydra"><use href="#i-otter"/></svg>
+        <div class="ruler"><svg class="sm" width="48" height="48" role="img" aria-label="Bibliotter, 48 pikseli"><use href="#i-otter"/></svg><svg class="sm" width="32" height="32" role="img" aria-label="Bibliotter, 32 pikseli"><use href="#i-otter"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Bibliotter, 24 pikseli"><use href="#i-otter"/></svg><svg class="sm" width="16" height="16" role="img" aria-label="Bibliotter, 16 pikseli"><use href="#i-otter"/></svg></div>
+      </div>
+      <div class="entry">
+        <p class="meta"><b>1</b> wydra · biblio(teka) + otter</p>
+        <h3>Bibliotter</h3>
+        <p>Dziesięć liter, jak Docusaurus, a mówi od razu, że to biblioteka. Wydra morska nosi swoje skarby w fałdzie skóry pod łapą i śpi, trzymając inne wydry za łapy, żeby prąd ich nie rozdzielił. Apka robi to samo z dokumentami z wielu folderów i z uwagami przy cytatach.</p>
+        <dl>
+          <dt>Ikona</dt><dd>Wydra wystaje znad kartki i trzyma ją łapami, jak ktoś, kto właśnie czyta.</dd>
+          <dt>Ryzyko</dt><dd>Polecenie CLI jest długie, więc potrzebny alias <code>otter</code>. W 16 px znak jest na granicy czytelności. Otter.ai to znana marka notatek ze spotkań, choć nazwa zaczyna się inaczej.</dd>
+        </dl>
+        <ul class="avail"><li class="free"><span>npm</span> wolne</li><li class="free"><span>.com</span> wolne</li><li class="free"><span>.app</span> wolne</li><li class="free"><span>.dev</span> wolne</li></ul>
+        <p class="meta">GitHub: 0 repo · brak trafień w wyszukiwarce</p>
+      </div>
+    </article>
+    <article class="sheet" id="docshund">
+      <div class="spec">
+        <svg class="mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony: jamnik"><use href="#i-dog"/></svg>
+        <div class="ruler"><svg class="sm" width="48" height="48" role="img" aria-label="Docshund, 48 pikseli"><use href="#i-dog"/></svg><svg class="sm" width="32" height="32" role="img" aria-label="Docshund, 32 pikseli"><use href="#i-dog"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Docshund, 24 pikseli"><use href="#i-dog"/></svg><svg class="sm" width="16" height="16" role="img" aria-label="Docshund, 16 pikseli"><use href="#i-dog"/></svg></div>
+      </div>
+      <div class="entry">
+        <p class="meta"><b>2</b> jamnik · docs + dachshund</p>
+        <h3>Docshund</h3>
+        <p>Najlepsza gra słów w całym zestawieniu: jedna zmieniona głoska i już są dokumenty. Dachshund to po niemiecku pies na borsuki, wąski, żeby wchodzić do nor. Tu wchodzi w foldery. Jamnik Waldi był też pierwszą oficjalną maskotką olimpijską, zaprojektowaną w zespole Otla Aichera.</p>
+        <dl>
+          <dt>Ikona</dt><dd>Tułów to pozioma kartka z tekstem i zagiętym rogiem. Długi dokument, długi pies.</dd>
+          <dt>Ryzyko</dt><dd>DocsHound to płatna baza wiedzy o niemal tej samej wymowie, a FitMango/docshund to mały generator dokumentacji w Pythonie. Domena .com jest zajęta. Część osób napisze „docshound”.</dd>
+        </dl>
+        <ul class="avail"><li class="free"><span>npm</span> wolne</li><li class="taken"><span>.com</span> zajęte</li><li class="free"><span>.app</span> wolne</li><li class="free"><span>.dev</span> wolne</li></ul>
+        <p class="meta">GitHub: 4 repo · docshund w PyPI, DocsHound jako SaaS</p>
+      </div>
+    </article>
+    <article class="sheet" id="bibliobat">
+      <div class="spec">
+        <svg class="mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony: nietoperz"><use href="#i-bat"/></svg>
+        <div class="ruler"><svg class="sm" width="48" height="48" role="img" aria-label="Bibliobat, 48 pikseli"><use href="#i-bat"/></svg><svg class="sm" width="32" height="32" role="img" aria-label="Bibliobat, 32 pikseli"><use href="#i-bat"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Bibliobat, 24 pikseli"><use href="#i-bat"/></svg><svg class="sm" width="16" height="16" role="img" aria-label="Bibliobat, 16 pikseli"><use href="#i-bat"/></svg></div>
+      </div>
+      <div class="entry">
+        <p class="meta"><b>3</b> nietoperz · biblio(teka) + bat</p>
+        <h3>Bibliobat</h3>
+        <p>Najlepsza prawdziwa historia. W Bibliotece Joanina w Coimbrze i w pałacu w Mafrze nietoperze chowają się za regałami, a nocą zjadają owady niszczące książki. Nocny strażnik biblioteki pasuje do Galerii nocą lepiej niż cokolwiek innego.</p>
+        <dl>
+          <dt>Ikona</dt><dd>Skrzydła to otwarta książka z liniami tekstu, a głowa jest okrągła i przyjazna.</dd>
+          <dt>Ryzyko</dt><dd>Sylwetka nietoperza na ciemnym tle ciągnie w stronę Batmana, więc znak musi zostać okrągły i książkowy. Nietoperz jest mniej przytulny niż wydra czy jamnik. Na GitHubie trafienia to głównie bibliobattle, zabawa w prezentowanie książek.</dd>
+        </dl>
+        <ul class="avail"><li class="free"><span>npm</span> wolne</li><li class="free"><span>.com</span> wolne</li><li class="free"><span>.app</span> wolne</li><li class="free"><span>.dev</span> wolne</li></ul>
+        <p class="meta">GitHub: 14 repo, prawie same bibliobattle · brak trafień w wyszukiwarce</p>
+      </div>
+    </article>
+    <article class="sheet" id="docelot">
+      <div class="spec">
+        <svg class="mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony: ocelot"><use href="#i-cat"/></svg>
+        <div class="ruler"><svg class="sm" width="48" height="48" role="img" aria-label="Docelot, 48 pikseli"><use href="#i-cat"/></svg><svg class="sm" width="32" height="32" role="img" aria-label="Docelot, 32 pikseli"><use href="#i-cat"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Docelot, 24 pikseli"><use href="#i-cat"/></svg><svg class="sm" width="16" height="16" role="img" aria-label="Docelot, 16 pikseli"><use href="#i-cat"/></svg></div>
+      </div>
+      <div class="entry">
+        <p class="meta"><b>4</b> ocelot · doc + ocelot</p>
+        <h3>Docelot</h3>
+        <p>Po angielsku brzmi jak „doc-a-lot”, czyli dokumentów dużo. Ocelot jest aktywny głównie nocą, a jego rozety można czytać jak pinezki uwag. Ta ikona najlepiej trzyma się w małych rozmiarach.</p>
+        <dl>
+          <dt>Ikona</dt><dd>Kartka z uszami. Tekst w dolnej części zamienia się w wąsy i prążki.</dd>
+          <dt>Ryzyko</dt><dd>Po polsku czytamy to „do-ce-lot”, bliżej słowa „docelowo” niż „doc”, więc gra słów działa tylko po angielsku. Ocelot to też znana brama API w .NET.</dd>
+        </dl>
+        <ul class="avail"><li class="free"><span>npm</span> wolne</li><li class="taken"><span>.com</span> zajęte</li><li class="free"><span>.app</span> wolne</li><li class="free"><span>.dev</span> wolne</li></ul>
+        <p class="meta">GitHub: 2 repo · brak produktu o tej nazwie</p>
+      </div>
+    </article>
+    <article class="sheet" id="pagolin">
+      <div class="spec">
+        <svg class="mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony: łuskowiec"><use href="#i-pangolin"/></svg>
+        <div class="ruler"><svg class="sm" width="48" height="48" role="img" aria-label="Pagolin, 48 pikseli"><use href="#i-pangolin"/></svg><svg class="sm" width="32" height="32" role="img" aria-label="Pagolin, 32 pikseli"><use href="#i-pangolin"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Pagolin, 24 pikseli"><use href="#i-pangolin"/></svg><svg class="sm" width="16" height="16" role="img" aria-label="Pagolin, 16 pikseli"><use href="#i-pangolin"/></svg></div>
+      </div>
+      <div class="entry">
+        <p class="meta"><b>5</b> łuskowiec · page + pangolin</p>
+        <h3>Pagolin</h3>
+        <p>Jedyne zwierzę, które z natury składa się z zachodzących na siebie arkuszy. Pangolin to z malajskiego „ten, kto się zwija”, a zwinięte foldery i archiwum to ważna część biblioteki. Zwijanie się w kulkę to gotowa animacja ładowania. Łuskowce są najczęściej przemycanymi ssakami, więc maskotka ma też sprawę do opowiedzenia.</p>
+        <dl>
+          <dt>Ikona</dt><dd>Grzbiet z zachodzących na siebie łusek-arkuszy. W małych rozmiarach zostają łuki.</dd>
+          <dt>Ryzyko</dt><dd>Wygląda jak literówka i wyszukiwarka poprawi ją na „pangolin”, a Pangolin to popularny tunel do samodzielnego hostowania. Ikona jest najsłabsza z szóstki i na razie czyta się jak żółw.</dd>
+        </dl>
+        <ul class="avail"><li class="free"><span>npm</span> wolne</li><li class="taken"><span>.com</span> zajęte</li><li class="free"><span>.app</span> wolne</li><li class="free"><span>.dev</span> wolne</li></ul>
+        <p class="meta">GitHub: 28 repo, największe ma 1 gwiazdkę · brak produktu o tej nazwie</p>
+      </div>
+    </article>
+    <article class="sheet" id="doxolotl">
+      <div class="spec">
+        <svg class="mark" viewBox="0 0 100 100" role="img" aria-label="Szkic ikony: aksolotl"><use href="#i-axolotl"/></svg>
+        <div class="ruler"><svg class="sm" width="48" height="48" role="img" aria-label="Doxolotl, 48 pikseli"><use href="#i-axolotl"/></svg><svg class="sm" width="32" height="32" role="img" aria-label="Doxolotl, 32 pikseli"><use href="#i-axolotl"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Doxolotl, 24 pikseli"><use href="#i-axolotl"/></svg><svg class="sm" width="16" height="16" role="img" aria-label="Doxolotl, 16 pikseli"><use href="#i-axolotl"/></svg></div>
+      </div>
+      <div class="entry">
+        <p class="meta"><b>6</b> aksolotl · docs + axolotl</p>
+        <h3>Doxolotl</h3>
+        <p>Najbardziej internetowa maskotka z szóstki i wolna nazwa. Aksolotl odbudowuje utracone części ciała, a dokumenty agenta też powstają od nowa przy każdej sesji. Dzięki końcówce „olotl” nazwy nie da się pomylić z niczym innym.</p>
+        <dl>
+          <dt>Ikona</dt><dd>Głowa to kartka z zagiętym rogiem, a skrzela to linie tekstu wychodzące poza arkusz.</dd>
+          <dt>Ryzyko</dt><dd>„Dox” kojarzy się z doxxingiem. Po polsku wymowa jest łamańcem, a CLI też potrzebuje aliasu.</dd>
+        </dl>
+        <ul class="avail"><li class="free"><span>npm</span> wolne</li><li class="free"><span>.com</span> wolne</li><li class="free"><span>.app</span> wolne</li><li class="free"><span>.dev</span> wolne</li></ul>
+        <p class="meta">GitHub: 0 repo · brak trafień w wyszukiwarce</p>
+      </div>
+    </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>Porównanie</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th scope="col">Nazwa</th><th scope="col">Gra słów</th><th scope="col">Maskotka</th><th scope="col">Ikona w 16 px</th><th scope="col">Dostępność</th><th scope="col">Polski i angielski</th></tr></thead>
+        <tbody><tr><th scope="row"><a href="#bibliotter">Bibliotter</a></th><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td></tr><tr><th scope="row"><a href="#docshund">Docshund</a></th><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td></tr><tr><th scope="row"><a href="#bibliobat">Bibliobat</a></th><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td></tr><tr><th scope="row"><a href="#docelot">Docelot</a></th><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="1 z 3"><i class="on"></i><i class=""></i><i class=""></i></span></td></tr><tr><th scope="row"><a href="#pagolin">Pagolin</a></th><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td></tr><tr><th scope="row"><a href="#doxolotl">Doxolotl</a></th><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="2 z 3"><i class="on"></i><i class="on"></i><i class=""></i></span></td><td><span class="dots" role="img" aria-label="3 z 3"><i class="on"></i><i class="on"></i><i class="on"></i></span></td><td><span class="dots" role="img" aria-label="1 z 3"><i class="on"></i><i class=""></i><i class=""></i></span></td></tr></tbody>
+      </table>
+    </div>
+    <p class="meta">Oceny to mój osąd po obejrzeniu szkiców, a dostępność wynika z tabeli na końcu.</p>
+  </section>
+
+  <section>
+    <h2>Na pasku zadań</h2>
+    <p>Wszystkie sześć w 24 px, w uproszczonej wersji bez drobnych linii. Kafel jest ciemny, więc trzyma się na obu paskach Windows.</p>
+    <div class="bars">
+      <div class="bar d"><svg class="sm" width="24" height="24" role="img" aria-label="Bibliotter"><use href="#i-otter"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Docshund"><use href="#i-dog"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Bibliobat"><use href="#i-bat"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Docelot"><use href="#i-cat"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Pagolin"><use href="#i-pangolin"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Doxolotl"><use href="#i-axolotl"/></svg></div>
+      <div class="bar l"><svg class="sm" width="24" height="24" role="img" aria-label="Bibliotter"><use href="#i-otter"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Docshund"><use href="#i-dog"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Bibliobat"><use href="#i-bat"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Docelot"><use href="#i-cat"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Pagolin"><use href="#i-pangolin"/></svg><svg class="sm" width="24" height="24" role="img" aria-label="Doxolotl"><use href="#i-axolotl"/></svg></div>
+    </div>
+    <p>Pomarańcz zostaje poza ikoną. Kiedy coś czeka na użytkownika, Windows może nałożyć na nią pomarańczowy znaczek, a znaczenie Sygnału się nie zmienia.</p>
+  </section>
+
+  <section>
+    <h2>Odpadły, ale szkoda</h2>
+    <div class="lost">
+      <div>
+        <svg width="64" height="64" role="img" aria-label="Szkic ikony: ćma ze skrzydłami z kartek"><use href="#i-moth"/></svg>
+        <div class="t"><strong>Pagemoth, ćma</strong><p>Najmocniejszy znak z całej serii: skrzydła to dwie kartki, jak widok Para. Ćma ciągnie do świecącego dokumentu, a w 1947 roku ekipa Mark II wkleiła ćmę do dziennika z dopiskiem „First actual case of bug being found”. Nazwa odpada, bo „paper moth” to ćma, której larwy jedzą papier, a po polsku mól to szkodnik. Rysunek można wykorzystać przy innej nazwie.</p></div>
+      </div>
+      <div>
+
+        <div class="t"><strong>Okapi</strong><p>Wyszukiwarka apki sortuje wyniki funkcją <code>bm25()</code> (<code>src/main/searchIndex.ts:237</code>), czyli właśnie Okapi BM25. Świetna ukryta historia, ale nazwa jest zajęta w npm, na wszystkich domenach i w 736 repozytoriach. Może zostać imieniem maskotki albo ciekawostką w stopce.</p></div>
+      </div>
+      <div>
+
+        <div class="t"><strong>Doxie i Dogear</strong><p>Doxie to potoczna nazwa jamnika, która brzmi jak „docs”, ale to też marka skanerów dokumentów. Dogear to angielska nazwa zagiętego rogu kartki, lecz npm i domeny są zajęte. Zagięty róg przetrwał w ikonach Docshund i Doxolotl.</p></div>
+      </div>
+      <div>
+
+        <div class="t"><strong>Bowerbird, altannik</strong><p>Najlepsza metafora galerii: samiec zbiera przedmioty, sortuje je, a u jednego z gatunków układa je tak, że dziedziniec daje złudzenie perspektywy. Niestety 198 repozytoriów, trzy zajęte domeny, a Bower był znanym menedżerem pakietów.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Reszta bestiariusza</h2>
+    <div class="groups">
+      <div><strong>Zbieracze</strong><p>Altannik, Sroka, Fretka (ferret to dosłownie „mały złodziej”, choć ta etymologia jest rekonstrukcją), Bowerdocs</p></div>
+      <div><strong>Czytelnicy</strong><p>Readpanda, Readwing, Rendeer, Bibliowl, Markdowl</p></div>
+      <div><strong>Nocne</strong><p>Bookmoth, Papermoth, Flittermouse, Tarsier (największe oczy, czyli viewer)</p></div>
+      <div><strong>Papierowe</strong><p>Docupine (kolce to pinezki), Quillpig, Docoon, Sheetah, Papercrane, Annotter</p></div>
+      <div><strong>Po polsku</strong><p>Kotalog, Fretka, Sroka, Altannik. Działają tu świetnie, ale słabiej poza Polską, a CLI i MCP są po angielsku.</p></div>
+      <div><strong>Żartobliwe i za długie</strong><p>Docapybara, Libradillo, Archivark, Docodile, Docaroo, Doctopus</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Czego ta strona nie rozstrzyga</h2>
+    <ul class="notes">
+      <li>Znaków towarowych nie sprawdzałem. Przed publicznym wydaniem trzeba przejrzeć EUIPO i USPTO dla wybranej nazwy.</li>
+      <li>Dostępność to stan rejestrów z 7 listopada 2026. „Wolne” oznacza odpowiedź 404 z npm albo RDAP. Zajęta domena może być tylko zaparkowana.</li>
+      <li>Ikony to szkice kierunków, narysowane ręcznie w SVG. Wybrany znak potrzebuje dopracowania, a maskotka w pełnej postaci prawdopodobnie ilustratora.</li>
+      <li>Zmiana nazwy to osobna praca, około 80 wystąpień w kodzie. Dwa miejsca wymagają migracji: folder danych <code>~/HtmlDocs</code> (<code>src/main/config.ts:39</code>) i linki <code>htmldocs:id</code> (<code>src/shared/reference.ts:6</code>), bo stare odnośniki zostały już w promptach.</li>
+      <li>W repozytorium nie ma jeszcze pliku ikony ani <code>productName</code>, więc ikonę trzeba będzie dopiąć razem z pakowaniem apki.</li>
+    </ul>
+  </section>
+
+  <section class="decision">
+    <p class="pill">Do decyzji</p>
+    <h2>Który kierunek rozwijamy?</h2>
+    <p>Mój wybór to Bibliotter. Jeśli najważniejsza jest gra słów i akceptujesz sąsiedztwo DocsHound, wybierz Docshund. Jeśli wolisz historię nocnego strażnika, wybierz Bibliobat. Nazwę i rysunek można też łączyć, na przykład ćma może wrócić z inną nazwą.</p>
+  </section>
+
+  <section>
+    <h2>Wszystkie sprawdzone nazwy</h2>
+    <div class="scroll">
+      <table class="names">
+        <thead><tr><th scope="col">Nazwa</th><th scope="col">npm</th><th scope="col">.com</th><th scope="col">.app</th><th scope="col">.dev</th><th scope="col">Repo · gwiazdki największego</th></tr></thead>
+        <tbody><tr><th scope="row">bibliotter</th><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">bowerdocs</th><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">doxolotl</th><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">libradillo</th><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">markdowl</th><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">1 · ★0</td></tr><tr><th scope="row">bibliobat</th><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">14 · ★1</td></tr><tr><th scope="row">altannik</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">archivark</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">docapybara</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">pagemoth</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">quillpig</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">readwing</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">0</td></tr><tr><th scope="row">annotter</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">2 · ★22</td></tr><tr><th scope="row">docelot</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">2 · ★0</td></tr><tr><th scope="row">docaroo</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">3 · ★0</td></tr><tr><th scope="row">docupine</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">3 · ★0</td></tr><tr><th scope="row">flittermouse</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">3 · ★0</td></tr><tr><th scope="row">docshund</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">4 · ★4</td></tr><tr><th scope="row">kotalog</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">6 · ★2</td></tr><tr><th scope="row">bibliowl</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">8 · ★4</td></tr><tr><th scope="row">fretka</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">8 · ★3</td></tr><tr><th scope="row">pagolin</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="y">wolne</td><td class="num">28 · ★1</td></tr><tr><th scope="row">papermoth</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="num">2 · ★0</td></tr><tr><th scope="row">docoon</th><td class="y">wolne</td><td class="n">zajęte</td><td class="y">wolne</td><td class="n">zajęte</td><td class="num">3 · ★1</td></tr><tr><th scope="row">readpanda</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="num">10 · ★2</td></tr><tr><th scope="row">bookmoth</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="num">11 · ★7</td></tr><tr><th scope="row">rendeer</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="num">35 · ★110</td></tr><tr><th scope="row">docodile</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">6 · ★72</td></tr><tr><th scope="row">dokapi</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="n">zajęte</td><td class="num">9 · ★1</td></tr><tr><th scope="row">secretarybird</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">11 · ★0</td></tr><tr><th scope="row">sheetah</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="num">12 · ★16</td></tr><tr><th scope="row">doctopus</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="y">wolne</td><td class="num">60 · ★24</td></tr><tr><th scope="row">papercrane</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">91 · ★60</td></tr><tr><th scope="row">sroka</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">151 · ★76</td></tr><tr><th scope="row">bowerbird</th><td class="y">wolne</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">198 · ★68</td></tr><tr><th scope="row">doxie</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">114 · ★33</td></tr><tr><th scope="row">rookery</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">173 · ★37</td></tr><tr><th scope="row">dogear</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">197 · ★222</td></tr><tr><th scope="row">tarsier</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">247 · ★1771</td></tr><tr><th scope="row">okapi</th><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="n">zajęte</td><td class="num">736 · ★738</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Źródła</h2>
+    <ul class="sources">
+      <li><a href="https://v1.docusaurus.io/about-slash">Docusaurus, o maskotce Slash</a></li>
+      <li><a href="https://en.wikipedia.org/wiki/List_of_computing_mascots">Lista maskotek w informatyce</a></li>
+      <li><a href="https://opensource.posit.co/resources/videos/2023-12-15_in-process-analytical-data-management-with-duckdb-positconf2023/">DuckDB i kaczka Wilbur, posit::conf 2023</a></li>
+      <li><a href="https://www.smithsonianmag.com/travel/these-portuguese-libraries-are-infested-batsand-they-it-way-180969276/">Nietoperze w bibliotekach Portugalii, Smithsonian</a></li>
+      <li><a href="https://www.mentalfloss.com/animals/how-bats-protect-rare-books-portuguese-library">Nietoperze strzegą książek, Mental Floss</a></li>
+      <li><a href="https://www.etymonline.com/word/dachshund">Etymologia słowa dachshund</a></li>
+      <li><a href="https://olympics.com/en/news/munich-1972-mascot">Waldi, maskotka Monachium 1972</a></li>
+      <li><a href="https://en.wikipedia.org/wiki/Waldi">Waldi, Wikipedia</a></li>
+      <li><a href="https://www.thetravel.com/why-otters-have-pockets/">Kieszenie wydr morskich</a></li>
+      <li><a href="https://www.ifaw.org/ca-en/journal/faq-pangolins">Fakty o łuskowcach, IFAW</a></li>
+      <li><a href="https://wtop.com/asia/2026/02/these-shy-scaly-anteaters-are-the-most-trafficked-mammals-in-the-world/">Przemyt łuskowców, AP przez WTOP</a></li>
+      <li><a href="https://animaldiversity.org/accounts/Leopardus_pardalis">Ocelot, Animal Diversity Web</a></li>
+      <li><a href="https://www.nationalgeographic.com/animals/amphibians/facts/axolotl">Aksolotl, National Geographic</a></li>
+      <li><a href="https://www.computerhistory.org/tdih/september/9/">Ćma w Mark II, Computer History Museum</a></li>
+      <li><a href="https://cameo.mfa.org/wiki/Paper_moth">Paper moth, CAMEO</a></li>
+      <li><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5319334">Perspektywa pozorna altanników, PMC</a></li>
+      <li><a href="https://blog.nature.org/2021/01/04/bowerbirds-meet-the-bird-worlds-kleptomaniac-love-architects/">Altanniki, The Nature Conservancy</a></li>
+      <li><a href="https://en.wikipedia.org/wiki/Okapi_BM25">Okapi BM25</a></li>
+      <li><a href="https://www.merriam-webster.com/dictionary/ferret">Etymologia słowa ferret, Merriam-Webster</a></li>
+      <li><a href="https://www.engadget.com/2011-10-18-doxie-go-portable-scanner-creates-searchable-pdfs-without-a-pc.html">Skanery Doxie, Engadget</a></li>
+      <li><a href="https://alternativeto.net/software/docshound/about">DocsHound, AlternativeTo</a></li>
+      <li><a href="https://www.github.com/FitMango/docshund">FitMango/docshund</a></li>
+    </ul>
+  </section>
+</main>

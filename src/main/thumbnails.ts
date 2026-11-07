@@ -12,6 +12,12 @@ const THUMB_WIDTH = 620
 const JPEG_QUALITY = 84
 /** Skrypty dokumentu dostają chwilę na narysowanie treści. */
 const SETTLE_MS = 400
+/** Markdown nie ma skryptów, więc wystarczy jedna klatka ukrytego okna. */
+const STATIC_SETTLE_MS = 120
+/** Ściana czeka na wszystkie miniatury naraz, a każda to osobny proces na czas robienia zrzutu. */
+const WORKERS = 3
+/** Tyle czasu otwierany dokument nie dzieli procesora z miniaturami. */
+const OPEN_PRIORITY_MS = 700
 const LOAD_LIMIT_MS = 6000
 const FRAME_RATE = 10
 const NO_SCROLLBARS = 'html { scrollbar-width: none; }'
@@ -79,15 +85,20 @@ interface ThumbnailerOptions {
   send: (thumb: DocThumb) => void
 }
 
+/** Ukryte okno jednego z równoległych pracowników. */
+interface Slot {
+  window: BrowserWindow | null
+}
+
 /**
- * Robi miniatury po kolei w ukrytym oknie. Strona działa tam w sesji dokumentów i podlega tym
- * samym ograniczeniom co otwarty dokument. Gotowe obrazy zostają na dysku pod skrótem treści.
+ * Robi miniatury w ukrytych oknach. Strona działa tam w sesji dokumentów i podlega tym samym
+ * ograniczeniom co otwarty dokument. Gotowe obrazy zostają na dysku pod skrótem treści.
  */
 export class Thumbnailer {
   private readonly queue: string[] = []
   private readonly sent = new Map<string, string>()
-  private window: BrowserWindow | null = null
-  private running = false
+  private readonly slots = new Set<Slot>()
+  private pausedUntil = 0
   private closed = false
 
   constructor(private readonly options: ThumbnailerOptions) {}
@@ -98,7 +109,30 @@ export class Thumbnailer {
       if (!stamp || this.sent.get(docId) === stamp || this.queue.includes(docId)) continue
       this.queue.push(docId)
     }
-    void this.pump()
+    while (this.slots.size < Math.min(WORKERS, this.queue.length)) void this.work()
+  }
+
+  /** Otwierany dokument ma pierwszeństwo. Gotowe miniatury dalej przychodzą z dysku. */
+  pause(): void {
+    this.pausedUntil = Date.now() + OPEN_PRIORITY_MS
+  }
+
+  /** Gotowa miniatura z dysku. Brakującą zamawia, ale na nią nie czeka. */
+  async stored(docId: string): Promise<string | null> {
+    const stamp = this.stampOf(docId)
+    if (!stamp) return null
+    const jpeg = await readFile(join(this.options.dir, `${docId}-${stamp}.jpg`)).catch(() => null)
+    if (jpeg) return `data:image/jpeg;base64,${jpeg.toString('base64')}`
+    this.request([docId])
+    return null
+  }
+
+  /**
+   * Przeładowana powłoka zaczyna bez miniatur, a te wysłane wcześniej nie przyszłyby drugi raz.
+   * W trybie dev to każda zmiana w kodzie powłoki, więc ściana, paleta i podgląd wiersza zostawały puste.
+   */
+  forgetSent(): void {
+    this.sent.clear()
   }
 
   /** Dosyła miniatury tym dokumentom, które wyglądają inaczej w nowym motywie. */
@@ -117,30 +151,30 @@ export class Thumbnailer {
   close(): void {
     this.closed = true
     this.queue.length = 0
-    this.closeWindow()
+    for (const slot of this.slots) this.closeWindow(slot)
   }
 
-  private async pump(): Promise<void> {
-    if (this.running) return
-    this.running = true
+  private async work(): Promise<void> {
+    const slot: Slot = { window: null }
+    this.slots.add(slot)
     try {
       for (let docId = this.queue.shift(); docId && !this.closed; docId = this.queue.shift()) {
-        await this.deliver(docId).catch(() => {
+        await this.deliver(docId, slot).catch(() => {
           // Dokument bez miniatury dalej działa, a ściana pokazuje pustą kartkę.
         })
       }
     } finally {
-      this.running = false
-      this.closeWindow()
+      this.slots.delete(slot)
+      this.closeWindow(slot)
     }
   }
 
-  private async deliver(docId: string): Promise<void> {
+  private async deliver(docId: string, slot: Slot): Promise<void> {
     const stamp = this.stampOf(docId)
     if (!stamp) return
     const file = join(this.options.dir, `${docId}-${stamp}.jpg`)
     const stored = await readFile(file).catch(() => null)
-    const jpeg = stored ?? (await this.freshJpeg(docId, stamp, file))
+    const jpeg = stored ?? (await this.freshJpeg(docId, stamp, file, slot))
     if (!jpeg || this.closed) return
     this.sent.set(docId, stamp)
     this.options.send({
@@ -150,8 +184,8 @@ export class Thumbnailer {
     })
   }
 
-  private async freshJpeg(docId: string, stamp: string, file: string): Promise<Buffer | null> {
-    const page = await this.render(docId)
+  private async freshJpeg(docId: string, stamp: string, file: string, slot: Slot): Promise<Buffer | null> {
+    const page = await this.render(docId, slot)
     if (!page) return null
     if (this.stampOf(docId) !== stamp) {
       // Motyw zmienił się w trakcie, więc zrzut nie pasuje już do pliku.
@@ -172,8 +206,8 @@ export class Thumbnailer {
     await Promise.all(stale.map((name) => unlink(join(dir, name)).catch(() => {})))
   }
 
-  private openWindow(viewer: DocViewer): BrowserWindow {
-    if (this.window && !this.window.isDestroyed()) return this.window
+  private openWindow(viewer: DocViewer, slot: Slot): BrowserWindow {
+    if (slot.window && !slot.window.isDestroyed()) return slot.window
     const window = new BrowserWindow({
       show: false,
       width: PAGE_WIDTH,
@@ -193,31 +227,35 @@ export class Thumbnailer {
     window.webContents.setAudioMuted(true)
     window.webContents.setFrameRate(FRAME_RATE)
     window.webContents.on('dom-ready', () => void window.webContents.insertCSS(NO_SCROLLBARS, { cssOrigin: 'user' }))
-    this.window = window
+    slot.window = window
     return window
   }
 
-  private closeWindow(): void {
-    const window = this.window
-    this.window = null
+  private closeWindow(slot: Slot): void {
+    const { window } = slot
+    slot.window = null
     if (window && !window.isDestroyed()) window.destroy()
   }
 
-  private async render(docId: string): Promise<NativeImage | null> {
+  private async render(docId: string, slot: Slot): Promise<NativeImage | null> {
+    for (let wait = this.pausedUntil - Date.now(); wait > 0; wait = this.pausedUntil - Date.now()) {
+      await new Promise((done) => setTimeout(done, wait))
+    }
     const viewer = this.options.viewer()
     if (!viewer) return null
-    const window = this.openWindow(viewer)
+    const window = this.openWindow(viewer, slot)
     viewer.admit(window.webContents, docId)
     const loaded = await this.load(window, docId)
     if (!loaded || this.closed) {
       // Zawieszony dokument mógłby zablokować kolejne, więc okno idzie do kosza.
-      this.closeWindow()
+      this.closeWindow(slot)
       return null
     }
-    await new Promise((done) => setTimeout(done, SETTLE_MS))
+    const settle = this.options.themed(docId) ? STATIC_SETTLE_MS : SETTLE_MS
+    await new Promise((done) => setTimeout(done, settle))
     if (window.isDestroyed()) return null
     const page = await window.webContents.capturePage()
-    return page.isEmpty() ? null : page.resize({ width: THUMB_WIDTH, quality: 'best' })
+    return page.isEmpty() ? null : page.resize({ width: THUMB_WIDTH, quality: 'good' })
   }
 
   private load(window: BrowserWindow, docId: string): Promise<boolean> {

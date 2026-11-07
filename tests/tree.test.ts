@@ -8,6 +8,7 @@ import {
   flattenLibrary,
   inboxDocs,
   type LibraryRow,
+  PROJECTS_KEY,
   ROW_H,
   type TreeNode
 } from '../src/renderer/src/tree'
@@ -30,8 +31,10 @@ function doc(relPath: string, overrides: Partial<DocEntry> = {}): DocEntry {
     branch: null,
     commit: null,
     missing: false,
+    alias: null,
     otherPaths: [],
     sha: null,
+    labels: [],
     ...overrides
   }
 }
@@ -122,6 +125,46 @@ describe('sortowanie drzewa', () => {
     const docs = [doc('plan-10.html'), doc('plan-2.html')]
 
     expect(shape(buildTree(project(docs), { sort: 'name' }))).toEqual(['plan-2.html', 'plan-10.html'])
+  })
+
+  it('ręczna kolejność wygrywa, a nowe węzły stają przed ułożonymi w kolejności sortowania', () => {
+    const docs = [
+      doc('a.html', { mtimeMs: 1 }),
+      doc('b.html', { mtimeMs: 2 }),
+      doc('c.html', { mtimeMs: 3 }),
+      doc('nowy.html', { mtimeMs: 9 }),
+      doc('starszy.html', { mtimeMs: 8 })
+    ]
+
+    const tree = buildTree(project(docs), { sort: 'recent', order: { p: ['a.html', 'c.html', 'b.html'] } })
+
+    expect(shape(tree)).toEqual(['nowy.html', 'starszy.html', 'a.html', 'c.html', 'b.html'])
+  })
+
+  it('ręczna kolejność nie miesza grup: branche, foldery i dokumenty zostają na swoich miejscach', () => {
+    const docs = [
+      doc('x/1.html'),
+      doc('x/2.html'),
+      doc('y/1.html'),
+      doc('y/2.html'),
+      doc('luzem.html'),
+      doc('boczny.html', { id: 'boczny', branch: 'feature' }),
+      doc('boczny2.html', { id: 'boczny2', branch: 'feature' })
+    ]
+
+    const tree = buildTree(project(docs), { sort: 'name', order: { p: ['luzem.html', 'p/y', 'p/x', 'p#feature'] } })
+
+    expect(tree.map((node) => (node.kind === 'doc' ? node.doc.relPath : node.name))).toEqual(['feature', 'y', 'x', 'luzem.html'])
+  })
+
+  it('układa ręcznie także projekty i zostawia archiwum na końcu projektu', () => {
+    const one = { ...project([doc('a.html', { id: 'a' }), doc('z.html', { id: 'z', status: 'archived' })]), id: 'jeden', name: 'jeden' }
+    const two = { ...project([doc('b.html', { id: 'b' })]), id: 'dwa', name: 'dwa' }
+
+    const library = buildLibrary([one, two], { ...recent, sort: 'name', order: { [PROJECTS_KEY]: ['jeden', 'dwa'], jeden: ['jeden#:archive', 'a'] } })
+
+    expect(library.projects.map((item) => item.project.id)).toEqual(['jeden', 'dwa'])
+    expect(library.projects[0]?.nodes.map((node) => node.key)).toEqual(['a', 'jeden#:archive'])
   })
 
   it('zlicza poddrzewo i podnosi najmocniejszy sygnał', () => {

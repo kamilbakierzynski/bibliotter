@@ -30,8 +30,8 @@ let raf = 0
 let lastTime = 0
 let followUntil = 0
 let follow: (() => void) | null = null
-let onFrame: () => void = () => {}
-let onSettle: () => void = () => {}
+const frames = new Set<() => void>()
+const settles = new Set<() => void>()
 
 export function addBody(body: Body): void {
   bodies.add(body)
@@ -41,10 +41,10 @@ export function wake(): void {
   if (!raf) raf = requestAnimationFrame(tick)
 }
 
-/** Podpina rysowanie klatki i zakończenie ruchu. */
+/** Podpina rysowanie klatki i zakończenie ruchu. Rysujących może być kilku. */
 export function connectLoop(frame: () => void, settle: () => void): void {
-  onFrame = frame
-  onSettle = settle
+  frames.add(frame)
+  settles.add(settle)
 }
 
 /** Przez chwilę woła funkcję co klatkę, np. gdy układ zależy od animacji CSS. */
@@ -67,7 +67,7 @@ function tick(now: number): void {
     }
   }
   if (now < followUntil && follow) follow()
-  onFrame()
+  for (const frame of frames) frame()
   let moving = now < followUntil
   if (!moving) {
     for (const body of bodies) {
@@ -82,8 +82,8 @@ function tick(now: number): void {
     return
   }
   for (const body of bodies) body.snap()
-  onFrame()
-  onSettle()
+  for (const frame of frames) frame()
+  for (const settle of settles) settle()
 }
 
 export class Spring implements Body {

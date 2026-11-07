@@ -2,8 +2,13 @@ import type { Anchor } from '../shared/annotations'
 
 const QUOTE_LENGTH = 160
 const MATCH_LENGTH = 48
+/** Dłuższych elementów nie przeszukujemy przy każdym rysowaniu cytatu. */
+const MAX_QUOTE_SCOPE = 20_000
 
-const clean = (text: string): string => text.replace(/\s+/g, ' ').trim()
+export const clean = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+/** Zaznaczenie dokleja spacje na granicach części wzoru, których nie ma w tekście strony. */
+const compact = (text: string): string => text.replace(/\s+/g, '')
 
 /** Buduje selektor od najbliższego elementu z unikalnym `id`. */
 export function cssPath(element: Element): string {
@@ -22,7 +27,7 @@ export function cssPath(element: Element): string {
     parts.unshift(sameTag.length > 1 ? `${tag}:nth-of-type(${sameTag.indexOf(current) + 1})` : tag)
     current = current.parentElement
   }
-  return parts.join(' > ')
+  return parts.join(' > ') || 'html'
 }
 
 function precedingHeading(element: Element): string | null {
@@ -52,7 +57,7 @@ export function createAnchor(element: Element, clientX: number, clientY: number,
 }
 
 function matchesQuote(element: Element, quote: string): boolean {
-  return clean(element.textContent ?? '').includes(quote.slice(0, MATCH_LENGTH))
+  return compact(element.textContent ?? '').includes(compact(quote.slice(0, MATCH_LENGTH)))
 }
 
 function findByQuote(quote: string): Element | null {
@@ -67,6 +72,31 @@ function findByQuote(quote: string): Element | null {
     if (matchesQuote(block, needle)) return block
   }
   return null
+}
+
+/** Znajduje cytat w tekście elementu, pomijając różnice w białych znakach. */
+export function findRange(root: Element, quote: string): Range | null {
+  if ((root.textContent?.length ?? 0) > MAX_QUOTE_SCOPE) return null
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const positions: [Text, number][] = []
+  let text = ''
+  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+    for (let index = 0; index < node.data.length; index++) {
+      const char = node.data.charAt(index)
+      if (/\s/.test(char)) continue
+      text += char
+      positions.push([node, index])
+    }
+  }
+  const needle = compact(quote)
+  const at = text.indexOf(needle)
+  const start = positions[at]
+  const end = positions[at + needle.length - 1]
+  if (at < 0 || !start || !end) return null
+  const range = document.createRange()
+  range.setStart(start[0], start[1])
+  range.setEnd(end[0], end[1] + 1)
+  return range
 }
 
 /** Odnajduje miejsce uwagi. Zwraca null, gdy treści nie ma już w dokumencie. */

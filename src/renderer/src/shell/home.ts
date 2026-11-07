@@ -1,8 +1,9 @@
 import type { DocEntry } from '../../../shared/types'
 import { clamp, lerp, Spring, wake } from '../motion/spring'
 import { type KeyLike, togglePop } from './keys'
+import { closeLabelPop } from './labels'
 import { els, glowD, homePill, paintGlow, reflow, sheets, SHUT, spisPill, sL, sR, syncChrome, OFF } from './layout'
-import { clearFrames, touch } from './native'
+import { aimAt, clearFrames, touch } from './native'
 import { setInsp, setSelNote, setTool } from './notes'
 import { applyGlow, closePeek, openDoc, peekDoc, setPane, syncFocus } from './sheets'
 import { data, type FormatFilter, memo, notify, pinned, saveFormat, ui, visibleDocs, waiting } from './state'
@@ -12,8 +13,10 @@ import { data, type FormatFilter, memo, notify, pinned, saveFormat, ui, visibleD
  * dokumentów, więc arkusz składa się do swojego wiersza, a wiersz rozkłada się w arkusz.
  */
 
-const ZOOM_IN = { k: 150, z: 0.84 }
-const ZOOM_OUT = { k: 200, z: 0.92 }
+const ZOOM_IN = { k: 420, z: 0.92 }
+const ZOOM_OUT = { k: 300, z: 0.92 }
+/** Reszta drogi to mniej niż trzy piksele, a żywy dokument czeka na koniec powiększenia. */
+const ZOOM_DONE = 0.006
 /** Tyle dokumentów mieści się na ścianie, zanim stanie się spisem wszystkiego. */
 const HOME_LIMIT = 36
 const HEAD_H = 36
@@ -102,7 +105,7 @@ export function thumbOf(id: string): HTMLElement | null {
 }
 
 export function homeItems(): HTMLElement[] {
-  return [...els.homeBody.querySelectorAll<HTMLElement>(ui.homeView === 'wall' ? '.hs' : '.sr')]
+  return [...els.homeBody.querySelectorAll<HTMLElement>(ui.homeView === 'wall' ? '.hs[data-doc]' : '.sr')]
 }
 
 function revealIn(box: HTMLElement, el: HTMLElement): void {
@@ -117,6 +120,7 @@ export function homeSelect(i: number, quiet = false): void {
   if (list.length === 0) return
   homeIdx = clamp(i, 0, list.length - 1)
   const el = list[homeIdx] as HTMLElement
+  aimAt(el.dataset.doc ?? null)
   for (const item of els.homeBody.querySelectorAll('.sel')) item.classList.remove('sel')
   el.classList.add('sel')
   if (ui.homeView === 'list') spisPill.to({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight })
@@ -250,7 +254,7 @@ export function renderZoom(): void {
   z.sheet.style.height = `${lerp(z.h0, z.h1, q)}px`
   z.sheet.style.borderRadius = `${lerp(8 / z.k, 16, clamp(q))}px`
   z.placard.style.opacity = String(clamp(q * 3 - 2))
-  if (zoomP.rest) finishZoom()
+  if (Math.abs(zoomP.t - q) < ZOOM_DONE) finishZoom()
 }
 
 export function finishZoom(): void {
@@ -320,6 +324,7 @@ export function goHome(): void {
   }
   closePeek()
   togglePop(false)
+  closeLabelPop()
   setSelNote(null)
   setTool('move')
   if (ui.insp) setInsp(false)
@@ -383,6 +388,7 @@ export function toggleHome(): void {
 export function homeHover(el: HTMLElement | null): void {
   if (el === glowEl) return
   glowEl = el
+  aimAt(el?.dataset.doc ?? null)
   if (!el) {
     glowD.to(0)
     applyGlow()
