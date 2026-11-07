@@ -28,8 +28,38 @@ function reloadShell(): Plugin {
   }
 }
 
+const FILE_VIEW = 'virtual:file-view'
+const FILE_VIEW_SOURCE = resolve(__dirname, 'src/fileView')
+
+/**
+ * Strona arkusza pliku działa w sesji dokumentów, która czyta tylko adresy swojego dokumentu, więc
+ * CodeMirror musi przyjść z procesu głównego jako jeden plik. Wtyczka składa go przy budowaniu main,
+ * a w trybie dev zmiana w `src/fileView` przebudowuje main jak każda inna.
+ */
+function fileView(): Plugin {
+  return {
+    name: 'bibliotter:file-view',
+    resolveId: (source) => (source === FILE_VIEW ? `\0${FILE_VIEW}` : null),
+    async load(id) {
+      if (id !== `\0${FILE_VIEW}`) return null
+      const { rolldown } = await import('rolldown')
+      const bundle = await rolldown({ input: resolve(FILE_VIEW_SOURCE, 'main.ts'), platform: 'browser', logLevel: 'warn' })
+      try {
+        const { output } = await bundle.generate({ format: 'iife', minify: true, inlineDynamicImports: true })
+        for (const file of await bundle.watchFiles) {
+          if (file.startsWith(FILE_VIEW_SOURCE)) this.addWatchFile(file)
+        }
+        return `export default ${JSON.stringify(output[0].code)}`
+      } finally {
+        await bundle.close()
+      }
+    }
+  }
+}
+
 export default defineConfig({
   main: {
+    plugins: [fileView()],
     build: {
       rollupOptions: {
         input: {

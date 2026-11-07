@@ -70,6 +70,8 @@ import { HitPreviewer } from './hitPreview'
 import type { LibraryConfig } from './library'
 import { LibraryClient } from './libraryClient'
 import { isInside } from './scanner'
+import { FileSheets } from './fileSheets'
+import { fileFragment, lineSuffix, parseFileFragment } from '../shared/fileView'
 import { PresentationStore, readPresentation, watchPresentation } from './presentationStore'
 import { watchSignal } from './signals'
 import { Thumbnailer } from './thumbnails'
@@ -120,6 +122,7 @@ const annotations = new AnnotationStore(join(dataDir(), 'library'))
 const presentations = new PresentationStore(join(dataDir(), 'library'))
 const searcher = new ContentSearcher(join(__dirname, 'searchWorker.js'), join(dataDir(), 'cache', 'index.sqlite'))
 const links = new LinkGraph(() => library?.getSnapshot() ?? null)
+const files = new FileSheets()
 
 /** Wysyła uwagi do panelu i do warstw otwartych dokumentów. Działa też po zmianach agenta. */
 async function pushAnnotations(): Promise<void> {
@@ -158,6 +161,24 @@ function warmDocument(doc: DocEntry): void {
   viewer?.open(doc.id)
 }
 
+/**
+ * Plik tekstowy staje w arkuszu obok dokumentu, bo link zwykle pokazuje kod, o którym dokument mówi.
+ * Zwykłe kliknięcie od razu dzieli widok, a `Ctrl` + klik zerka. Reszta plików idzie do Eksploratora.
+ */
+async function openFile(from: DocEntry, path: string, href: string, fragment: string, mode: OpenMode): Promise<LinkOutcome> {
+  if (!(await files.viewable(path))) {
+    shell.showItemInFolder(path)
+    return 'revealed'
+  }
+  const target = parseFileFragment(fragment)
+  const lines = target.lines ?? lineSuffix(href)
+  const entry = await files.open(path, target.mode, lines)
+  viewer?.aim(entry.id, fileFragment(entry.file?.mode ?? 'file', lines))
+  const split: OpenMode = mode === 'open' ? 'split' : mode
+  sendToShell('viewer:follow-link', { from: from.id, docId: entry.id, mode: split, file: entry } satisfies FollowLink)
+  return 'opened'
+}
+
 /** Link prowadzi tam, gdzie wskazuje: dokument otwiera się w apce, a inny plik w Eksploratorze. */
 async function followLink(from: DocEntry, href: string, mode: OpenMode): Promise<LinkOutcome> {
   const link = await links.resolve(from, href)
@@ -167,10 +188,7 @@ async function followLink(from: DocEntry, href: string, mode: OpenMode): Promise
     return 'opened'
   }
   if (link.kind === 'missing' || !link.path) return 'missing'
-  if (!link.docId) {
-    shell.showItemInFolder(link.path)
-    return 'revealed'
-  }
+  if (!link.docId) return openFile(from, link.path, href, link.fragment, mode)
   if (link.fragment) viewer?.aim(link.docId, link.fragment)
   if (link.docId !== from.id) {
     links.noteFollow(from, link.docId)
@@ -583,16 +601,21 @@ function registerIpc(): void {
     setLanguage(value)
     viewer?.setLanguage(value)
   })
-  handle('viewer:open', (docId: unknown) => openDocument(requireDoc(docId)))
-  handle('viewer:warm', (docId: unknown) => warmDocument(requireDoc(docId)))
+  handle('viewer:open', (docId: unknown) => (files.has(String(docId)) ? viewer?.open(String(docId)) : openDocument(requireDoc(docId))))
+  handle('viewer:warm', (docId: unknown) => (files.has(String(docId)) ? viewer?.open(String(docId)) : warmDocument(requireDoc(docId))))
   handle('links:list', (docId: unknown) => links.links(requireDoc(docId)))
   handle('links:pair', (docId: unknown) => links.pair(requireDoc(docId)))
   handle('links:follow', (docId: unknown, href: unknown, mode: unknown) =>
     followLink(requireDoc(docId), String(href), parseOpenMode(mode))
   )
   handle('links:shot', (request: unknown) => linkShot(parseLinkShot(request)))
+  handle('files:mode', (docId: unknown, mode: unknown) => {
+    const id = String(docId)
+    const entry = files.setMode(id, mode === 'diff' ? 'diff' : 'file')
+    if (entry?.file) viewer?.aim(id, entry.file.mode)
+    return entry ?? null
+  })
   handle('viewer:close', (docId: unknown) => viewer?.close(String(docId)))
-  handle('viewer:reload', (docId: unknown) => viewer?.reload(String(docId)))
   handle('viewer:layout', (placements: unknown) => viewer?.setLayout(parsePlacements(placements)))
   handle('viewer:capture', (docId: unknown) => viewer?.capture(String(docId)) ?? null)
   handle('viewer:camera', (docId: unknown, shot: unknown) =>
@@ -606,7 +629,9 @@ function registerIpc(): void {
     const parsed = parseCameraLeg(leg)
     return parsed ? (viewer?.steerCamera(String(docId), parsed) ?? null) : null
   })
-  handle('viewer:set-current', (docId: unknown) => setCurrentDocument(docId === null ? null : requireDoc(docId)))
+  handle('viewer:set-current', (docId: unknown) =>
+    setCurrentDocument(docId === null || files.has(String(docId)) ? null : requireDoc(docId))
+  )
 
   handle('presentation:get', (docId: unknown) => presentations.read(requireDoc(docId).id))
   handle('presentation:save', (docId: unknown, value: unknown) => {
@@ -786,7 +811,8 @@ function createWindow(): BrowserWindow {
     get allowedHosts() {
       return config.allowedHosts
     },
-    lookupDocPath: (docId) => library?.getServedPath(docId),
+    lookupDocPath: (docId) => library?.getServedPath(docId) ?? files.pathOf(docId),
+    fileSheets: files,
     renderMarkdown: (docPath) => requireLibrary().renderMarkdown(docPath),
     onState: (state) => sendToShell('viewer:state', state),
     onOverlayEvent: forwardOverlayEvent,

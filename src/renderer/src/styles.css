@@ -1064,3 +1064,14 @@ button.present-n:hover, button.present-n.on { color: var(--ink); background: var
 @media (prefers-reduced-motion: reduce) {
   .toss, .o-hop, .mark *, .rb.bump .ic { animation: none !important; }
 }
+
+/* Arkusz pliku: przełącznik Plik / Zmiany w plakietce, z liczbą dodanych i usuniętych wierszy. */
+.placard .file-seg { flex: none; margin: 0 4px 0 0; }
+/* Nazwa pliku jest krótka i to ona mówi, co tu jest, więc przy wąskim arkuszu ustępują metadane. */
+.placard[data-kind="file"] .pl-text { flex: 1 1 auto; min-width: 64px; }
+.placard[data-kind="file"] .pl-title { flex: none; max-width: 100%; text-overflow: ellipsis; }
+.placard[data-kind="file"] .pl-meta { flex: 0 1 auto; }
+.placard .file-seg button { height: 24px; padding: 0 9px; font-size: 11.5px; }
+.file-stat { margin-left: 6px; color: var(--ink-3); font-family: var(--meta); font-size: 10.5px; font-weight: 400; }
+.file-stat b { color: var(--ink-2); font-weight: 500; }
+.pane.peek .file-seg { display: none; }

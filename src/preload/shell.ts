@@ -61,6 +61,7 @@ const api: ShellApi = {
   docLinks: (docId) => ipcRenderer.invoke('links:list', docId),
   docPair: (docId) => ipcRenderer.invoke('links:pair', docId),
   followLink: (docId, href, mode) => ipcRenderer.invoke('links:follow', docId, href, mode),
+  setFileMode: (docId, mode) => ipcRenderer.invoke('files:mode', docId, mode),
   linkShot: (request) => ipcRenderer.invoke('links:shot', request),
   onFollowLink: (listener) => subscribe<FollowLink>('viewer:follow-link', listener),
   listAnnotations: () => ipcRenderer.invoke('annotations:list'),

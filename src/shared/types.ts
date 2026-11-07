@@ -16,6 +16,7 @@ import type { DocLinks, DocPair, FollowLink, LinkOutcome, LinkShotRequest, OpenM
 import type { OutlineCommand } from './outline'
 import type { PickKind, Presentation, PresentState, RouteFrame } from './presentation'
 import type { ContentSearch, FindCommand, TextQuery, TextSnippet } from './textSearch'
+import type { FileMode, FileSheetInfo } from './fileView'
 import type { Language } from './i18n'
 import type { AgentSetup, AppInfo } from './options'
 
@@ -58,6 +59,8 @@ export interface DocEntry {
   sha: string | null
   /** Etykiety w kolejności nadania. */
   labels: string[]
+  /** Arkusz pliku otwarty z linku. Dokument z biblioteki go nie ma. */
+  file?: FileSheetInfo
 }
 
 export interface PullRequest {
@@ -246,6 +249,8 @@ export interface ShellApi {
   /** Plan albo objaśnienie, z którym dokument tworzy parę. */
   docPair(docId: string): Promise<DocPair | null>
   followLink(docId: string, href: string, mode: OpenMode): Promise<LinkOutcome>
+  /** Przełącza arkusz pliku między plikiem a zmianami. Zwraca jego nowy opis. */
+  setFileMode(docId: string, mode: FileMode): Promise<DocEntry | null>
   /** Zrzut miejsca linku do karty w panelu Linki. `later` znaczy, że nowsze zamówienie je wyprzedziło. */
   linkShot(request: LinkShotRequest): Promise<string | null | 'later'>
   onFollowLink(listener: (link: FollowLink) => void): () => void

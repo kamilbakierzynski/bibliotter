@@ -26,7 +26,7 @@ const mainDoc = `<!doctype html><title>${MAIN}</title>
 <h1>${MAIN}</h1>
 <p><a id="dokument" href="cel.html#dol">dokument</a> <a id="wyzej" href="../wyzej.html">wyżej</a>
 <a id="nowa-karta" href="cel.html" target="_blank">nowa karta</a></p>
-<p><a id="plik" href="../kod.ts">plik</a> <a id="zasob" href="obraz.svg">zasób</a>
+<p><a id="plik" href="../dane.bin">plik</a> <a id="zasob" href="obraz.svg">zasób</a>
 <a id="martwy" href="nie-ma.html">martwy</a></p>
 <p><a id="router" href="cel.html">router</a> <button id="skrypt">skrypt klika link</button></p>
 <div id="zatrzymuje"><a id="zatrzymany" href="cel.html">zatrzymany</a></div>
@@ -106,6 +106,8 @@ export async function htmlLinkFlow(workspace, { check, entry = projectRoot }) {
   await writeFile(join(docs, 'obraz.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
   await writeFile(join(repo, 'wyzej.html'), plainDoc(ABOVE))
   await writeFile(join(repo, 'kod.ts'), 'export {}\n')
+  // Plik tekstowy otwiera się w arkuszu obok (tests/e2e/fileSheet.mjs), a ten tekstem nie jest.
+  await writeFile(join(repo, 'dane.bin'), Buffer.from([0, 1, 2, 3]))
   await writeFile(join(home, 'config.json'), JSON.stringify({ roots: [repo] }))
 
   const app = await electron.launch({
@@ -238,7 +240,7 @@ export async function htmlLinkFlow(workspace, { check, entry = projectRoot }) {
       await stays()
       await press(page, '#zasob')
       await stays()
-      assert.deepEqual(await outside(), [join(repo, 'kod.ts'), join(docs, 'obraz.svg')])
+      assert.deepEqual(await outside(), [join(repo, 'dane.bin'), join(docs, 'obraz.svg')])
     })
 
     await check('ścieżka sieciowa nie wychodzi poza maszynę', async () => {

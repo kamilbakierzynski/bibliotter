@@ -617,5 +617,10 @@ export const EN: Record<string, string> = {
   'Dodaj krok prezentacji': 'Add presentation step',
   'Dodano krok': 'Step added',
   'Znajdź w dokumencie': 'Find in document',
-  'Szukaj w bibliotece': 'Search library'
+  'Szukaj w bibliotece': 'Search library',
+  'Zmiany': 'Changes',
+  'Widok pliku': 'File view',
+  'bez zmian': 'no changes',
+  'Odśwież plik': 'Reload file',
+  'Niezmienione wiersze: $': 'Unchanged lines: $'
 }

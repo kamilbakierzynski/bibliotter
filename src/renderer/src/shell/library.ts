@@ -2,6 +2,7 @@ import type { DocStatus, LibrarySnapshot, ScanProgress } from '../../../shared/t
 import { t } from '../../../shared/i18n'
 import { centerDock, els, navT, setNav, syncChrome, syncSel } from './layout'
 import { dropStaleViews } from './native'
+import { keepFiles } from './files'
 import { dropMissing } from './sheets'
 import { countDocs, data, libraryDocs, notify, readLastDocs, ui } from './state'
 
@@ -47,6 +48,7 @@ export function setLibrary(json: string): void {
   data.library = snapshot
   const docs = [...snapshot.projects.flatMap((project) => project.docs), ...snapshot.review]
   data.entries = new Map(docs.map((doc) => [doc.id, doc]))
+  keepFiles()
   ui.setup = snapshot.roots.length === 0 ? 'first' : libraryDocs().length === 0 ? 'empty' : null
   ui.streaming ||= addedRoot || (wasSetup !== null && ui.setup === null)
   restoreLast()

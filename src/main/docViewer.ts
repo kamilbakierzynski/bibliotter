@@ -40,6 +40,7 @@ import {
   resolveAssetPath
 } from './docPolicy'
 import { MARKDOWN_BACKGROUND } from './markdownPage'
+import { fileViewResponse } from './fileViewPage'
 import { formatOf } from './scanner'
 
 const DOC_PARTITION = 'persist:documents'
@@ -77,6 +78,8 @@ interface DocViewerOptions {
   lookupDocPath: (docId: string) => string | undefined
   /** Składanie Markdownu to czysty procesor, więc nie może działać w tym wątku. */
   renderMarkdown: (docPath: string) => Promise<string>
+  /** Strona arkusza pliku. `null` dla zwykłego dokumentu. */
+  fileSheets?: { has(docId: string): boolean; page(docId: string): string | null }
   onState: (state: ViewerState) => void
   onOverlayEvent: (docId: string, event: OverlayEvent) => void
   /** Warstwa w dokumencie jest gotowa na przyjęcie uwag. */
@@ -622,7 +625,8 @@ export class DocViewer {
 
   private backgroundOf(docId: string): string {
     const docPath = this.options.lookupDocPath(docId)
-    if (!docPath || formatOf(docPath) !== 'markdown') return HTML_BACKGROUND
+    const paper = (docPath && formatOf(docPath) === 'markdown') || this.options.fileSheets?.has(docId)
+    if (!docPath || !paper) return HTML_BACKGROUND
     return MARKDOWN_BACKGROUND[nativeTheme.shouldUseDarkColors ? 'dark' : 'light']
   }
 
@@ -763,6 +767,8 @@ export class DocViewer {
     const { hostname, pathname } = new URL(request.url)
     const docPath = this.isServed(hostname) ? this.options.lookupDocPath(hostname) : undefined
     if (!docPath) return new Response(t('Nie znaleziono dokumentu'), { status: 404 })
+    const filePage = this.options.fileSheets?.page(hostname)
+    if (filePage) return fileViewResponse(pathname, filePage)
 
     try {
       if (pathname === '/' && formatOf(docPath) === 'markdown') {

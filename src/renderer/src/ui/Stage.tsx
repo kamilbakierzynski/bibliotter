@@ -12,6 +12,7 @@ import { find, toggleFind } from '../shell/find'
 import { closePeek, closeSheet, focusPane, pinPeek, reloadSheet, splitKey } from '../shell/sheets'
 import { colorAttr, data, findNote, pinned, ticketHref, ui, useShell } from '../shell/state'
 import { blockedLabel, displayName, relativeTime } from '../tree'
+import { FilePlacard } from './FilePlacard'
 import { FindBar } from './Find'
 import { Home } from './Home'
 import { Icon } from './icons'
@@ -58,6 +59,7 @@ function Meta({ doc }: { doc: DocEntry }): React.JSX.Element {
 
 function Placard({ i, doc }: { i: number; doc: DocEntry | undefined }): React.JSX.Element {
   if (!doc) return <header className="placard" />
+  if (doc.file) return <FilePlacard i={i} doc={doc} />
   const viewer = data.viewers.get(doc.id)
   const outdated = data.opened.has(doc.id) && data.opened.get(doc.id) !== doc.mtimeMs
   const notes = data.annotations.filter((note) => note.docId === doc.id && note.status === 'open').length

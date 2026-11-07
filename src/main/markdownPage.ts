@@ -14,7 +14,7 @@ const fontFace = (family: string, url: string, range: string): string =>
   `@font-face { font-family: '${family}'; font-weight: 100 900; font-display: block; src: url(${url}) format('woff2'); unicode-range: ${range}; }`
 
 /** Fonty idą w treści strony, bo dokument czyta tylko pliki ze swojego katalogu. */
-const FONTS = [
+export const FONTS = [
   fontFace('Geist', geistLatin, LATIN),
   fontFace('Geist', geistLatinExt, LATIN_EXT),
   fontFace('Geist Mono', monoLatin, LATIN),

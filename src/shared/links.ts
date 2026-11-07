@@ -77,6 +77,8 @@ export interface FollowLink {
   from: string
   docId: string
   mode: OpenMode
+  /** Arkusz pliku, którego powłoka jeszcze nie zna, bo nie ma go w bibliotece. */
+  file?: import('./types').DocEntry
 }
 
 /** Link Obsidiana `[[nazwa]]` wskazuje nazwę w sejfie, a nie ścieżkę, więc dostaje własny adres. */

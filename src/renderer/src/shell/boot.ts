@@ -32,7 +32,8 @@ import { notesChanged } from './present'
 import { handleRoutePick, reloadRoutes, routeNotesChanged, setMissing } from './route'
 import { closeCmd, renderCmd } from './palette'
 import { handleSelectionMenu } from './selectionMenu'
-import { applyGlow, focusPane, followLink } from './sheets'
+import { followFileLink } from './files'
+import { applyGlow, focusPane } from './sheets'
 import { data, findNote, notify, ui } from './state'
 import { applyMode } from './theme'
 
@@ -116,7 +117,7 @@ function connectApi(): void {
     }
   })
   window.api.onViewerKey(onViewerKey)
-  window.api.onFollowLink(({ from, docId, mode }) => followLink(from, docId, mode))
+  window.api.onFollowLink(followFileLink)
   window.api.onViewerFocus((docId) => {
     const slot = ui.panes.indexOf(docId)
     if (slot >= 0) focusPane(slot)

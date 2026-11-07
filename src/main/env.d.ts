@@ -14,3 +14,9 @@ declare module '*?raw' {
   const text: string
   export default text
 }
+
+/** Skrypt strony arkusza pliku: CodeMirror złożony w jeden plik przez wtyczkę w `electron.vite.config.ts`. */
+declare module 'virtual:file-view' {
+  const code: string
+  export default code
+}
