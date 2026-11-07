@@ -76,39 +76,40 @@ const STYLE = `
   @keyframes drop { from { opacity: 0; transform: translateY(-14px) scale(.7); } to { opacity: 1; transform: none; } }
   .note {
     width: 148px; min-height: 40px; max-height: 108px; padding: 10px 12px 14px;
-    overflow: hidden; color: #3a3312; overflow-wrap: anywhere; text-align: left;
+    overflow: hidden; color: #3a3312; overflow-wrap: anywhere; white-space: pre-line; text-align: left;
     border-radius: 3px 3px 14px 3px; rotate: 1.3deg; transform-origin: 0 0;
     box-shadow: 0 1px 1px rgb(0 0 0 / 5%), 0 12px 18px -8px rgb(0 0 0 / 24%);
     transition: rotate .42s cubic-bezier(.2, 1.3, .3, 1), scale .42s cubic-bezier(.2, 1.3, .3, 1);
+    background: linear-gradient(315deg, transparent calc(var(--curl, 0px) * .7071),
+      var(--paper) calc(var(--curl, 0px) * .7071 + .6px));
   }
-  .note.yellow { --paper: #f7e7a0; background: var(--paper); }
-  .note.blue { --paper: #cfe3f7; background: var(--paper); }
-  .note.green { --paper: #d4ebcc; background: var(--paper); }
-  .note.pink { --paper: #f7d5df; background: var(--paper); }
+  .note.yellow { --paper: #f7e7a0; }
+  .note.blue { --paper: #cfe3f7; }
+  .note.green { --paper: #d4ebcc; }
+  .note.pink { --paper: #f7d5df; }
   .note:hover, .note.selected { rotate: 0deg; scale: calc(var(--unzoom, 1) * 1.02); }
   /*
-   * Odklejony róg zawija się nad kartkę: przycięcie zabiera róg wzdłuż linii zgięcia, a w jego
-   * miejscu leży odwrotna strona papieru, najjaśniejsza na zgięciu. Wielkość daje --curl z modułu
-   * ruchu, a --peel rozjaśnia dół kartki, który odszedł od strony. Przycięcie obejmuje cień wokół
-   * kartki i wycina tylko trójkąt rogu, doprowadzony do niego szczeliną, którą reguła evenodd zeruje.
+   * Odklejony róg zawija się nad kartkę. Za linią zgięcia papier jest przezroczysty (gradient tła wyżej,
+   * pod kątem 45°), więc widać tam stronę, a na nią pada cień uniesionej kartki i klapki. Ten cień
+   * oddziela zgięcie od strony; przycięcie zabierało go razem z rogiem i na białej stronie zgięcie
+   * znikało, a róg czytał się jak jaśniejszy kwadrat. Klapka to odwrotna strona papieru: jaśniejsza
+   * na czubku i ciemniejsza tam, gdzie papier zawija się w zgięcie. Jej cień pada w dół, jak cień
+   * kartki, bo w górę i w lewo obrysowywał boki rogu. Wielkość daje --curl z modułu ruchu,
+   * a --peel rozjaśnia dół kartki, który odszedł od strony.
    */
-  .note.lifted {
-    clip-path: polygon(evenodd, -60px -60px, calc(100% + 60px) -60px, calc(100% + 60px) calc(100% + 60px), 100% 100%,
-      100% calc(100% - var(--curl, 0px)), calc(100% - var(--curl, 0px)) 100%, 100% 100%,
-      calc(100% + 60px) calc(100% + 60px), -60px calc(100% + 60px));
-  }
   .note::before {
     content: ''; position: absolute; right: 0; bottom: 0; pointer-events: none;
     width: var(--curl, 0px); height: var(--curl, 0px); border-top-left-radius: 3px;
-    background: linear-gradient(135deg, color-mix(in oklab, var(--paper, #f7e7a0), #000 16%) 0%,
-      color-mix(in oklab, var(--paper, #f7e7a0), #000 4%) 30%, color-mix(in oklab, var(--paper, #f7e7a0), #fff 30%) 47%,
-      color-mix(in oklab, var(--paper, #f7e7a0), #000 6%) 49.6%, transparent 50%);
-    filter: drop-shadow(-1.5px -1.5px 2px rgb(0 0 0 / 24%));
+    background: linear-gradient(135deg, color-mix(in oklab, var(--paper, #f7e7a0), #fff 24%) 0%,
+      color-mix(in oklab, var(--paper, #f7e7a0), #000 3%) 30%, color-mix(in oklab, var(--paper, #f7e7a0), #000 13%) 45%,
+      color-mix(in oklab, var(--paper, #f7e7a0), #000 24%) calc(50% - .6px), transparent 50%);
+    filter: drop-shadow(.5px 1.5px 1.5px rgb(0 0 0 / 26%));
   }
   .note::after {
     content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
     opacity: var(--peel, 0);
     background: linear-gradient(180deg, transparent 45%, rgb(0 0 0 / 4%) 70%, rgb(255 255 255 / 26%) 100%);
+    mask: linear-gradient(315deg, transparent calc(var(--curl, 0px) * .7071), #000 calc(var(--curl, 0px) * .7071 + .6px));
   }
   .lifted { z-index: 1; }
   .lifted.held { cursor: grabbing; }
@@ -900,9 +901,12 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     items = next
     render()
     for (const item of arrived) {
-      // Szkic w prezentacji stoi w tym samym miejscu, więc znika, gdy uwaga się na nim przykleja.
-      if (draft && sameSpot(draft.anchor, item.anchor)) clearDraft()
-      lift.arrive(item.id)
+      // Szkic stoi w tym samym miejscu, więc znika, gdy uwaga się na nim przykleja. Niewidoczny szkic
+      // karteczki to papier powłoki uniesiony nad stroną, z którego karteczka od razu siada.
+      const here = draft !== null && sameSpot(draft.anchor, item.anchor)
+      const held = here && item.kind === 'sticky' && draft?.node.classList.contains('shown') === false
+      if (here) clearDraft()
+      lift.arrive(item.id, held)
     }
     for (const [id, from] of moved) lift.relocate(id, from)
   })

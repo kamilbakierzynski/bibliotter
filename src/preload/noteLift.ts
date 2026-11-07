@@ -53,8 +53,11 @@ export interface NoteLift {
   place(x: number, y: number): void
   /** Uwaga wraca tam, skąd ją wzięto. */
   cancel(): void
-  /** Nowa uwaga przykleja się na swoim miejscu. */
-  arrive(id: string): void
+  /**
+   * Nowa uwaga przykleja się na swoim miejscu. `held` znaczy, że karteczka już tam wisiała uniesiona
+   * jako szkic powłoki, płasko i bez zawiniętego rogu, więc nie wyłania się od zera, tylko od razu siada.
+   */
+  arrive(id: string, held?: boolean): void
   /** Uwaga zmieniła miejsce poza tym dokumentem, np. po cofnięciu, więc przelatuje z punktu `from`. */
   relocate(id: string, from: Point): void
   /** Zapomina uwagi, których warstwa już nie pokazuje. */
@@ -467,15 +470,17 @@ export function createNoteLift(host: LiftHost): NoteLift {
       if (target) putBack(target)
     },
 
-    arrive(id) {
+    arrive(id, held = false) {
       if (still()) return
       const kind = host.kind(id)
       const at = host.anchorAt(id)
       if (!kind || !at || lifts.has(id) || !host.node(id)) return
       const fresh = lift(id, kind, 'flying', at, { x: 0, y: 0 }, kind === 'sticky' ? STICKY_HOLD : PIN_HOLD)
       fresh.rise.set(1)
-      if (kind === 'sticky') fresh.peel.set(HELD_PEEL)
-      fresh.seen.set(0).to(1, SEEN)
+      if (!held) {
+        if (kind === 'sticky') fresh.peel.set(HELD_PEEL)
+        fresh.seen.set(0).to(1, SEEN)
+      }
       fresh.hold = performance.now() + ARRIVE_HOLD_MS
       // Gdy nic innego się nie rusza, pętla mogłaby zasnąć, zanim uwaga zacznie siadać.
       window.setTimeout(wake, ARRIVE_HOLD_MS + 16)

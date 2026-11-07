@@ -1,9 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Annotation, Audience } from '../../../shared/annotations'
 import { t } from '../../../shared/i18n'
 import { clamp } from '../motion/spring'
 import { G, insRope, type Sheet, viewPill } from '../shell/layout'
-import { closeThread, cancelDraft, documentNote, hang, noteNumber, selectNote, setInsp, setNotesView, submitDraft, syncViewSeg } from '../shell/notes'
+import {
+  closeThread,
+  cancelDraft,
+  commitDraft,
+  documentNote,
+  hang,
+  noteNumber,
+  selectNote,
+  setInsp,
+  setNotesView,
+  submitDraft,
+  syncViewSeg,
+  typeDraft
+} from '../shell/notes'
 import { data, type Draft, focusedId, MOD, noteText, notify, ui, useShell } from '../shell/state'
 import { carryNote } from '../shell/keys'
 import { relativeTime } from '../tree'
@@ -40,10 +53,31 @@ export function AudienceSwitch({ value, onChange }: { value: Audience; onChange:
   )
 }
 
-function Composer({ draft, className }: { draft: Draft; className?: string }): React.JSX.Element {
+/**
+ * Dymek nad arkuszem kończy się klikiem obok, jak po Ctrl Enter: wpisany tekst zapisuje, a pusty
+ * szkic porzuca. Tekst zna też `commitDraft`, bo klik w narzędzie doku przychodzi spoza tej strony.
+ */
+function useCommitAway(box: RefObject<HTMLElement | null>, text: string, audience: Audience, on: boolean): void {
+  useEffect(() => {
+    if (on) typeDraft(text, audience)
+  }, [on, text, audience])
+
+  useEffect(() => {
+    if (!on) return
+    const away = (event: PointerEvent): void => {
+      if (!box.current?.contains(event.target as Node)) commitDraft()
+    }
+    document.addEventListener('pointerdown', away, true)
+    return () => document.removeEventListener('pointerdown', away, true)
+  }, [on])
+}
+
+function Composer({ draft, className, away = false }: { draft: Draft; className?: string; away?: boolean }): React.JSX.Element {
   const [text, setText] = useState('')
   const [audience, setAudience] = useState(draft.audience)
   const input = useRef<HTMLTextAreaElement>(null)
+  const box = useRef<HTMLDivElement>(null)
+  useCommitAway(box, text, audience, away)
 
   useEffect(() => {
     window.api.focusDoc(null)
@@ -54,7 +88,7 @@ function Composer({ draft, className }: { draft: Draft; className?: string }): R
   const heading = draft.kind === 'sticky' ? t('Co chcesz zapamiętać?') : t('Co trzeba zmienić lub wyjaśnić?')
 
   return (
-    <div className={`bubble ${className ?? ''}`}>
+    <div ref={box} className={`bubble ${className ?? ''}`}>
       <textarea
         ref={input}
         rows={2}
@@ -89,12 +123,85 @@ function Composer({ draft, className }: { draft: Draft; className?: string }): R
   )
 }
 
+/**
+ * Karteczkę pisze się w niej samej, jak w Miro. Papier stoi tam, gdzie przyklei się zapisana
+ * karteczka (`.note` w `preload/overlay.ts`), więc tekst po zapisie zostaje na miejscu.
+ * Kliknięcie obok zapisuje jak przy komentarzu, a odbiorca i skrót czekają w pasku pod kartką.
+ */
+function StickyDraft({ draft, bar }: { draft: Draft; bar: { left: number; up: boolean } }): React.JSX.Element {
+  const [text, setText] = useState('')
+  const [audience, setAudience] = useState(draft.audience)
+  const input = useRef<HTMLTextAreaElement>(null)
+  const box = useRef<HTMLDivElement>(null)
+  useCommitAway(box, text, audience, true)
+
+  useEffect(() => {
+    window.api.focusDoc(null)
+    input.current?.focus()
+  }, [])
+
+  const submit = (): void => submitDraft(text, audience, draft.color)
+
+  return (
+    <div ref={box} className="paper-at">
+      <div className={`bubble paper ${draft.color}`} onClick={() => input.current?.focus()}>
+        <textarea
+          ref={input}
+          rows={1}
+          aria-label={t('Treść uwagi')}
+          placeholder={t('Co chcesz zapamiętać?')}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault()
+              submit()
+            }
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              cancelDraft()
+            }
+          }}
+        />
+      </div>
+      {/* Pasek nie bierze fokusu, żeby pisanie trwało dalej po zmianie odbiorcy. */}
+      <div
+        className={bar.up ? 'paper-bar up' : 'paper-bar'}
+        style={{ left: bar.left }}
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        <AudienceSwitch value={audience} onChange={setAudience} />
+        <button className="hint" aria-label={t('Zapisz')} disabled={!text.trim()} onClick={submit}>
+          <Keys keys={[MOD, '↵']} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Wymiary papieru karteczki, jak `.note` z warstwy dokumentu, i paska pod nim. */
+const PAPER_MAX_H = 108
+const PAPER_BAR_W = 196
+const PAPER_BAR_H = 34
+const PAPER_BAR_GAP = 10
+
 /** Szkic stoi w miejscu kliknięcia, nad zrzutem. Dymek odchyla się od krawędzi arkusza. */
 export function DraftBubble({ draft, sheet }: { draft: Draft; sheet: Sheet }): React.JSX.Element | null {
   const rect = draft.rect
   if (!rect) return null
   const width = sheet.box?.clientWidth ?? sheet.wide
   const height = sheet.box?.clientHeight ?? 0
+  if (draft.kind === 'sticky') {
+    // Warstwa mierzy szkic jak pinezkę 24 px, której czubek (1, 24) to róg przyszłej karteczki.
+    const at = { x: rect.x + rect.width / 24, y: rect.y + rect.height }
+    const up = at.y + PAPER_MAX_H + PAPER_BAR_GAP + PAPER_BAR_H > roomBelow(height) && at.y - PAPER_BAR_GAP - PAPER_BAR_H > THREAD_INSET
+    const room = Math.max(width - THREAD_INSET - PAPER_BAR_W - at.x, THREAD_INSET - at.x)
+    return (
+      <div className="draft" style={{ left: at.x, top: at.y }}>
+        <StickyDraft draft={draft} bar={{ left: clamp(0, THREAD_INSET - at.x, room), up }} />
+      </div>
+    )
+  }
   const flip = rect.x + BUBBLE_GAP + BUBBLE_W > width - THREAD_INSET
   const place = {
     left: flip ? -(BUBBLE_GAP + BUBBLE_W) : BUBBLE_GAP,
@@ -105,7 +212,7 @@ export function DraftBubble({ draft, sheet }: { draft: Draft; sheet: Sheet }): R
     <div className="draft" style={{ left: rect.x, top: rect.y }}>
       {draft.kind === 'comment' ? <span className="pin free">+</span> : <span className={`stick mark ${draft.color}`} />}
       <div className="bubble-at" style={place}>
-        <Composer draft={draft} />
+        <Composer draft={draft} away />
       </div>
     </div>
   )

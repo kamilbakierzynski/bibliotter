@@ -444,6 +444,42 @@ html.arranging, html.arranging * { cursor: grabbing !important; }
 .bubble .seg button { height: 24px; font-size: 11.5px; }
 .bubble .hint { display: flex; gap: 3px; border-radius: 6px; transition: opacity .16s; }
 .bubble .hint:disabled { opacity: .45; }
+/*
+ * Karteczka pisana w sobie. Papier, krój i ułożenie to `.note` z `preload/overlay.ts`, żeby zapis nie przesunął tekstu.
+ * Szkic wisi uniesiony nad stroną w pozie, od której `arrive(id, true)` w `preload/noteLift.ts` zaczyna
+ * przyklejanie (rise 1, chwyt 74 × 6 px), więc po zapisie karteczka w dokumencie od razu siada, zamiast
+ * wyłaniać się od zera. Bez zawiniętego rogu: stojący w miejscu czytał się jak jaśniejszy kwadrat pod rogiem.
+ */
+.paper-at { position: absolute; left: 0; top: 0; }
+.bubble.paper {
+  width: 148px; min-height: 40px; padding: 10px 12px 14px;
+  color: #3a3312; font: 500 12px/1.35 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  background: var(--note); border-radius: 3px 3px 14px 3px;
+  box-shadow: 0 1px 1px rgb(0 0 0 / .05), 0 12px 18px -8px rgb(0 0 0 / .24);
+  rotate: 1.3deg; transform-origin: 0 0; cursor: text;
+  transform: translate(74px, 6px) scale(1.045) translate(-74px, -6px);
+  filter: drop-shadow(0 14px 15px rgb(0 0 0 / .2));
+  animation: paper-in .44s var(--spring-pop) backwards;
+}
+@keyframes paper-in { from { opacity: 0; translate: 0 -14px; scale: .7; } }
+@media (prefers-reduced-motion: reduce) {
+  .bubble.paper { transform: none; filter: none; animation: none; }
+}
+.bubble.paper textarea {
+  min-height: 0; max-height: 84px; overflow: hidden auto; scrollbar-width: none;
+  color: inherit; font: inherit; line-height: inherit; field-sizing: content; caret-color: #3a3312;
+}
+.bubble.paper textarea::placeholder { color: rgb(58 51 18 / .42); }
+.paper-bar {
+  position: absolute; top: calc(100% + 10px); display: flex; align-items: center; gap: 6px; padding: 4px;
+  white-space: nowrap; background: var(--solid); border-radius: 12px; box-shadow: var(--sh-pop);
+  transform-origin: 14px 0; animation: grow .44s var(--spring-pop) .05s both; cursor: default; user-select: none;
+}
+.paper-bar.up { top: auto; bottom: calc(100% + 10px); transform-origin: 14px 100%; }
+.paper-bar .seg { flex: none; margin: 0; }
+.paper-bar .seg button { height: 24px; font-size: 11.5px; }
+.paper-bar .hint { display: flex; gap: 3px; padding: 0 4px; border-radius: 6px; transition: opacity .16s; }
+.paper-bar .hint:disabled { opacity: .45; }
 
 /* Panel uwag */
 .insp { position: absolute; inset: 0; z-index: 21; pointer-events: none; }

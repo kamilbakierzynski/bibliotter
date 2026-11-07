@@ -7,7 +7,7 @@ import { applyLayout, els, G, sheets, toolPill, trayW, viewPill } from './layout
 import { refreshFrame, touch } from './native'
 import { endPick } from './route'
 import { focusPane } from './sheets'
-import { data, findNote, focusedId, notify, openNotes, pinned, type InspView, type Tool, ui } from './state'
+import { data, type Draft, findNote, focusedId, notify, openNotes, pinned, type InspView, type Tool, ui } from './state'
 
 /*
  * Uwagi łączą dwa tryby. Przy zamkniętym panelu wątek wyrasta spod pinezki, a otwarcie panelu
@@ -273,7 +273,8 @@ export function setTool(tool: Tool): void {
     if (ui.insp && G.overlay) setInsp(false)
   }
   if (tool !== 'move') {
-    cancelDraft()
+    // Klik w narzędzie to klik obok szkicu, więc wpisana uwaga zapisuje się jak po Ctrl Enter.
+    commitDraft()
     // Narzędzie zabiera mysz, więc formularz trasy przestaje czekać na wskazanie kadru.
     endPick()
   }
@@ -315,7 +316,28 @@ export function selectionAction(action: 'comment' | 'sticky' | 'copy'): void {
   if (docId) window.api.selectionAction(docId, action)
 }
 
+/**
+ * Tekst szkicu w dymku nad arkuszem. Klik obok kończy szkic jak Ctrl Enter, a część tych kliknięć
+ * przychodzi spoza dymka, np. z narzędzi doku, więc tekst musi być znany także tutaj.
+ */
+let typed: { text: string; audience: Audience } | null = null
+/** Szkic, który już poszedł do zapisu. Drugi Ctrl Enter albo klik obok nie zapisze go drugi raz. */
+let sending: Draft | null = null
+
+export function typeDraft(text: string, audience: Audience): void {
+  typed = { text, audience }
+}
+
+/** Kończy szkic z dymka: wpisany tekst zapisuje jak Ctrl Enter, a pusty szkic porzuca. */
+export function commitDraft(): void {
+  const draft = ui.draft
+  if (!draft) return
+  if (typed?.text.trim()) submitDraft(typed.text, typed.audience, draft.color)
+  else if (sending !== draft) cancelDraft()
+}
+
 function startDraft(docId: string, kind: NoteKind, anchor: Anchor | null, rect: OverlayRect | null): void {
+  typed = null
   ui.tool = 'move'
   els.app.dataset.tool = 'move'
   ui.selNote = null
@@ -337,14 +359,19 @@ export function cancelDraft(): void {
   const draft = ui.draft
   if (!draft) return
   ui.draft = null
-  window.api.setOverlayMode(draft.docId, null)
+  typed = null
+  // Szkic zapisany kliknięciem w narzędzie kończy się już przy nowym narzędziu, a ono ma działać dalej.
+  const mode = ui.tool === 'comment' || ui.tool === 'sticky' ? ui.tool : null
+  window.api.setOverlayMode(draft.docId, draft.docId === focusedId() ? mode : null)
   notify()
   touch()
 }
 
 export function submitDraft(text: string, audience: Audience, color: StickyColor): void {
   const draft = ui.draft
-  if (!draft || !text.trim()) return
+  if (!draft || !text.trim() || sending === draft) return
+  sending = draft
+  // Dymek zostaje do końca zapisu, żeby uwaga przykleiła się w dokumencie, zanim zniknie jej szkic.
   void window.api
     .createAnnotation(draft.docId, {
       kind: draft.kind,
@@ -353,7 +380,12 @@ export function submitDraft(text: string, audience: Audience, color: StickyColor
       color: draft.kind === 'sticky' ? color : null,
       text
     })
-    .then(cancelDraft)
+    .then(() => {
+      if (ui.draft === draft) cancelDraft()
+    })
+    .finally(() => {
+      if (sending === draft) sending = null
+    })
 }
 
 export function handleOverlayEvent(docId: string, event: OverlayEvent): void {
