@@ -10,8 +10,9 @@ import { toggleOptions } from './options'
 import { toggleMinimap } from './outline'
 import { cancelDraft, canWall, closeThread, setTool, toggleNotesView, togglePanel } from './notes'
 import { closeActs, closeCmd, openActs, openCmd, openMap, setMap } from './palette'
+import { openPair } from './pair'
 import { openPocket, togglePocket } from './pocket'
-import { startPresentation, stepBy, stepToEnd, stopPresentation, toggleReveal } from './present'
+import { presentTool, startNote, startPresentation, stepBy, stepToEnd, stopPresentation, toggleReveal } from './present'
 import { toggleDrawings } from './drawings'
 import { copyReference } from './reference'
 import { endPick } from './route'
@@ -71,6 +72,7 @@ const holdSpots = (): CapSpot[] => [
   { sel: '.pane.focused [data-moved="split"]', keys: [MOD, '\\'], side: 'bottom', end: true },
   { sel: '.pane.focused [data-moved="insp"]', keys: ['I'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="links"]', keys: ['O'], side: 'bottom' },
+  { sel: '.pane.focused .pl-pair', keys: ['Shift', 'O'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="outline"]', keys: ['G'], side: 'bottom' },
   { sel: '.pane.focused [data-moved="drawings"]', keys: ['D'], side: 'bottom' },
   { sel: '.toc-map', keys: ['Shift', 'G'], side: 'top', when: () => ui.insp && ui.inspView === 'outline' },
@@ -166,6 +168,13 @@ function sayTip(text: string): void {
   els.tip.classList.add('on')
   tipLive = false
   sayTimer = window.setTimeout(hideTip, SAY_MS)
+}
+
+/** Shift O: z planu do objaśnienia i z powrotem. Dokument bez pary mówi to na miejscu wskazówki. */
+export function jumpToPair(docId: string): void {
+  void openPair(docId).then((done) => {
+    if (!done) sayTip(t('Ten dokument nie ma planu ani objaśnienia do pary.'))
+  })
 }
 
 /** Cofa albo przywraca ostatnią zmianę uwag w dokumencie, który ma fokus. */
@@ -281,16 +290,19 @@ function escapeStep(): void {
 }
 
 /**
- * Klawisze w prezentacji: kroki, wskaźnik, odsłonięcie uwag i wyjście. Reszta skrótów milczy,
- * żeby przypadkowa litera nie otworzyła panelu przed widzami. Zwraca `true` w prezentacji.
+ * Klawisze w prezentacji: kroki, narzędzia uwag, wskaźnik, odsłonięcie uwag i wyjście. Reszta
+ * skrótów milczy, żeby przypadkowa litera nie otworzyła panelu przed widzami. Zwraca `true`
+ * w prezentacji.
  */
 function presentKey(e: KeyLike): boolean {
   if (!ui.presenting) return false
-  if (typesInField()) return false
+  // Pole nowej uwagi samo obsługuje Enter i Esc, a reszta klawiszy pisze w nim tekst.
+  if (typesInField()) return true
   if (e.ctrlKey || e.metaKey || e.altKey) return true
   const k = e.key.toLowerCase()
   if (e.key === 'Escape') {
-    if (ui.tool !== 'move') setTool('move')
+    if (ui.draft) cancelDraft()
+    else if (ui.tool !== 'move') setTool('move')
     else stopPresentation()
   } else if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) {
     e.preventDefault()
@@ -304,6 +316,10 @@ function presentKey(e: KeyLike): boolean {
   } else if (k === 'p') setTool(ui.tool === 'pointer' ? 'move' : 'pointer')
   else if (k === 'v') setTool('move')
   else if (k === 'd') toggleReveal()
+  else if (k === 'c') startNote('comment')
+  else if (k === 'n') startNote('sticky')
+  else if (k === 'm') presentTool('highlight')
+  else if (k === 'a') presentTool('shape')
   return true
 }
 
@@ -392,7 +408,10 @@ export function handleKey(e: KeyLike): void {
     toggleLabelPop()
   } else if (k === 'r' && doc) copyReference(doc)
   else if (k === 'k' && doc) togglePocket(doc.id)
-  else if (k === 'o' && doc) togglePanel('links')
+  else if (k === 'o' && doc) {
+    if (e.shiftKey) jumpToPair(doc.id)
+    else togglePanel('links')
+  }
   else if (k === 'g' && doc) {
     if (e.shiftKey) toggleMinimap()
     else togglePanel('outline')

@@ -62,6 +62,7 @@ const layerIds = {
   presentIn: 'presentIn',
   cmdBox: 'cmdBox',
   cmdBtn: 'cmdBtn',
+  presentNote: 'presentNote',
   cmd: 'cmd',
   tip: 'tip'
 } as const
@@ -129,6 +130,8 @@ const PALETTE_TOP = 20
 const LAYER_SLACK = 28
 /** Wskazówka stoi nad dokiem i ma swój cień. */
 const TIP_ROOM = 44
+/** Pole nowej uwagi w prezentacji stoi tyle nad dokiem. */
+const NOTE_GAP = 12
 const TIP_SIDE = 12
 
 export const navL = new Spring(10, 240, 0.9)
@@ -516,6 +519,15 @@ function fitLayer(left: number, cw: number, ch: number, barW: number, ctx: numbe
     to = Math.max(to, tipX.x + half, tipX.t + half)
     top = Math.min(top, G.H - G.dockBot - DOCK_H - TIP_ROOM)
   }
+  const note = els.presentNote
+  if (note.classList.contains('on')) {
+    const half = note.offsetWidth / 2 + LAYER_SIDE
+    for (const center of [left + cw / 2, aimL + aimW / 2]) {
+      from = Math.min(from, center - half)
+      to = Math.max(to, center + half)
+    }
+    top = Math.min(top, G.H - G.dockBot - DOCK_H - NOTE_GAP - note.offsetHeight - LAYER_SIDE)
+  }
   const x = Math.max(0, Math.floor(from))
   const y = Math.max(0, Math.floor(top))
   const width = Math.min(Math.round(G.W), Math.ceil(to)) - x
@@ -565,6 +577,8 @@ export function render(): void {
   const ch = lerp(DOCK_H, G.cmdH, mH.x)
   const { dock, bar, cmd } = els
   const left = dockLeft(lerp(dockC.x, G.W / 2, clamp(mW.x)), cw)
+  els.presentNote.style.left = `${left + cw / 2}px`
+  els.presentNote.style.bottom = `${G.dockBot + DOCK_H + NOTE_GAP}px`
   fitLayer(left, cw, ch, barW, ctx, pres)
   dock.style.width = `${cw}px`
   dock.style.height = `${ch}px`

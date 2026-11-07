@@ -152,11 +152,13 @@ export interface AimOptions {
    * startowym, a przed ruchem, więc widzowie widzą ją jako część przelotu, a nie osobny błysk.
    */
   before?: () => Promise<void> | void
+  /** Ruch czekał w kolejce, a w tym czasie przestał być potrzebny, np. bo prezentacja się skończyła. */
+  skip?: () => boolean
 }
 
 async function move(i: number, shot: CameraShot | null, options: AimOptions): Promise<boolean> {
   const docId = ui.panes[i]
-  if (!docId) return false
+  if (!docId || options.skip?.()) return false
   await coverAndWait(REASON)
   try {
     const start = shownFrame(i)

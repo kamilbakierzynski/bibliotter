@@ -553,6 +553,7 @@ function registerIpc(): void {
   handle('viewer:open', (docId: unknown) => openDocument(requireDoc(docId)))
   handle('viewer:warm', (docId: unknown) => warmDocument(requireDoc(docId)))
   handle('links:list', (docId: unknown) => links.links(requireDoc(docId)))
+  handle('links:pair', (docId: unknown) => links.pair(requireDoc(docId)))
   handle('links:follow', (docId: unknown, href: unknown, peek: unknown) =>
     followLink(requireDoc(docId), String(href), peek === true)
   )
@@ -661,6 +662,11 @@ function registerIpc(): void {
   ipcMain.on('viewer:present', (event, docId: unknown, state: unknown) => {
     assertShell(event)
     viewer?.setPresent(String(docId), state === null ? null : parsePresentState(state, (value) => parseAnchor(value)))
+  })
+  ipcMain.on('viewer:place-note', (event, docId: unknown, kind: unknown, color: unknown) => {
+    assertShell(event)
+    if (kind !== 'comment' && kind !== 'sticky') return
+    viewer?.placeNote(String(docId), kind, parseStickyColor(color) ?? 'yellow')
   })
   ipcMain.on('viewer:pick', (event, docId: unknown, kind: unknown) => {
     assertShell(event)

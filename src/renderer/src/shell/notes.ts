@@ -150,6 +150,8 @@ function syncTracking(): void {
 
 export function setInsp(open: boolean): void {
   ui.insp = open
+  // Lista dodanych w prezentacji żyje do zamknięcia panelu.
+  if (!open) ui.added = null
   els.insp.classList.toggle('open', open)
   ui.threadRect = null
   applyLayout()
@@ -205,7 +207,8 @@ export function setSelNote(id: string | null): void {
 
 /** Czy arkusz musi zostać zrzutem, bo nad nim wisi wątek albo szkic. */
 export function sheetHoldsNote(i: number): boolean {
-  if (ui.draft?.rect && ui.draft.docId === ui.panes[i]) return true
+  // W prezentacji pole wpisu stoi nad dokiem, więc dokument zostaje żywy i szkic da się przestawić.
+  if (ui.draft?.rect && ui.draft.docId === ui.panes[i] && ui.presenting !== ui.draft.docId) return true
   return i === ui.focus && ui.selNote !== null && !ui.insp && ui.threadRect !== null
 }
 

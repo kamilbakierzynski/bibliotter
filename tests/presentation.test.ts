@@ -3,7 +3,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PresentationStore, readPresentation } from '../src/main/presentationStore'
-import { moveStep, nextStep, type PresentationStep, shotAt, shotOwner } from '../src/shared/presentation'
+import { parseAnchor } from '../src/main/annotationStore'
+import {
+  moveStep,
+  nextStep,
+  parsePresentState,
+  playable,
+  type PresentationStep,
+  shotAt,
+  shotOwner,
+  stepFrom,
+  stepState
+} from '../src/shared/presentation'
 
 const anchor = { selector: '#diagram', offsetX: 0.5, offsetY: 0.5, quote: 'Wykres', heading: 'Ryzyka' }
 
@@ -28,6 +39,57 @@ describe('trasa', () => {
     expect(shotOwner(steps, 2)).toBe(1)
     expect(shotAt(steps, 2)).toEqual({ anchor })
     expect(shotAt(steps, 3)).toEqual({ anchor, box: { x: 0, y: 0, width: 0.5, height: 0.5 } })
+  })
+
+  it('prezentacja pomija krok bez kadru, a krok bez ruchu sięga za niego', () => {
+    const steps = [
+      step('s1'),
+      step('s2', { kind: 'place', anchor }),
+      step('s3', { kind: 'place', anchor: { ...anchor, selector: '#nie-ma' } }),
+      step('s4'),
+      step('s5', { kind: 'area', anchor, box: { x: 0, y: 0, width: 0.5, height: 0.5 } })
+    ]
+    const missing = new Set(['s3'])
+    expect(playable(steps, missing)).toEqual([0, 1, 3, 4])
+    expect(shotOwner(steps, 3, missing)).toBe(1)
+    expect(shotAt(steps, 3, missing)).toEqual({ anchor })
+    // Krok bez ruchu nie ma czego zgubić, więc nie wypada, nawet z identyfikatorem na liście.
+    expect(playable(steps, new Set(['s1', 's4']))).toEqual([0, 1, 2, 3, 4])
+    expect(stepFrom(steps, 1, 1, missing)).toBe(3)
+    expect(stepFrom(steps, 3, -1, missing)).toBe(1)
+    expect(stepFrom(steps, 4, 1, missing)).toBeNull()
+    expect(stepFrom(steps, 0, -1, missing)).toBeNull()
+    // Start prezentacji szuka pierwszego kroku od pozycji przed trasą.
+    expect(stepFrom(steps, -1, 1, missing)).toBe(0)
+  })
+
+  it('stan kroku kładzie maskę wokół kadru, który widać, także odziedziczonego', () => {
+    const steps = [
+      { ...step('s1'), rest: 'dim' as const },
+      { ...step('s2', { kind: 'place', anchor }), show: ['n1'] },
+      { ...step('s3'), rest: 'hide' as const, show: ['n1', 'k1'] }
+    ]
+    expect(stepState(steps, 0, false)).toEqual({ show: [], reveal: false, rest: 'dim', camera: null })
+    expect(stepState(steps, 2, true)).toEqual({
+      show: ['n1', 'k1'],
+      reveal: true,
+      rest: 'hide',
+      camera: { kind: 'place', anchor }
+    })
+    expect(stepState(steps, 2, false, new Set(['s2'])).camera).toBeNull()
+  })
+
+  it('stan kroku z powłoki przechodzi przez sprawdzenie, a śmieci odpadają', () => {
+    const read = (value: unknown): ReturnType<typeof parsePresentState> => parsePresentState(value, (item) => parseAnchor(item))
+    expect(read({ show: ['n1', 'n1', 3], reveal: 'tak', rest: 'mgła', camera: { kind: 'hold' }, pending: ['k1'] })).toEqual({
+      show: ['n1'],
+      reveal: false,
+      rest: 'normal',
+      camera: null,
+      pending: ['k1']
+    })
+    expect(read({ show: [], rest: 'hide', camera: { kind: 'place', anchor }, pending: [] })?.camera).toEqual({ kind: 'place', anchor })
+    expect(read('krok')).toBeNull()
   })
 
   it('nowy krok jest kopią poprzedniego, ale kamera stoi, a tytuł jest pusty', () => {

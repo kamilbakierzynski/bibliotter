@@ -27,6 +27,12 @@ export const DOC_FOOT = 84
 const FOOT_WAIT_MS = 150
 /** Arkusz Markdownu zmienia tło płynnie, więc ton tuszu czytamy po przejściu. */
 const THEME_SETTLE_MS = 480
+/** Odstęp szkicu nowej uwagi od kadru i od brzegu ekranu, w pikselach ekranu. */
+const DRAFT_ROOM = 14
+/** Rozmiary pinezki i karteczki na ekranie, z `.pin` i `.note` niżej. */
+const PIN_SIZE = 24
+const NOTE_W = 148
+const NOTE_H = 40
 
 /*
  * Pinezki i karteczki należą do języka apki, a nie dokumentu. Dokument ma własne fonty,
@@ -56,6 +62,16 @@ const STYLE = `
   .pin.selected { scale: calc(var(--unzoom, 1) * 1.2); }
   .still > * { transition: none !important; }
   .draft { pointer-events: none; visibility: hidden; }
+  .draft.shown { visibility: visible; animation: drop .32s cubic-bezier(.2, 1.3, .3, 1); }
+  .draft.sticky {
+    display: block; width: 148px; height: 40px; margin: 0; transform-origin: 0 0; rotate: 1.3deg;
+    background: #f7e7a0; border-radius: 3px 3px 14px 3px;
+    box-shadow: 0 1px 1px rgb(0 0 0 / 5%), 0 12px 18px -8px rgb(0 0 0 / 24%);
+  }
+  .draft.sticky.blue { background: #cfe3f7; }
+  .draft.sticky.green { background: #d4ebcc; }
+  .draft.sticky.pink { background: #f7d5df; }
+  @media (prefers-reduced-motion: reduce) { .draft.shown { animation: none; } }
   @keyframes drop { from { opacity: 0; transform: translateY(-14px) scale(.7); } to { opacity: 1; transform: none; } }
   .note {
     width: 148px; min-height: 40px; max-height: 108px; padding: 10px 12px 14px;
@@ -165,6 +181,8 @@ export interface OverlayBridge {
   onPick(listener: (kind: PickKind | null) => void): void
   /** Krok prezentacji. `null` wraca do zwykłego widoku. */
   onPresent(listener: (state: PresentState | null) => void): void
+  /** Szkic nowej uwagi w prezentacji, który staje przy kadrze kroku. */
+  onPlace(listener: (request: { kind: 'comment' | 'sticky'; color: StickyColor }) => void): void
   /** Chowa kursor systemowy na czas prezentacji. */
   setPresenting(on: boolean): void
   /** Celownik zamiast kursora, gdy przeciągnięcie rysuje kształt. */
@@ -218,10 +236,12 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   const marker = createMarker(ink)
   const shapes = createShapes(bridge.send, (x, y) => elementAt(x, y))
   const route = createRouteFrames(bridge.send, (x, y) => elementAt(x, y))
-  // Kształty leżą pod pinezkami, żeby nie zasłaniały wejścia do wątku. Kadr trasy leży nad nimi.
+  // Kształty leżą pod pinezkami, żeby nie zasłaniały wejścia do wątku. Kadr trasy leży nad nimi,
+  // a maska prezentacji pod nimi, żeby to, co krok pokazuje, nie znikało za jej krawędzią.
   root.append(
     style,
     quotes,
+    route.mask,
     shapes.element,
     route.element,
     layer,
@@ -268,6 +288,13 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   let picking = false
   /** Krok prezentacji. Dokument pokazuje wtedy tylko uwagi, które krok wskazał. */
   let present: PresentState | null = null
+  /**
+   * Uwagi, które przyszły w trakcie prezentacji. Powłoka dopisze je do kroku, ale jej stan przychodzi
+   * chwilę po nich, a do tego czasu nowa pinezka zgasłaby na oczach widzów.
+   */
+  const fresh = new Set<string>()
+  /** Kolor karteczki, którą szkic prezentacji pokazuje od razu. */
+  let draftColor: StickyColor = 'yellow'
   let drawingsOn = true
   /** Ostatnia pozycja myszy, bo Shift może zmienić kształt, gdy mysz stoi. */
   let lastPointer = { x: 0, y: 0, held: false }
@@ -339,7 +366,7 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     if (next === unzoom) return
     unzoom = next
     layer.classList.add('still')
-    for (const node of [layer, ghost, route.element]) node.style.setProperty('--unzoom', String(next))
+    for (const node of [layer, ghost, route.element, route.mask]) node.style.setProperty('--unzoom', String(next))
     requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.remove('still')))
   }
 
@@ -486,11 +513,18 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   const showDraft = (kind: NoteKind, element: Element, anchor: Anchor): void => {
     clearDraft()
     const node = document.createElement('div')
-    node.className = 'draft'
-    node.textContent = '+'
+    // W prezentacji pole wpisu stoi nad dokiem, więc szkic widać w dokumencie, a kolejne kliknięcie
+    // go przestawia. Poza nią szkic tylko mierzy miejsce dla dymka powłoki.
+    const keep = present !== null && mode !== null
+    node.className = keep ? (kind === 'sticky' ? `draft shown sticky ${draftColor}` : 'draft shown') : 'draft'
+    if (!keep || kind !== 'sticky') node.textContent = '+'
     layer.append(node)
     draft = { element, anchor, node }
     place(node, element, anchor)
+    if (keep) {
+      bridge.send({ type: 'place', kind, anchor, rect: toRect(node.getBoundingClientRect()) })
+      return
+    }
     catcher.classList.remove('active')
     highlight.style.display = 'none'
     ghost.className = 'ghost'
@@ -501,6 +535,34 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
 
   const elementAt = (x: number, y: number): Element | null =>
     document.elementsFromPoint(x, y).find((element) => element !== host) ?? null
+
+  /**
+   * Szkic nowej uwagi w prezentacji staje obok kadru kroku, na wysokości jego górnej krawędzi.
+   * Gdy obok nie ma miejsca na ekranie, wchodzi w kadr. Bez kadru staje na środku widoku.
+   */
+  const placeDefault = (kind: 'comment' | 'sticky', color: StickyColor): void => {
+    if (!present) return
+    draftColor = color
+    setMode(kind)
+    const view = zoom()
+    const width = window.visualViewport?.width ?? innerWidth
+    const height = window.visualViewport?.height ?? innerHeight
+    const room = DRAFT_ROOM * unzoom
+    const wide = (kind === 'sticky' ? NOTE_W : PIN_SIZE) * unzoom
+    const tall = (kind === 'sticky' ? NOTE_H : PIN_SIZE) * unzoom
+    // Pinezka stoi nad swoim punktem, a karteczka zwisa z niego w dół.
+    const above = kind === 'comment' ? tall : 0
+    const below = kind === 'sticky' ? tall : 0
+    const spot = route.spot(present.camera)
+    const x = spot ? spot.rect.x + spot.rect.width + room : view.left + width / 2
+    const y = spot ? Math.max(spot.rect.y, view.top) + room + above : view.top + height / 2
+    const at = {
+      x: Math.max(view.left + room, Math.min(x, view.left + width - room - wide)),
+      y: Math.max(view.top + room + above, Math.min(y, view.top + height - room - below))
+    }
+    const element = spot?.element ?? elementAt(at.x, at.y) ?? document.body
+    showDraft(kind, element, createAnchor(element, at.x, at.y))
+  }
 
   const select = (id: string | null): void => {
     selectedId = id
@@ -519,7 +581,9 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     ranges.clear()
     bars.clear()
     const shown = present
-      ? items.filter((item) => (present as PresentState).reveal || (present as PresentState).show.includes(item.id))
+      ? items.filter(
+          (item) => (present as PresentState).reveal || (present as PresentState).show.includes(item.id) || fresh.has(item.id)
+        )
       : items
     ink.show(shown)
     shapes.show(shown)
@@ -654,6 +718,10 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   })
 
   bridge.onItems((next) => {
+    if (present) {
+      const before = new Set(items.map(({ id }) => id))
+      for (const { id } of next) if (!before.has(id)) fresh.add(id)
+    }
     items = next
     render()
   })
@@ -683,12 +751,14 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   })
   bridge.onRoute(route.setRoute)
   bridge.onPick(setPicking)
+  bridge.onPlace(({ kind, color }) => placeDefault(kind, color))
   bridge.onPresent((next) => {
     // Kształt, który przestał czekać, a wciąż jest w kroku, rysuje się teraz na oczach widzów.
     const drawn = (present?.pending ?? []).filter(
       (id) => next !== null && !next.pending.includes(id) && (next.reveal || next.show.includes(id))
     )
     present = next
+    fresh.clear()
     route.setMask(next ? { camera: next.camera, rest: next.rest } : null)
     shapes.setPending(next?.pending ?? [])
     shapes.setVisible(drawingsOn || next !== null)

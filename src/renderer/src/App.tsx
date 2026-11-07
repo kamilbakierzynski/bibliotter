@@ -5,7 +5,7 @@ import { boot } from './shell/boot'
 import { layerHost } from './shell/layer'
 import { closeCmd } from './shell/palette'
 import { ui, useShell, useShellValue } from './shell/state'
-import { Dock, StatusPop } from './ui/Dock'
+import { Dock, PresentNote, StatusPop } from './ui/Dock'
 import { IconSprite } from './ui/icons'
 import { LabelPop } from './ui/Labels'
 import { HoverCard } from './ui/HoverCard'
@@ -42,6 +42,7 @@ export function App(): React.JSX.Element {
         <>
           <IconSprite />
           <Dock />
+          <PresentNote />
           <div className="tip" id="tip" />
         </>,
         layerHost()

@@ -19,6 +19,17 @@ export interface DocLinks {
   incoming: string[]
 }
 
+/**
+ * Plan w Markdownie i jego objaśnienie z kitu explain-plan. Objaśnienie wskazuje plan w meta
+ * `bibliotter-plan`, więc apka przeskakuje między nimi bez szukania po nazwach.
+ */
+export interface DocPair {
+  /** Drugi dokument pary. */
+  docId: string
+  /** Czym jest drugi dokument: planem albo jego objaśnieniem. */
+  role: 'plan' | 'explanation'
+}
+
 /** Karta nad linkiem do innego dokumentu. */
 export interface LinkPreview {
   title: string

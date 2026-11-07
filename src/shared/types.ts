@@ -12,7 +12,7 @@ import type {
 import type { AutoLabelOptions, AutoLabelResult, AutoLabelState } from './autoLabel'
 import type { CameraMove, CameraShot } from './camera'
 import type { LabelColors, LabelTone } from './labels'
-import type { DocLinks, FollowLink, LinkOutcome } from './links'
+import type { DocLinks, DocPair, FollowLink, LinkOutcome } from './links'
 import type { OutlineCommand } from './outline'
 import type { PickKind, Presentation, PresentState, RouteFrame } from './presentation'
 import type { ContentSearch, FindCommand, TextQuery } from './textSearch'
@@ -234,6 +234,8 @@ export interface ShellApi {
   revealDoc(docId: string): Promise<void>
   openExternal(url: string): Promise<void>
   docLinks(docId: string): Promise<DocLinks>
+  /** Plan albo objaśnienie, z którym dokument tworzy parę. */
+  docPair(docId: string): Promise<DocPair | null>
   followLink(docId: string, href: string, peek: boolean): Promise<LinkOutcome>
   onFollowLink(listener: (link: FollowLink) => void): () => void
   listAnnotations(): Promise<Annotation[]>
@@ -263,6 +265,8 @@ export interface ShellApi {
   setRoutePicker(docId: string, kind: PickKind | null): void
   /** Krok prezentacji w dokumencie. `null` wraca do zwykłego widoku. */
   setPresent(docId: string, state: PresentState | null): void
+  /** Szkic nowej uwagi w prezentacji. Dokument stawia go przy kadrze kroku i czeka na kliknięcie. */
+  placeNote(docId: string, kind: 'comment' | 'sticky', color: StickyColor): void
   /** Minimapa przy prawej krawędzi każdego arkusza. */
   setMinimap(on: boolean): void
   outlineDoc(docId: string, command: OutlineCommand): void

@@ -1,14 +1,14 @@
-import { playable, shotAt, stepFrom, stepState } from '../../../shared/presentation'
+import { playable, type PresentState, shotAt, stepFrom, stepState } from '../../../shared/presentation'
 import { aimCamera } from './camera'
 import { drawings } from './drawings'
 import { closeLabelPop } from './labels'
 import { applyLayout, edgeMotion, reflow, SHUT } from './layout'
-import { closeThread, setInsp, setTool, showPanel } from './notes'
+import { cancelDraft, closeThread, setInsp, setTool, showPanel } from './notes'
 import { outline } from './outline'
 import { closeCmd } from './palette'
 import { endPick, flushRoute, loadRoute, route, routeLoaded, selectedIndex, stepsOf, syncFrames } from './route'
 import { closePeek, syncFocus } from './sheets'
-import { data, focusedId, notify, openPane, pinned, ui } from './state'
+import { canAnnotate, data, focusedId, notify, openPane, pinned, ui } from './state'
 
 /*
  * Odtwarzanie trasy. Dokument staje się prezentacją: szyna i panele schodzą, arkusz bierze całe
@@ -17,6 +17,9 @@ import { data, focusedId, notify, openPane, pinned, ui } from './state'
  *
  * Szybkie naciśnięcia nie ustawiają się w kolejce: licznik w doku idzie od razu, a kamera jedzie
  * do ostatniego wybranego kroku, gdy skończy poprzedni ruch.
+ *
+ * Uwaga dodana w trakcie nie wchodzi do trasy. Należy do kroku, na którym powstała, i jest na nim
+ * widoczna do końca prezentacji. Po wyjściu panel uwag pokazuje listę dodanych.
  */
 
 /** Tyle czekamy, aż dokument zgłosi kroki bez kadru. Bez odpowiedzi prezentacja i tak rusza. */
@@ -42,6 +45,14 @@ let saved: Saved | null = null
 let visible = new Set<string>()
 let wanted: number | null = null
 let running = false
+/** Uwagi i kształty dokumentu sprzed prezentacji. Nowa uwaga to taka, której tu nie ma. */
+let known = new Set<string>()
+/** Uwagi dodane w trakcie i krok, na którym powstały. */
+const added = new Map<string, number>()
+/** Krok, który dokument pokazuje albo który dostanie po ruchu kamery. */
+let shown = -1
+/** Uwagi zmieniły się w trakcie ruchu kamery, więc po ruchu dokument dostaje stan od nowa. */
+let dirty = false
 
 const missingOf = (docId: string): ReadonlySet<string> => route.missing.get(docId) ?? new Set()
 
@@ -60,21 +71,110 @@ function everything(docId: string): string[] {
   return [...notes, ...shapeIds(docId)]
 }
 
+/** Każda uwaga i każdy kształt dokumentu, także zamknięte. */
+const allIds = (docId: string): string[] => [
+  ...data.annotations.filter((note) => note.docId === docId).map(({ id }) => id),
+  ...shapeIds(docId)
+]
+
+/** Stan kroku razem z uwagami, które powstały na nim w trakcie prezentacji. */
+function stateFor(docId: string, index: number): Omit<PresentState, 'pending'> {
+  const state = stepState(stepsOf(docId), index, show.reveal, missingOf(docId))
+  const extra = [...added].filter(([, step]) => step === index).map(([id]) => id)
+  return { ...state, show: [...new Set([...state.show, ...extra])] }
+}
+
+const visibleIn = (docId: string, state: Omit<PresentState, 'pending'>): Set<string> =>
+  new Set(state.reveal ? everything(docId) : state.show)
+
 async function present(index: number): Promise<void> {
   const docId = ui.presenting
   const pane = docId ? openPane(docId) : -1
   if (!docId || pane < 0) return
   const steps = stepsOf(docId)
   const missing = missingOf(docId)
-  const state = stepState(steps, index, show.reveal, missing)
-  const now = new Set(state.reveal ? everything(docId) : state.show)
+  const now = visibleIn(docId, stateFor(docId, index))
   const shapes = new Set(shapeIds(docId))
   const pending = [...now].filter((id) => shapes.has(id) && !visible.has(id))
   visible = now
-  const send = (waiting: string[]): void => window.api.setPresent(docId, { ...state, pending: waiting })
+  shown = index
+  dirty = false
+  // Ruch kamery czeka w kolejce, a prezentacja mogła się w tym czasie skończyć. Wtedy dokument
+  // nie może dostać z powrotem maski. Stan liczy się w chwili wysyłki, bo w trakcie ruchu mogła
+  // dojść nowa uwaga.
+  const send = (waiting: string[]): void => {
+    if (ui.presenting === docId) window.api.setPresent(docId, { ...stateFor(docId, index), pending: waiting })
+  }
   // Maska i uwagi zmieniają się między zrzutami kamery, więc przenikają razem z jej przelotem.
-  await aimCamera(pane, shotAt(steps, index, missing), { before: () => send(pending) })
-  if (ui.presenting === docId && pending.length > 0) send([])
+  await aimCamera(pane, shotAt(steps, index, missing), {
+    before: () => send(pending),
+    skip: () => ui.presenting !== docId
+  })
+  if (pending.length > 0 || dirty) send([])
+  dirty = false
+}
+
+/** Uwagi kroku zmieniły się bez ruchu kamery, więc dokument dostaje ten sam krok od nowa. */
+function refresh(): void {
+  const docId = ui.presenting
+  if (!docId || shown < 0) return
+  if (running) {
+    dirty = true
+    return
+  }
+  const state = stateFor(docId, shown)
+  visible = visibleIn(docId, state)
+  window.api.setPresent(docId, { ...state, pending: [] })
+}
+
+/**
+ * Lista uwag przyszła od nowa. Uwaga, której nie było przed prezentacją, należy do kroku, który
+ * widać w doku, i dokument pokazuje ją od razu.
+ */
+export function notesChanged(): void {
+  const docId = ui.presenting
+  if (!docId) return
+  let fresh = false
+  for (const id of allIds(docId)) {
+    if (known.has(id)) continue
+    known.add(id)
+    added.set(id, Math.max(show.index, 0))
+    fresh = true
+  }
+  if (!fresh) return
+  notify()
+  refresh()
+}
+
+/** Ile uwag i kształtów dodano w tej prezentacji. Usunięte w trakcie się nie liczą. */
+export function addedCount(): number {
+  const docId = ui.presenting
+  if (!docId) return 0
+  const ids = new Set(allIds(docId))
+  return [...added.keys()].filter((id) => ids.has(id)).length
+}
+
+/**
+ * Nowy komentarz albo karteczka w prezentacji. Dokument stawia szkic przy kadrze kroku, pole
+ * wpisu staje nad dokiem, a kliknięcie w dokument przestawia szkic. Drugi raz ten sam rodzaj
+ * zamyka szkic.
+ */
+export function startNote(kind: 'comment' | 'sticky'): void {
+  const docId = ui.presenting
+  if (!docId || !canAnnotate(data.entries.get(docId) ?? null)) return
+  if (ui.draft?.docId === docId && ui.draft.kind === kind) {
+    cancelDraft()
+    return
+  }
+  if (ui.tool !== 'move') setTool('move')
+  window.api.placeNote(docId, kind, ui.color)
+}
+
+/** Zakreślacz i kształt działają w prezentacji jak poza nią. Drugi raz to samo narzędzie je odkłada. */
+export function presentTool(tool: 'highlight' | 'shape'): void {
+  const docId = ui.presenting
+  if (!docId || !canAnnotate(data.entries.get(docId) ?? null)) return
+  setTool(ui.tool === tool ? 'move' : tool)
 }
 
 async function pump(): Promise<void> {
@@ -93,6 +193,8 @@ async function pump(): Promise<void> {
 
 export function goToStep(index: number): void {
   if (!ui.presenting || index < 0 || index >= stepsOf(ui.presenting).length) return
+  // Szkic należy do miejsca w kroku, który właśnie znika.
+  if (index !== show.index && ui.draft?.docId === ui.presenting) cancelDraft()
   show.index = index
   wanted = index
   notify()
@@ -160,9 +262,13 @@ export async function startPresentation(fromSelected = false): Promise<void> {
     minimap: outline.minimap
   }
   ui.presenting = docId
+  ui.added = null
   show.index = -1
   show.reveal = false
   visible = new Set()
+  known = new Set(allIds(docId))
+  added.clear()
+  shown = -1
   route.preview = false
   document.documentElement.classList.add('presenting')
   if (ui.insp) setInsp(false)
@@ -195,11 +301,17 @@ export async function startPresentation(fromSelected = false): Promise<void> {
 export function stopPresentation(): void {
   const docId = ui.presenting
   if (!docId) return
+  if (ui.draft?.docId === docId) cancelDraft()
+  // Lista po wyjściu zbiera uwagi z panelu. Kształty nie są notatkami, więc ich na niej nie ma.
+  const notes = new Set(data.annotations.filter((note) => note.docId === docId).map(({ id }) => id))
+  const kept = [...added.keys()].filter((id) => notes.has(id))
   ui.presenting = null
   wanted = null
   show.index = -1
   show.reveal = false
   visible = new Set()
+  added.clear()
+  shown = -1
   window.api.setPresent(docId, null)
   const pane = openPane(docId)
   if (pane >= 0) void aimCamera(pane, null)
@@ -220,6 +332,10 @@ export function stopPresentation(): void {
     ui.nav = restore.nav
     edgeMotion()
     if (restore.insp) setInsp(true)
+  }
+  if (kept.length > 0) {
+    ui.added = { docId, ids: kept }
+    showPanel('notes')
   }
   applyLayout()
   syncFrames()

@@ -22,6 +22,7 @@ import { mathFlow } from './math.mjs'
 import { optionsFlow } from './options.mjs'
 import { outlineFlow } from './outline.mjs'
 import { rowMenuFlow } from './rowMenu.mjs'
+import { presentFlow } from './present.mjs'
 import { routeFlow } from './route.mjs'
 import { shapesFlow } from './shapes.mjs'
 import { skeletonFlow } from './skeleton.mjs'
@@ -1538,6 +1539,7 @@ async function main() {
   await check('scenariusz kamery dobiega końca', () => cameraFlow(workspace, { check }))
   await check('scenariusz kształtów dobiega końca', () => shapesFlow(workspace, { check }))
   await check('scenariusz trasy dobiega końca', () => routeFlow(workspace, { check }))
+  await check('scenariusz prezentacji dobiega końca', () => presentFlow(workspace, { check }))
   await check('scenariusz szukania dobiega końca', () => findFlow(workspace, { check }))
   await check('scenariusz minimapy i spisu treści dobiega końca', () => outlineFlow(workspace, { check }))
   await check('scenariusz linków dobiega końca', () => linkFlow(workspace))

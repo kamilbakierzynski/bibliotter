@@ -231,6 +231,8 @@ export const ui = {
   insp: false,
   /** Dokument, który właśnie jest prezentacją. Dok staje się wtedy pilotem. */
   presenting: null as string | null,
+  /** Uwagi dodane w ostatniej prezentacji. Panel uwag pokazuje je jako osobną listę. */
+  added: null as { docId: string; ids: string[] } | null,
   /** Panel obok arkusza pokazuje uwagi albo linki dokumentu. */
   inspView: 'notes' as InspView,
   notesView: 'wall' as 'wall' | 'list',

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AnnotationStore, parseShape, toOverlayItems } from '../src/main/annotationStore'
-import { constrain, inkPath, nearInk, type Point, shapeStrokes } from '../src/preload/shapeInk'
+import { constrain, inkLength, inkPath, nearInk, partialStrokes, type Point, shapeStrokes } from '../src/preload/shapeInk'
 
 const bounds = (points: Point[]): { left: number; top: number; right: number; bottom: number } => ({
   left: Math.min(...points.map((point) => point.x)),
@@ -69,6 +69,21 @@ describe('tusz kształtów', () => {
       expect(path.startsWith('M')).toBe(true)
       expect(path).not.toMatch(/NaN|Infinity/)
     }
+  })
+
+  it('pióro rysuje pociągnięcia po kolei, a na końcu daje cały kształt', () => {
+    const strokes = shapeStrokes('arrow', { x: 0, y: 0 }, { x: 300, y: 40 })
+    const total = inkLength(strokes)
+    expect(partialStrokes(strokes, 0)).toEqual([])
+    expect(partialStrokes(strokes, 1)).toBe(strokes)
+    // Na początku rośnie sam łuk, a grot czeka, aż pióro dojdzie do końca.
+    const early = partialStrokes(strokes, 0.3)
+    expect(early).toHaveLength(1)
+    expect(inkLength(early)).toBeCloseTo(total * 0.3, 1)
+    const last = early[0]?.points.at(-1) as Point
+    expect(nearInk(strokes, last.x, last.y, 0.5)).toBe(true)
+    expect(partialStrokes(strokes, 0.99).length).toBe(strokes.length)
+    expect(inkPath(partialStrokes(strokes, 0.5))).not.toMatch(/NaN|Infinity/)
   })
 
   it('gumka trafia przy linii, a nie w środku prostokąta', () => {

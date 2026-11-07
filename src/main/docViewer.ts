@@ -421,6 +421,11 @@ export class DocViewer {
     this.send(docId, 'overlay:present', state)
   }
 
+  /** Szkic nowej uwagi w prezentacji, przy kadrze kroku. */
+  placeNote(docId: string, kind: 'comment' | 'sticky', color: StickyColor): void {
+    this.send(docId, 'overlay:place', { kind, color })
+  }
+
   setMarker(color: StickyColor | null): void {
     this.marker = color
     for (const docId of this.views.keys()) this.send(docId, 'overlay:marker', color)

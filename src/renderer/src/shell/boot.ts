@@ -28,6 +28,7 @@ import { resumeLast } from './options'
 import { docReady, focusLive, touch, wheelUnderDock } from './native'
 import { closeThread, handleOverlayEvent, syncTools, syncViewSeg } from './notes'
 import { handleOutlineEvent, isOutlineEvent, syncMinimap } from './outline'
+import { notesChanged } from './present'
 import { handleRoutePick, reloadRoutes, setMissing } from './route'
 import { closeCmd, renderCmd } from './palette'
 import { applyGlow, focusPane, followLink } from './sheets'
@@ -71,6 +72,7 @@ function onViewerKey({ type, key, code, ctrl, shift, alt }: ViewerKey): void {
 
 function setAnnotations(annotations: Annotation[]): void {
   data.annotations = splitShapes(annotations)
+  notesChanged()
   // Zamknięty lub usunięty wątek przestaje trzymać arkusz w zrzucie.
   const selected = findNote(ui.selNote)
   if (ui.selNote && (!selected || (selected.status !== 'open' && !ui.showResolved))) closeThread()

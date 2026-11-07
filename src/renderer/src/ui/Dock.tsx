@@ -1,21 +1,35 @@
-import { type PointerEvent, useEffect } from 'react'
+import { type PointerEvent, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { SHAPE_TYPES, type ShapeType, STICKY_COLORS, type StickyColor } from '../../../shared/annotations'
 import { DOC_STATUSES } from '../../../shared/types'
 import { t } from '../../../shared/i18n'
+import { wake } from '../motion/spring'
 import { drawings } from '../shell/drawings'
 import { dockHover, dockLeave, togglePop } from '../shell/keys'
 import { toggleLabelPop } from '../shell/labels'
 import { camW, els, popPill, toolPill } from '../shell/layout'
 import { setDocStatus } from '../shell/library'
-import { chooseShape, selectionAction, setAudience, setColor, setTool } from '../shell/notes'
+import { cancelDraft, chooseShape, selectionAction, setAudience, setColor, setTool, submitDraft } from '../shell/notes'
 import { openCmd } from '../shell/palette'
-import { checkPresentation, goToStep, playableSteps, show, startPresentation, stepBy, stopPresentation } from '../shell/present'
+import { focusLive } from '../shell/native'
+import {
+  addedCount,
+  checkPresentation,
+  goToStep,
+  playableSteps,
+  presentTool,
+  show,
+  startNote,
+  startPresentation,
+  stepBy,
+  stopPresentation
+} from '../shell/present'
 import { stepLabel, stepsOf } from '../shell/route'
 import { copyReference } from '../shell/reference'
 import { closePeek, focusPane } from '../shell/sheets'
-import { canAnnotate, focusedDoc, MOD, pinned, STATUS, type Tool, ui, useShell } from '../shell/state'
+import { canAnnotate, data, type Draft, focusedDoc, MOD, pinned, STATUS, type Tool, ui, useShell } from '../shell/state'
 import { useSynced } from './hooks'
 import { Icon, Keys } from './icons'
+import { AudienceSwitch } from './Notes'
 import { Palette } from './Palette'
 
 const tools = (): { id: Tool; label: string; key: string; icon: string }[] => [
@@ -107,17 +121,37 @@ function Tray(): React.JSX.Element {
 /** Kropek nie ma przy długiej trasie, bo nie dałoby się w nie trafić. */
 const MAX_DOTS = 16
 
-/** Dok w prezentacji: kroki, nazwa kroku, kropki do skoku, wskaźnik i wyjście. */
+/** Narzędzia uwag w prezentacji. Komentarz i karteczka od razu stawiają szkic przy kadrze kroku. */
+const presentTools = (): { id: 'comment' | 'sticky' | 'highlight' | 'shape'; label: string; key: string; icon: string }[] => [
+  { id: 'comment', label: t('Komentarz'), key: 'C', icon: 'comment' },
+  { id: 'sticky', label: t('Karteczka'), key: 'N', icon: 'sticky' },
+  { id: 'highlight', label: t('Zakreślacz'), key: 'M', icon: 'marker' },
+  { id: 'shape', label: t('Kształt'), key: 'A', icon: 'shape' }
+]
+
+function presentToolOn(id: 'comment' | 'sticky' | 'highlight' | 'shape'): boolean {
+  if (id === 'comment' || id === 'sticky') return ui.draft?.docId === ui.presenting && ui.draft?.kind === id
+  return ui.tool === id
+}
+
+/** Dok w prezentacji: kroki, nazwa kroku, kropki do skoku, narzędzia uwag, licznik dodanych i wyjście. */
 function PresentBar(): React.JSX.Element {
   const docId = ui.presenting
   const steps = stepsOf(docId)
   const list = playableSteps()
   const at = list.indexOf(show.index)
   const step = steps[show.index]
+  const annotate = docId !== null && canAnnotate(data.entries.get(docId) ?? null)
+  const added = addedCount()
 
   useEffect(() => {
     checkPresentation()
   })
+
+  // Licznik i narzędzia zmieniają szerokość pilota, a dok mierzy ją w klatce ruchu.
+  useLayoutEffect(() => {
+    if (ui.ready) wake()
+  }, [annotate, added > 0])
 
   return (
     <div className="bar-present" id="present" inert={!docId}>
@@ -168,6 +202,21 @@ function PresentBar(): React.JSX.Element {
           </span>
         )}
         <span className="sep" />
+        {annotate &&
+          presentTools().map((tool) => (
+            <button
+              key={tool.id}
+              className={presentToolOn(tool.id) ? 'tb lit' : 'tb'}
+              data-present-tool={tool.id}
+              aria-label={tool.label}
+              aria-pressed={presentToolOn(tool.id)}
+              data-tip={tool.label}
+              data-keys={tool.key}
+              onClick={() => (tool.id === 'comment' || tool.id === 'sticky' ? startNote(tool.id) : presentTool(tool.id))}
+            >
+              <Icon name={tool.icon} />
+            </button>
+          ))}
         <button
           className={ui.tool === 'pointer' ? 'tb lit' : 'tb'}
           id="presentPointer"
@@ -179,6 +228,11 @@ function PresentBar(): React.JSX.Element {
         >
           <Icon name="point" />
         </button>
+        {added > 0 && (
+          <span className="present-added" id="presentAdded" data-tip={t('Uwagi dodane w tej prezentacji')}>
+            +{added}
+          </span>
+        )}
         <button className="ask" id="presentExit" onClick={stopPresentation}>
           <span>{t('Zakończ')}</span>
           <i className="keys">
@@ -186,6 +240,83 @@ function PresentBar(): React.JSX.Element {
           </i>
         </button>
       </div>
+    </div>
+  )
+}
+
+function NoteField({ draft }: { draft: Draft }): React.JSX.Element {
+  const [text, setText] = useState('')
+  const [audience, setAudience] = useState(draft.audience)
+  const input = useRef<HTMLTextAreaElement>(null)
+
+  // Kliknięcie w dokument przestawia szkic i zabiera klawiaturę, więc pole bierze ją z powrotem.
+  useEffect(() => {
+    window.api.focusLayer()
+    input.current?.focus()
+    const frame = requestAnimationFrame(() => input.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [draft])
+
+  // Po zapisie albo anulowaniu klawiatura wraca do dokumentu, bo kroki może obsługiwać on sam.
+  useEffect(
+    () => () => {
+      requestAnimationFrame(focusLive)
+    },
+    []
+  )
+
+  const submit = (): void => submitDraft(text, audience, draft.color)
+  const heading = draft.kind === 'sticky' ? t('Co chcesz zapamiętać?') : t('Co trzeba zmienić lub wyjaśnić?')
+
+  return (
+    <div className="bubble present-bubble">
+      <textarea
+        ref={input}
+        rows={2}
+        aria-label={t('Treść uwagi')}
+        placeholder={heading}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            submit()
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            cancelDraft()
+          }
+        }}
+      />
+      {/* Przyciski nie biorą fokusu, bo kliknięcie obok pola oddałoby klawiaturę dokumentowi. */}
+      <div className="bubble-foot" onMouseDown={(event) => event.preventDefault()}>
+        {draft.kind === 'comment' ? (
+          <AudienceSwitch value={audience} onChange={setAudience} />
+        ) : (
+          <span className="present-note-hint">{t('Kliknij inne miejsce w dokumencie')}</span>
+        )}
+        <button className="hint" aria-label={t('Zapisz')} disabled={!text.trim()} onClick={submit}>
+          <Keys keys={['↵']} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Pole nowej uwagi w prezentacji. Stoi nad dokiem, a szkic czeka w dokumencie. */
+export function PresentNote(): React.JSX.Element {
+  useShell()
+  const draft = ui.presenting !== null && ui.draft?.docId === ui.presenting ? ui.draft : null
+
+  // Wycięcie warstwy musi objąć pole, zanim da się w nie kliknąć.
+  useLayoutEffect(() => {
+    if (ui.ready) wake()
+  }, [draft !== null])
+
+  return (
+    <div className={draft ? 'present-note on' : 'present-note'} id="presentNote" inert={!draft}>
+      {draft && <NoteField key={`${draft.docId} ${draft.kind}`} draft={draft} />}
     </div>
   )
 }

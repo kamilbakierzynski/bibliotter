@@ -16,6 +16,7 @@ import { FindBar } from './Find'
 import { Home } from './Home'
 import { Icon } from './icons'
 import { DraftBubble, ThreadPop } from './Notes'
+import { PairLink } from './Pair'
 import { SkeletonSheet } from './Skeleton'
 
 const pullRequestOf = (doc: DocEntry): { number: number; title: string; url: string } | undefined =>
@@ -25,6 +26,7 @@ function Meta({ doc }: { doc: DocEntry }): React.JSX.Element {
   const pullRequest = pullRequestOf(doc)
   return (
     <span className="pl-meta">
+      <PairLink doc={doc} />
       {doc.labels.map((name) =>
         ticketHref(name) ? (
           <button key={name} className="tag label link" data-color={colorAttr(name)} title={t('Otwórz {code} w Jira', { code: name })} onClick={() => openTicket(name)}>
@@ -153,7 +155,8 @@ function Pane({ sheet }: { sheet: Sheet }): React.JSX.Element {
   // Miniatura sama jest podglądem, a gotowy dokument stoi już nad powłoką.
   const opening = id !== null && !thumb && !failed && status !== 'ready'
   const note =ui.selNote && i === ui.focus && !ui.insp && ui.threadRect ? findNote(ui.selNote) : undefined
-  const draft = ui.draft?.rect && ui.draft.docId === id ? ui.draft : null
+  // W prezentacji szkic dostaje pole nad dokiem, a nie dymek nad arkuszem.
+  const draft = ui.draft?.rect && ui.draft.docId === id && ui.presenting !== id ? ui.draft : null
 
   const press = (e: PointerEvent<HTMLElement>): void => {
     if (ui.peek !== null && ui.peek !== i) {

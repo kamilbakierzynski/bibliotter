@@ -66,9 +66,13 @@ export interface RouteMask {
 
 export interface RouteFrames {
   element: HTMLDivElement
+  /** Maska leży osobno, pod kształtami i karteczkami, bo to, co krok pokazuje, ma być widać w całości. */
+  mask: HTMLDivElement
   setRoute(route: { frames: RouteFrame[]; selected: string | null } | null): void
   /** Maska prezentacji wokół kadru. `null` ją zdejmuje. */
   setMask(mask: RouteMask | null): void
+  /** Element kadru i jego prostokąt w układzie okna strony. `null`, gdy kadru nie ma albo go nie widać. */
+  spot(camera: StepCamera | null): { element: Element; rect: Rect } | null
   setPick(kind: PickKind | null): void
   picking(): boolean
   press(event: PointerEvent): void
@@ -132,8 +136,7 @@ export function createRouteFrames(
   aim.className = 'frame aim hidden'
   const cover = document.createElement('div')
   cover.className = 'mask hidden'
-  // Maska leży pod ramkami, żeby formularz otwarty w trakcie prezentacji widział kadr.
-  element.append(cover, shown, aim)
+  element.append(shown, aim)
 
   let route: { frames: RouteFrame[]; selected: string | null } | null = null
   const targets = new Map<string, Element | null>()
@@ -238,6 +241,7 @@ export function createRouteFrames(
 
   return {
     element,
+    mask: cover,
     setRoute(next) {
       const known = new Map((route?.frames ?? []).map((frame) => [frame.id, JSON.stringify(frame.camera)]))
       route = next
@@ -255,6 +259,14 @@ export function createRouteFrames(
       mask = next
       if (!next) maskTarget = null
       layoutMask()
+    },
+    spot(camera) {
+      const anchor = camera ? anchorOf(camera) : null
+      const element = anchor ? resolveAnchor(anchor) : null
+      const box = element?.getBoundingClientRect()
+      if (!camera || !element || !box || (box.width === 0 && box.height === 0)) return null
+      const rect = { x: box.left, y: box.top, width: box.width, height: box.height }
+      return { element, rect: camera.kind === 'area' ? within(rect, camera.box) : rect }
     },
     setPick(kind) {
       pick = kind

@@ -135,6 +135,7 @@ window.addEventListener(
         subscribe<{ frames: RouteFrame[]; selected: string | null } | null>('overlay:route', listener),
       onPick: (listener) => subscribe<PickKind | null>('overlay:pick', listener),
       onPresent: (listener) => subscribe<PresentState | null>('overlay:present', listener),
+      onPlace: (listener) => subscribe<{ kind: 'comment' | 'sticky'; color: StickyColor }>('overlay:place', listener),
       setPresenting,
       setDrawing
       },

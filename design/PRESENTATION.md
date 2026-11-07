@@ -65,7 +65,7 @@ interface PresentationStep {
 - **Formularz:** nowy widok panelu. Lista kroków, a pod nią nazwa, Kadr (Bez ruchu, Miejsce, Obszar), Reszta dokumentu i Pokaż w tym kroku. Obszar rysujesz przeciągnięciem, a Miejsce wskazujesz kliknięciem.
 - **Dok w zwykłym widoku:** nowe narzędzie Kształt z tacą typów i kolorów oraz przycisk Prezentuj.
 - **Dok w prezentacji:** wstecz, numer kroku, dalej, nazwa kroku, kropki do skoku, narzędzia uwag, licznik dodanych uwag i wyjście.
-- **Klawisze:** strzałki, spacja oraz `PgUp` i `PgDn` dla pilotów. `Esc` najpierw anuluje uwagę, a potem kończy prezentację. `A` (kształt), `D` (przełącznik rysunków) i `Shift P` (formularz trasy) już działają. Propozycja na Prezentuj to `F5`, bo jest wolny. Nowe litery trzeba dopisać do `OVERLAY_KEYS`.
+- **Klawisze:** strzałki, spacja oraz `PgUp` i `PgDn` dla pilotów. `Esc` najpierw anuluje uwagę, a potem kończy prezentację. `A` (kształt), `D` (przełącznik rysunków) i `Shift P` (formularz trasy) już działają. Prezentuj to `F5`, a `Shift F5` zaczyna od wybranego kroku. Nowe litery trzeba dopisać do `OVERLAY_KEYS`.
 - **Pole nowej uwagi:** w warstwie doku, jak paleta, więc dokument nie musi zamarzać na czas pisania.
 
 Agent dostaje narzędzia MCP i polecenia CLI do odczytu i zapisu całej trasy, razem z nowymi kształtami. Miejsca wskazuje cytatem lub selektorem. CLI i MCP są po angielsku, a każdy napis w apce idzie przez `t()` i `en.ts`.
@@ -141,7 +141,7 @@ Ograniczenia:
 
 ## Wdrożenie trasy
 
-Trasę można układać od 2026-11-07, ale jeszcze nie da się jej odtworzyć. Model i sprawdzanie leżą w `src/shared/presentation.ts`, zapis w `src/main/presentationStore.ts`, a formularz w `src/renderer/src/ui/Route.tsx` i `src/renderer/src/shell/route.ts`.
+Trasę można układać od 2026-11-07, a odtwarzać od tego samego dnia (część „Wdrożenie odtwarzania”). Model i sprawdzanie leżą w `src/shared/presentation.ts`, zapis w `src/main/presentationStore.ts`, a formularz w `src/renderer/src/ui/Route.tsx` i `src/renderer/src/shell/route.ts`.
 
 - **Zapis:** `library/<dokument>/presentation.json`, przez plik tymczasowy i sygnał `presentation`, tak jak uwagi. Pusta trasa nie zostawia pliku. Zły krok z pliku znika przy odczycie, a reszta trasy zostaje. Formularz zapisuje od razu, a nazwę kroku po 0,4 s przerwy w pisaniu. Zmiana na dysku, np. od agenta, wraca do formularza, chyba że czeka niezapisana zmiana użytkownika.
 - **Formularz:** czwarty widok panelu, pod `Shift P` i w palecie. Na górze lista kroków, pod nią wybrany krok: nazwa, Kadr, Reszta dokumentu i Pokaż w tym kroku. Krok przesuwa się strzałkami w nagłówku albo `Alt ↑` i `Alt ↓` na liście. Usunięty krok wraca przyciskiem „Przywróć krok” do następnej zmiany.
@@ -153,14 +153,36 @@ Trasę można układać od 2026-11-07, ale jeszcze nie da się jej odtworzyć. M
 
 Ograniczenia:
 
-- Reszta dokumentu to na razie tylko zapisane ustawienie. Przygaszenie i ukrycie zrobi maska w etapie 4.
 - `Ctrl+Z` nie obejmuje trasy. Usunięty krok wraca przyciskiem, a pozostałe zmiany są drobne i łatwe do powtórzenia.
 - Krok nie ma jeszcze kolejności pokazywania uwag. Wszystkie zaznaczone pojawią się razem przy wejściu kroku.
 - Dwa okna apki z otwartym formularzem tego samego dokumentu nadpisują sobie trasę. Ostatni zapis wygrywa.
 
+## Wdrożenie odtwarzania
+
+Prezentacja działa od 2026-11-07. Tryb prowadzi `src/renderer/src/shell/present.ts`, pilota rysuje `src/renderer/src/ui/Dock.tsx`, maskę kładzie `src/preload/routeFrames.ts`, a pióro rysuje kształty w `src/preload/shapes.ts`. Stan kroku liczy `stepState` w `src/shared/presentation.ts`.
+
+- **Wejście:** `F5`, przycisk Prezentuj w doku i paleta. `Shift F5` zaczyna od kroku wybranego w formularzu. Dokument bez trasy otwiera formularz trasy zamiast prezentacji.
+- **Układ:** szyna chowa się w lewą krawędź, panel się zamyka, kilka arkuszy składa się do jednego, a minimapa znika. Arkusz bierze całą szerokość okna, a tabliczka nad nim zostaje z samym tytułem. Wyjście przywraca szynę, panel, arkusze i minimapę.
+- **Dok:** narzędzia i szukanie zjeżdżają, a na ich miejsce wjeżdża pilot: wstecz, „n z m”, dalej, nazwa kroku, kropki do skoku przy trasie do 16 kroków, wskaźnik i Zakończ. Narzędzia uwag i licznik dodanych uwag przyjdą w etapie 5.
+- **Krok:** kamera jedzie do kadru. Maska i uwagi kroku zmieniają się w dokumencie między zrzutem startowym a ruchem kamery, przez haczyk `before` w `aimCamera`, więc przenikają razem z przelotem. Gdy kamera stoi, zmiana przenika w miejscu. Szybkie naciśnięcia nie tworzą kolejki: licznik idzie od razu, a kamera jedzie do ostatniego wybranego kroku.
+- **Maska:** prostokąt o 10 px strony szerszy od kadru, z cieniem na całą stronę. Przygaszenie ma krycie 0,62, a ukrycie pełne. Maska leży pod kształtami i karteczkami, więc to, co krok pokazuje, widać w całości, także poza kadrem. Kadr odziedziczony przez krok bez ruchu też dostaje maskę. Przy całym dokumencie maski nie ma.
+- **Uwagi:** dokument pokazuje tylko uwagi z listy kroku, a pinezki komentarzy spoza listy znikają. Rysunki schowane przełącznikiem wracają na czas prezentacji. `D` odsłania wszystkie otwarte uwagi i kształty dokumentu, a drugie `D` je chowa.
+- **Kształty:** kształt, którego nie było w poprzednim kroku, czeka schowany, aż kamera stanie, a potem rośnie wzdłuż swojej linii w tempie pióra: 1,4 px strony na milisekundę, od 0,32 do 0,9 s. Urwany koniec cienieje jak gotowy, więc wygląda jak czubek pióra. Przy ograniczonym ruchu w systemie kształt staje od razu.
+- **Klawisze:** `→`, spacja i `PgDn` idą dalej, a `←`, `Shift` ze spacją i `PgUp` wracają. `Home` i `End` skaczą na krańce trasy. `P` włącza wskaźnik, `V` interakcję, a `D` odsłania uwagi. `Esc` najpierw wyłącza wskaźnik, a potem kończy prezentację. Reszta skrótów milczy, żeby przypadkowa litera nie otworzyła panelu przed widzami.
+- **Klawisze w dokumencie:** warstwa łapie klawisze kroków na końcu drogi zdarzenia, a nie na jej początku. Pole tekstowe i element, który sam obsłużył klawisz przez `preventDefault`, zostają przy swoim. Poza prezentacją klawisze kroków należą w całości do dokumentu.
+- **Pomijanie:** krok, którego kadru nie ma w dokumencie, wypada z prezentacji i z licznika. Krok bez ruchu za nim bierze kadr wcześniejszego kroku. Gdy żaden krok nie ma kadru, `F5` otwiera formularz trasy.
+- **Powrót na trasę:** po przewinięciu poza krok następny klawisz ustawia kamerę na kadrze kolejnego kroku. Krok bez ruchu też ustawia kadr od nowa, więc wraca na trasę.
+- **Testy:** `tests/presentation.test.ts` sprawdza pomijanie, stan kroku i sprawdzanie stanu z powłoki, a `tests/shapes.test.ts` pióro. `tests/e2e/present.mjs` sprawdza 15 rzeczy: uwagi przed prezentacją, wejście z `F5` i pilota w całości w doku, pierwszy krok bez uwag spoza listy, kamerę z przygaszeniem i kształtem rysowanym po ruchu, krok bez ruchu z ukryciem i karteczką, pominięty krok, `PgUp`, `←`, `Home` i `End`, spację z polem i elementem z własną obsługą klawisza, `D`, kropki, `Esc` z powrotem układu, `Esc` tuż po kroku bez maski i kamery na kadrze, przycisk Prezentuj i Zakończ, `Shift F5` z powrotem panelu oraz brak błędów.
+
+Ograniczenia:
+
+- Zakreślenia leżą w osobnej warstwie pod maską, więc zakreślenie, które krok pokazuje poza kadrem, zostaje przygaszone razem z resztą.
+- Zmiana rozmiaru okna w trakcie prezentacji nie przelicza kadru. Poprawi go dopiero następny krok.
+- Prezentacja działa w jednym oknie. Nie ma widoku prowadzącego ani obsługi drugiego ekranu.
+- Uwag w trakcie jeszcze nie ma. Dok w prezentacji nie ma narzędzi uwag, a `C`, `N` i `M` milczą.
+
 ## Do sprawdzenia przy wdrożeniu
 
-- Spacja i strzałki trafiają też do dokumentu, więc trzeba je przechwycić, ale nie odebrać dokumentom z własną obsługą klawiatury.
 - Zoom działa na `design/lab.html`, który nie przewija korzenia. Przejście do miejsca w takim dokumencie nie było sprawdzane.
 
 ## Kolejność
@@ -168,6 +190,6 @@ Ograniczenia:
 1. ~~Kamera: skala strony w spoczynku i zrzuty w ruchu, na prawdziwej warstwie.~~ Zrobione, bez wywołania w interfejsie.
 2. ~~Kształty: narzędzie, Tusz, zapis, przełącznik rysunków.~~ Zrobione bez zasłony, która czeka na trasę.
 3. ~~Trasa: zapis i formularz.~~ Zrobione, z podglądem kadru kamerą.
-4. Odtwarzanie: tryb, dok jako sterowanie, kamera, maska.
+4. ~~Odtwarzanie: tryb, dok jako sterowanie, kamera, maska.~~ Zrobione, bez narzędzi uwag w doku.
 5. Uwagi w trakcie i lista po wyjściu.
 6. Narzędzia MCP i polecenia CLI.

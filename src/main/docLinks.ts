@@ -1,6 +1,6 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { basename, dirname, join, parse, relative, resolve } from 'node:path'
-import { type DocLink, type DocLinks, isLocalHref, type LinkPreview, WIKI_PREFIX } from '../shared/links'
+import { type DocLink, type DocLinks, type DocPair, isLocalHref, type LinkPreview, WIKI_PREFIX } from '../shared/links'
 import type { DocEntry, DocFormat, LibrarySnapshot } from '../shared/types'
 import { analyzeDocument, analyzeHtml } from './classify'
 import { mapLimit } from './concurrency'
@@ -100,6 +100,39 @@ const exists = (path: string): Promise<boolean> =>
     () => false
   )
 
+/** Kit pisze meta na samej górze strony, więc szukanie par nie czyta całych dokumentów. */
+const HEAD_BYTES = 16 * 1024
+const META_TAG = /<meta\b[^>]*>/gi
+const BODY = /<body\b/i
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'" }
+
+function attribute(tag: string, name: string): string | null {
+  const match = new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, 'i').exec(tag)
+  return match ? (match[1] ?? match[2] ?? match[3] ?? '') : null
+}
+
+/** Plan, który objaśnia strona: `<meta name="bibliotter-plan" content="plan.md">`, jak pisze go kit explain-plan. */
+export function planHrefOf(html: string): string | null {
+  const body = html.search(BODY)
+  for (const [tag] of (body < 0 ? html : html.slice(0, body)).matchAll(META_TAG)) {
+    if (attribute(tag, 'name')?.toLowerCase() !== 'bibliotter-plan') continue
+    const href = (attribute(tag, 'content') ?? '').replace(/&(amp|lt|gt|quot|#39|apos);/g, (_, name: string) => ENTITIES[name] ?? '')
+    return href.trim() || null
+  }
+  return null
+}
+
+async function headOf(path: string): Promise<string> {
+  const file = await open(path, 'r')
+  try {
+    const buffer = Buffer.alloc(HEAD_BYTES)
+    const { bytesRead } = await file.read(buffer, 0, HEAD_BYTES, 0)
+    return buffer.toString('utf8', 0, bytesRead)
+  } finally {
+    await file.close()
+  }
+}
+
 /** Pliki pod katalogiem według nazwy. Obsidian wskazuje plik samą nazwą, a skan zna tylko dokumenty. */
 async function filesUnder(root: string): Promise<Map<string, string[]>> {
   const found = new Map<string, string[]>()
@@ -162,6 +195,12 @@ interface Parsed {
   links: RawLink[]
 }
 
+interface Head {
+  mtimeMs: number
+  size: number
+  plan: string | null
+}
+
 function docAt({ byPath }: Catalog, path: string): DocEntry | undefined {
   return byPath.get(normalizePath(path)) ?? byPath.get(normalizePath(path.replace(LINE_SUFFIX, '')))
 }
@@ -174,6 +213,9 @@ export class LinkGraph {
   private readonly parsed = new Map<string, Parsed>()
   private catalog: Catalog | null = null
   private backlinks: { snapshot: LibrarySnapshot; ready: Promise<Map<string, string[]>> } | null = null
+  private readonly heads = new Map<string, Head>()
+  /** Objaśnienia każdego planu, liczone raz na migawkę jak linki zwrotne. */
+  private explained: { snapshot: LibrarySnapshot; ready: Promise<Map<string, DocEntry[]>> } | null = null
   /** Spis plików sejfu. Nowa migawka go czyści, a czytamy tylko sejfy, o które ktoś zapytał. */
   private readonly vaults = new Map<string, Promise<Map<string, string[]>>>()
 
@@ -290,6 +332,53 @@ export class LinkGraph {
       return true
     })
     return { outgoing, incoming: incoming.get(doc.id) ?? [] }
+  }
+
+  private async planHref(doc: DocEntry): Promise<string | null> {
+    if (doc.missing || doc.format !== 'html') return null
+    const key = normalizePath(doc.path)
+    const cached = this.heads.get(key)
+    if (cached?.mtimeMs === doc.mtimeMs && cached.size === doc.size) return cached.plan
+    try {
+      const plan = planHrefOf(await headOf(doc.path))
+      this.heads.set(key, { mtimeMs: doc.mtimeMs, size: doc.size, plan })
+      return plan
+    } catch {
+      return null // Plik mógł zniknąć po skanie.
+    }
+  }
+
+  private planOf(catalog: Catalog, doc: DocEntry, href: string | null): DocEntry | null {
+    const target = href ? linkTarget(href, doc.path) : null
+    const plan = target ? docAt(catalog, target.path) : undefined
+    return plan && plan.id !== doc.id ? plan : null
+  }
+
+  private explanations(catalog: Catalog): Promise<Map<string, DocEntry[]>> {
+    if (this.explained?.snapshot !== catalog.snapshot) {
+      const collect = async (): Promise<Map<string, DocEntry[]>> => {
+        const found = new Map<string, DocEntry[]>()
+        const pages = catalog.docs.filter((doc) => doc.format === 'html')
+        await mapLimit(pages, READ_CONCURRENCY, async (doc) => {
+          const plan = this.planOf(catalog, doc, await this.planHref(doc))
+          if (plan) found.set(plan.id, [...(found.get(plan.id) ?? []), doc])
+        })
+        return found
+      }
+      this.explained = { snapshot: catalog.snapshot, ready: collect() }
+    }
+    return this.explained.ready
+  }
+
+  /** Objaśnienie prowadzi do swojego planu, a plan do objaśnienia. Z kilku objaśnień wygrywa najnowsze. */
+  async pair(doc: DocEntry): Promise<DocPair | null> {
+    const catalog = this.currentCatalog()
+    if (!catalog) return null
+    const plan = this.planOf(catalog, doc, await this.planHref(doc))
+    if (plan) return { docId: plan.id, role: 'plan' }
+    const explanations = (await this.explanations(catalog)).get(doc.id) ?? []
+    const [newest] = [...explanations].sort((a, b) => b.mtimeMs - a.mtimeMs)
+    return newest ? { docId: newest.id, role: 'explanation' } : null
   }
 
   /** Karta dla linku do innego dokumentu, także spoza biblioteki. Inne pliki karty nie mają. */

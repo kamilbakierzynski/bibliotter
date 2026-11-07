@@ -317,7 +317,7 @@ Strzałki, prostokąty, elipsy i linie pod `A` i w doku. Należą do dokumentu j
 
 ### Trasa prezentacji
 
-Czwarty widok panelu, pod `Shift P`. Układa się w nim trasę dokumentu na spotkanie: płaską listę kroków, po jednym kliknięciu na krok. Odtwarzanie przyjdzie w kolejnym etapie, a pełne ustalenia są w `design/PRESENTATION.md`.
+Czwarty widok panelu, pod `Shift P`. Układa się w nim trasę dokumentu na spotkanie: płaską listę kroków, po jednym kliknięciu na krok. Odtwarza ją prezentacja, opisana niżej, a pełne ustalenia są w `design/PRESENTATION.md`.
 
 - Lista kroków stoi na górze, a pod nią wybrany krok: nazwa, Kadr (Bez ruchu, Miejsce, Obszar), Reszta dokumentu (Normalnie, Przygaszona, Ukryta) i lista uwag oraz kształtów do pokazania. Pusty tytuł to „Krok N”.
 - Kadr wskazuje się w dokumencie. Miejsce bierze blok pod kliknięciem, a nie słowo, i ramka pokazuje go, zanim się kliknie. Obszar rysuje się przeciągnięciem. Na czas wskazywania kursor staje się celownikiem, a kliknięcie nie trafia do dokumentu. `Esc` przerywa.
@@ -325,6 +325,16 @@ Czwarty widok panelu, pod `Shift P`. Układa się w nim trasę dokumentu na spot
 - Oko w nagłówku włącza podgląd: kamera jedzie na kadr wybranego kroku i za każdym następnym wyborem. Wyłączenie albo zamknięcie panelu wraca do całej strony.
 - Krok, którego kadru nie ma już w dokumencie, dostaje znak ostrzeżenia na liście i zdanie w opisie kadru. Prezentacja go pominie.
 - Zapis jest cichy, bez przycisku: zmiana trafia na dysk od razu, a nazwa po krótkiej przerwie w pisaniu. Zmiana od agenta wraca do formularza.
+
+### Prezentacja
+
+`F5`, przycisk Prezentuj w doku albo paleta zamieniają dokument w prezentację jego trasy. `Shift F5` zaczyna od kroku wybranego w formularzu, a dokument bez trasy otwiera formularz.
+
+- Szyna chowa się w lewą krawędź, panel się zamyka, a arkusz bierze całą szerokość okna. Kilka arkuszy składa się do jednego. Wyjście przywraca układ sprzed prezentacji.
+- Dok jest pilotem: wstecz, „n z m”, dalej, nazwa kroku, kropki do skoku, wskaźnik i Zakończ. Pilot wjeżdża w miejsce narzędzi i szukania na tej samej sprężynie co reszta doku.
+- Krok to jedno naciśnięcie. Kamera jedzie do kadru, a maska przygasza albo chowa resztę strony w trakcie przelotu, nie po nim. Maska jest neutralna, prawie czarna, bez pomarańczu.
+- Widać tylko uwagi, które krok wskazał. Kształt nowy w kroku rysuje się piórem, gdy kamera stanie. `D` odsłania wszystkie uwagi dokumentu.
+- Klawisze kroków: `→`, spacja i `PgDn` dalej, `←` i `PgUp` wstecz, `Home` i `End` na krańce. W dokumencie pole tekstowe i element z własną obsługą klawisza zostają przy swoim. `Esc` wyłącza wskaźnik, a potem kończy.
 
 ### Opcje
 
@@ -364,6 +374,8 @@ Zwykły widok panelu, więc wysuwa się na linie i nie zasłania dokumentu. Stro
 | `V` `C` `N` `M` `A` `P` | Interakcja, komentarz, karteczka, zakreślacz, kształt, wskaźnik |
 | `D` | Pokaż lub schowaj rysunki dokumentu |
 | `Shift P` | Trasa prezentacji w panelu |
+| `F5` `Shift F5` | Prezentuj od pierwszego kroku albo od kroku wybranego w trasie |
+| `→` `←` spacja `PgDn` `PgUp` `Home` `End` | Kroki w prezentacji |
 | `Ctrl Z` `Ctrl Shift Z` | Cofnij i przywróć zmianę uwag w otwartym dokumencie. W polu tekstowym cofają tekst |
 | `S` | Status dokumentu |
 | `L` | Etykiety dokumentu |
@@ -415,6 +427,7 @@ Dokument to natywny `WebContentsView`, zawsze nad rendererem. Nie da się na nim
 | Arkusz rosnący z miniatury | Zrzut na czas ruchu, żywy widok po zatrzymaniu. |
 | Podmiana dokumentu w arkuszu | Stary dokument stoi, aż nowy narysuje pierwszą klatkę, a potem nowy wchodzi od razu, bez przenikania. Po 180 ms stary ustępuje, żeby długie ładowanie nie wyglądało na zawieszenie. |
 | Trasa prezentacji | Model i sprawdzanie w `src/shared/presentation.ts`, bez DOM i Electrona. Plik `library/<dokument>/presentation.json` pisze `src/main/presentationStore.ts` przez plik tymczasowy i sygnał, jak uwagi. Ramkę kadru i wskazywanie robi `src/preload/routeFrames.ts` w Shadow DOM warstwy. Powłoka trzyma trasę w `src/renderer/src/shell/route.ts` i nie wczytuje zmiany z dysku, gdy czeka jej własny zapis. |
+| Prezentacja | Tryb prowadzi `src/renderer/src/shell/present.ts`: jedno pole `ui.presenting`, a układ bierze z niego krawędzie sceny i szyny. Stan kroku (`stepState` w `src/shared/presentation.ts`) idzie do warstwy dokumentu jako `overlay:present` w haczyku `before` kamery, między zrzutem startowym a ruchem, więc maska i uwagi wchodzą w zrzut końcowy. Maskę kładzie `src/preload/routeFrames.ts` pod kształtami, a pióro rysuje kształt z `partialStrokes` w `src/preload/shapeInk.ts`. Klawisze kroków łapie w dokumencie nasłuch na końcu drogi zdarzenia, tylko w prezentacji. |
 | Kształty | Geometria tuszu w `src/preload/shapeInk.ts`, bez DOM, więc ma testy jednostkowe. Rysowanie i układanie w `src/preload/shapes.ts`: jeden SVG w Shadow DOM warstwy, na stronie, więc kształty przewijają się z nią, a pod zoomem kamery rosną z treścią. Szkic zostaje do chwili, gdy apka odeśle zapisany kształt, żeby nie było klatki bez tuszu. Powłoka trzyma kształty w `src/renderer/src/shell/drawings.ts`, poza listą notatek. |
 | Kamera arkusza | W spoczynku skala strony przez `Emulation.setPageScaleFactor` (`src/main/docCamera.ts`), więc układ się nie zmienia, a strona zostaje żywa. W ruchu dwa zrzuty na sprężynie (`src/renderer/src/shell/camera.ts`): gdy jeden kadr mieści się w drugim, kamera przejeżdża przez oba, a przy skoku w daleki kadr obrazy przenikają się z lekkim dryfem. Pinezki, karteczki, ręka i zakreślacz kontrują powiększenie, więc mają stały rozmiar na ekranie. |
 

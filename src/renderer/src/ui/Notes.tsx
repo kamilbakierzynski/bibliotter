@@ -21,7 +21,7 @@ const THREAD_INSET = 12
 /** Dolna granica dymków w arkuszu. Dok pływa nad nim, więc miejsce kończy się nad dokiem. */
 const roomBelow = (height: number): number => height - G.dockZone - THREAD_INSET
 
-function AudienceSwitch({ value, onChange }: { value: Audience; onChange: (next: Audience) => void }): React.JSX.Element {
+export function AudienceSwitch({ value, onChange }: { value: Audience; onChange: (next: Audience) => void }): React.JSX.Element {
   return (
     <div className="seg" role="radiogroup" aria-label={t('Odbiorca uwagi')}>
       {(['agent', 'me'] as const).map((option) => (
@@ -243,7 +243,10 @@ function NotesPanel(): React.JSX.Element {
   const docId = focusedId()
   const all = docId ? data.annotations.filter((note) => note.docId === docId) : []
   const open = all.filter((note) => note.status === 'open')
-  const visible = ui.showResolved ? all : open
+  // Po prezentacji panel pokazuje najpierw to, co w niej dopisano, także zamknięte już uwagi.
+  const added = ui.added?.docId === docId ? new Set(ui.added.ids) : null
+  const fresh = added ? all.filter((note) => added.has(note.id)) : null
+  const visible = fresh ?? (ui.showResolved ? all : open)
   const resolved = all.length - open.length
   const draft = ui.draft && !ui.draft.rect && ui.draft.docId === docId ? ui.draft : null
 
@@ -255,8 +258,8 @@ function NotesPanel(): React.JSX.Element {
   return (
     <>
       <header className="insp-head">
-        <strong>
-          {t('Uwagi')} <span>{open.length || ''}</span>
+        <strong id="notesTitle">
+          {fresh ? t('Dodane podczas prezentacji') : t('Uwagi')} <span>{(fresh ? fresh.length : open.length) || ''}</span>
         </strong>
         <div className="seg view-seg" id="viewSeg" role="radiogroup" aria-label={t('Układ uwag')}>
           <i className="view-pill" ref={viewPill.bind} />
@@ -294,6 +297,19 @@ function NotesPanel(): React.JSX.Element {
       <footer className="insp-foot">
         {draft ? (
           <Composer key={draft.docId} draft={draft} className="inline" />
+        ) : fresh ? (
+          <div className="insp-acts">
+            <button
+              className="ask"
+              id="showAllNotes"
+              onClick={() => {
+                ui.added = null
+                notify()
+              }}
+            >
+              <span>{t('Pokaż wszystkie uwagi')}</span>
+            </button>
+          </div>
         ) : (
           <div className="insp-acts">
             <button className="ask" disabled={docId === null} onClick={documentNote}>

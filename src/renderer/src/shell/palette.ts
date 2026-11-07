@@ -6,7 +6,7 @@ import { rectIn } from '../motion/pill'
 import { clamp } from '../motion/spring'
 import { goHome, toggleHomeView } from './home'
 import { hideCard } from './hoverCard'
-import { hideCaps, hideFly, hideTip, stepNotes, togglePop } from './keys'
+import { hideCaps, hideFly, hideTip, jumpToPair, stepNotes, togglePop } from './keys'
 import { autoLabelDoc, closeLabelPop, toggleLabel, toggleLabelPop } from './labels'
 import { inLayer } from './layer'
 import { actPill, cmdPill, mH, mW, setNav, setView } from './layout'
@@ -183,6 +183,7 @@ export const actions = (): PaletteAction[] => [
   { id: 'a-pointer', title: t('Wskaźnik prezentera'), sub: t('Kliknięcie stuka w ekran, przytrzymanie rysuje, a prawy przycisk kasuje linie.'), icon: 'point', keys: ['P'], run: () => { if (focusedDoc()) setTool('pointer') } },
   { id: 'a-notes', title: t('Pokaż lub ukryj uwagi'), sub: t('Wątki zawisną obok dokumentu.'), icon: 'bubble', keys: ['I'], run: () => togglePanel('notes') },
   { id: 'a-links', title: t('Pokaż lub ukryj linki'), sub: t('Linki z dokumentu i do niego.'), icon: 'link', keys: ['O'], run: () => togglePanel('links') },
+  { id: 'a-pair', title: t('Plan lub jego objaśnienie'), sub: t('Przeskakuje między planem w Markdownie a objaśnieniem zrobionym przez explain-plan.'), icon: 'file', keys: ['Shift', 'O'], run: () => { const doc = focusedDoc(); if (doc) jumpToPair(doc.id) } },
   { id: 'a-outline', title: t('Pokaż lub ukryj spis treści'), sub: t('Nagłówki dokumentu. Kliknięcie przenosi do rozdziału.'), icon: 'toc', keys: ['G'], run: () => togglePanel('outline') },
   { id: 'a-route', title: t('Trasa prezentacji'), sub: t('Kroki prezentacji dokumentu: kadr kamery, reszta strony i uwagi do pokazania.'), icon: 'route', keys: ['Shift', 'P'], run: () => togglePanel('route') },
   { id: 'a-present', title: t('Prezentuj'), sub: t('Prowadzi przez trasę dokumentu krok po kroku. Strzałki i spacja zmieniają krok, a Esc kończy.'), icon: 'play', keys: ['F5'], run: () => void startPresentation() },
@@ -238,6 +239,7 @@ export const keymap = (): { group: string; items: { keys: string[]; title: strin
     { keys: ['R'], title: t('Kopiuj odnośnik dla agenta'), icon: 'link' },
     { keys: ['I'], title: t('Uwagi'), icon: 'bubble' },
     { keys: ['O'], title: t('Linki z dokumentu i do niego'), icon: 'link' },
+    { keys: ['Shift', 'O'], title: t('Plan lub jego objaśnienie'), icon: 'file' },
     { keys: ['G'], title: t('Spis treści'), icon: 'toc' },
     { keys: ['Shift', 'P'], title: t('Trasa prezentacji'), icon: 'route' },
     { keys: ['Shift', 'G'], title: t('Minimapa'), icon: 'toc' },
@@ -258,6 +260,7 @@ export const keymap = (): { group: string; items: { keys: string[]; title: strin
     { keys: ['→'], title: t('Następny krok, także spacja i PgDn'), icon: 'chev' },
     { keys: ['←'], title: t('Poprzedni krok, także PgUp'), icon: 'prev' },
     { keys: ['D'], title: t('Pokaż wszystkie uwagi dokumentu'), icon: 'eye' },
+    { keys: ['C', 'N'], title: t('Komentarz albo karteczka przy kroku'), icon: 'comment' },
     { keys: ['Esc'], title: t('Zakończ prezentację'), icon: 'x' }
   ] },
   { group: t('W palecie'), items: [
