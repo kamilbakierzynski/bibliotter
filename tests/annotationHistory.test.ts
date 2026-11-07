@@ -80,6 +80,36 @@ describe('AnnotationHistory', () => {
     expect((await store.get(id)).status).toBe('resolved')
   })
 
+  it.each([
+    ['komentarza', comment, 'przeniesienie komentarza'],
+    ['karteczki', sticky, 'przeniesienie karteczki']
+  ])('cofa przeniesienie %s, nie ruszając rozmowy', async (_name, input, label) => {
+    const { id } = await history.create('d1', 'sha', input)
+    const elsewhere = { selector: '#cel', offsetX: 0.1, offsetY: 0.9, quote: 'Inny akapit', heading: 'Cel' }
+    await history.setAnchor(id, elsewhere)
+    await store.addMessage(id, 'agent', 'Widzę nowe miejsce')
+    expect((await store.get(id)).anchor).toEqual(elsewhere)
+
+    expect(await history.undo('d1')).toBe(`Cofnięto: ${label}`)
+    const back = await store.get(id)
+    expect(back.anchor).toEqual(anchor)
+    expect(back.docSha).toBe('sha')
+    expect(back.messages.at(-1)?.text).toBe('Widzę nowe miejsce')
+
+    expect(await history.redo('d1')).toBe(`Przywrócono: ${label}`)
+    expect((await store.get(id)).anchor).toEqual(elsewhere)
+  })
+
+  it('przeniesienie w to samo miejsce nie jest krokiem, a zakreślenia nie da się przenieść', async () => {
+    const { id } = await history.create('d1', 'sha', sticky)
+    await history.setAnchor(id, { ...anchor })
+    expect(await history.undo('d1')).toBe('Cofnięto: dodanie karteczki')
+
+    const marked = await history.create('d1', 'sha', highlight)
+    await expect(history.setAnchor(marked.id, { ...anchor, selector: '#cel' })).rejects.toThrow()
+    expect((await store.get(marked.id)).anchor).toEqual(anchor)
+  })
+
   it('cofa odpowiedź i oddaje ją na jej miejsce w rozmowie', async () => {
     const { id } = await history.create('d1', 'sha', comment)
     await history.reply(id, 'Moja odpowiedź')

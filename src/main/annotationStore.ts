@@ -235,6 +235,12 @@ export class AnnotationStore {
     return this.write({ ...annotation, audience, updatedAt: new Date().toISOString() })
   }
 
+  /** Nowe miejsce uwagi. Treść i wersja dokumentu zostają, bo uwaga dalej mówi o tym samym. */
+  async setAnchor(id: string, anchor: Anchor | null): Promise<Annotation> {
+    const annotation = await this.get(id)
+    return this.write({ ...annotation, anchor, updatedAt: new Date().toISOString() })
+  }
+
   /** Oddaje uwagę z tym samym identyfikatorem, bo mógł już trafić do agenta. */
   async restore(annotation: Annotation): Promise<void> {
     await this.write(annotation)

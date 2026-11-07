@@ -1,4 +1,5 @@
 import type {
+  Anchor,
   Annotation,
   AnnotationKind,
   AnnotationMessage,
@@ -30,6 +31,7 @@ type Change =
   | { type: 'audience'; id: string; audience: Audience }
   | { type: 'unsay'; id: string; messageId: string }
   | { type: 'say'; id: string; message: AnnotationMessage }
+  | { type: 'anchor'; id: string; anchor: Anchor | null }
 
 interface Step {
   label: string
@@ -43,6 +45,8 @@ interface Stacks {
 
 /** Agent odpisał od tamtej pory, więc zniknięcie uwagi skasowałoby pracę, której użytkownik nie widział. */
 const KEPT = Symbol('kept')
+
+const sameAnchor = (a: Anchor | null, b: Anchor | null): boolean => JSON.stringify(a) === JSON.stringify(b)
 
 const agentReplies = (note: Annotation): number =>
   note.messages.filter(({ author }) => author === 'agent').length
@@ -128,6 +132,17 @@ export class AnnotationHistory {
     })
   }
 
+  /** Przenieść można tylko komentarz i karteczkę. Zakreślenie i kształt mają geometrię związaną z miejscem. */
+  setAnchor(id: string, anchor: Anchor): Promise<void> {
+    return this.inOrder(async () => {
+      const before = await this.store.get(id)
+      if (before.kind !== 'comment' && before.kind !== 'sticky') throw new Error('Only comments and sticky notes can be moved')
+      if (sameAnchor(before.anchor, anchor)) return
+      await this.store.setAnchor(id, anchor)
+      this.record(before.docId, `przeniesienie ${NOUN[before.kind]}`, { type: 'anchor', id, anchor: before.anchor })
+    })
+  }
+
   delete(id: string): Promise<void> {
     return this.inOrder(async () => {
       const note = await this.store.get(id)
@@ -166,6 +181,10 @@ export class AnnotationHistory {
       case 'say':
         await this.store.restoreMessage(note.id, change.message)
         return { type: 'unsay', id: note.id, messageId: change.message.id }
+      case 'anchor':
+        if (sameAnchor(note.anchor, change.anchor)) return null
+        await this.store.setAnchor(note.id, change.anchor)
+        return { type: 'anchor', id: note.id, anchor: note.anchor }
     }
   }
 

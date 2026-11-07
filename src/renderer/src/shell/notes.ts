@@ -212,8 +212,18 @@ export function sheetHoldsNote(i: number): boolean {
   return i === ui.focus && ui.selNote !== null && !ui.insp && ui.threadRect !== null
 }
 
+/** Odkłada niesioną uwagę na jej miejsce. Zwraca `true`, gdy było co odłożyć. */
+export function dropCarry(): boolean {
+  if (!ui.carry) return false
+  window.api.carryAnnotation(ui.carry.docId, null)
+  ui.carry = null
+  return true
+}
+
 export function afterFocusChange(): void {
   syncTracking()
+  // Uwaga niesiona w innym arkuszu czekałaby tam przy kursorze, którego już nie ma.
+  if (ui.carry && ui.carry.docId !== focusedId()) dropCarry()
   if (ui.insp) {
     hang(true)
     if (document.documentElement.dataset.panel !== (onWall() ? 'wall' : 'list')) moveThreads(() => {})
@@ -373,6 +383,18 @@ export function handleOverlayEvent(docId: string, event: OverlayEvent): void {
         shape: event.shape,
         text: ''
       })
+      break
+    case 'move': {
+      // Prośba przychodzi z dokumentu, więc wolno mu przenieść tylko własny komentarz albo karteczkę.
+      const note = findNote(event.id)
+      if (note?.docId === docId && (note.kind === 'comment' || note.kind === 'sticky')) {
+        void window.api.moveAnnotation(note.id, event.anchor)
+      }
+      break
+    }
+    case 'carrying':
+      ui.carry = event.id ? { docId, id: event.id } : ui.carry?.docId === docId ? null : ui.carry
+      notify()
       break
     case 'erase': {
       // Prośba przychodzi z dokumentu, więc wolno mu usunąć tylko własne zakreślenie albo kształt.

@@ -136,6 +136,7 @@ window.addEventListener(
       onPick: (listener) => subscribe<PickKind | null>('overlay:pick', listener),
       onPresent: (listener) => subscribe<PresentState | null>('overlay:present', listener),
       onPlace: (listener) => subscribe<{ kind: 'comment' | 'sticky'; color: StickyColor }>('overlay:place', listener),
+      onCarry: (listener) => subscribe<string | null>('overlay:carry', listener),
       setPresenting,
       setDrawing
       },

@@ -163,10 +163,18 @@ export async function undoFlow(workspace, { check, entry = projectRoot }) {
     })
 
     await check('Ctrl+Z cofa zakreślenie, które jeszcze czeka na zapis, i nie zostawia szkicu', async () => {
+      // Przywrócona karteczka jeszcze się przykleja, więc zrzut czeka, aż arkusz przestanie się ruszać.
       const park = async () => {
         await page.mouse.move(box.x + box.width - 4, box.y + box.height + 200)
         await delay(500)
-        return page.screenshot()
+        let last = await page.screenshot()
+        return waitFor(async () => {
+          await delay(150)
+          const shot = await page.screenshot()
+          const still = shot.equals(last)
+          last = shot
+          return still ? shot : null
+        }, Boolean)
       }
       const clean = await park()
       await page.keyboard.press('m')

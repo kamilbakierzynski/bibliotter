@@ -240,6 +240,8 @@ export const ui = {
   /** Prostokąt pinezki, spod której wyrasta wątek. */
   threadRect: null as OverlayRect | null,
   draft: null as Draft | null,
+  /** Uwaga odklejona przyciskiem Przenieś, która w dokumencie idzie za kursorem. */
+  carry: null as { docId: string; id: string } | null,
   showResolved: false,
 
   cmd: false,

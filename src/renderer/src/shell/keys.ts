@@ -8,7 +8,7 @@ import { cover, uncover } from './native'
 import { menuKey } from './menu'
 import { toggleOptions } from './options'
 import { toggleMinimap } from './outline'
-import { cancelDraft, canWall, closeThread, setTool, toggleNotesView, togglePanel } from './notes'
+import { cancelDraft, canWall, closeThread, dropCarry, setInsp, setTool, toggleNotesView, togglePanel } from './notes'
 import { closeActs, closeCmd, openActs, openCmd, openMap, setMap } from './palette'
 import { openPair } from './pair'
 import { openPocket, togglePocket } from './pocket'
@@ -19,7 +19,7 @@ import { endPick } from './route'
 import { escapeFind, searchKey } from './search'
 import { closePeek, closeSheet, focusPane, splitKey } from './sheets'
 import { toggleMode } from './theme'
-import { canAnnotate, focusedDoc, focusedId, MOD, notify, pinned, ui } from './state'
+import { canAnnotate, data, focusedDoc, focusedId, MOD, notify, pinned, ui } from './state'
 
 const HOLD_MS = 380
 const TIP_DELAY_MS = 380
@@ -152,7 +152,7 @@ export function hideTip(): void {
 }
 
 /** Krótki komunikat na miejscu wskazówki, bo zmiana w dokumencie może leżeć poza ekranem. */
-function sayTip(text: string): void {
+export function sayTip(text: string): void {
   clearTimeout(tipTimer)
   clearTimeout(tipRoomTimer)
   clearTimeout(sayTimer)
@@ -175,6 +175,23 @@ export function jumpToPair(docId: string): void {
   void openPair(docId).then((done) => {
     if (!done) sayTip(t('Ten dokument nie ma planu ani objaśnienia do pary.'))
   })
+}
+
+/**
+ * Odkleja komentarz albo karteczkę, która potem idzie za kursorem po dokumencie, aż kliknięcie
+ * wskaże nowe miejsce. Wątek i panel nad arkuszem trzymają dokument na zrzucie, więc ustępują.
+ */
+export function carryNote(id: string): void {
+  const note = data.annotations.find((item) => item.id === id)
+  if (!note?.anchor || note.status !== 'open' || (note.kind !== 'comment' && note.kind !== 'sticky')) return
+  const slot = ui.panes.indexOf(note.docId)
+  if (slot < 0) return
+  if (slot !== ui.focus) focusPane(slot)
+  setTool('move')
+  closeThread()
+  if (ui.insp && G.overlay) setInsp(false)
+  window.api.carryAnnotation(note.docId, id)
+  sayTip(t('Kliknij nowe miejsce. Esc zostawia uwagę tam, gdzie była.'))
 }
 
 /** Cofa albo przywraca ostatnią zmianę uwag w dokumencie, który ma fokus. */
@@ -279,6 +296,7 @@ export function leaveFly(): void {
 }
 
 function escapeStep(): void {
+  if (dropCarry()) return
   if (endPick()) return
   if (escapeFind()) return
   if (ui.draft) cancelDraft()
@@ -301,6 +319,7 @@ function presentKey(e: KeyLike): boolean {
   if (e.ctrlKey || e.metaKey || e.altKey) return true
   const k = e.key.toLowerCase()
   if (e.key === 'Escape') {
+    if (dropCarry()) return true
     if (ui.draft) cancelDraft()
     else if (ui.tool !== 'move') setTool('move')
     else stopPresentation()

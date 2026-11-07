@@ -5,6 +5,7 @@ import { clamp } from '../motion/spring'
 import { G, insRope, type Sheet, viewPill } from '../shell/layout'
 import { closeThread, cancelDraft, documentNote, hang, noteNumber, selectNote, setInsp, setNotesView, submitDraft, syncViewSeg } from '../shell/notes'
 import { data, type Draft, focusedId, MOD, noteText, notify, ui, useShell } from '../shell/state'
+import { carryNote } from '../shell/keys'
 import { relativeTime } from '../tree'
 import { useSynced } from './hooks'
 import { Icon, Keys } from './icons'
@@ -123,6 +124,8 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
   const sha = data.entries.get(note.docId)?.sha ?? null
   const orphaned = data.orphans.get(note.docId)?.has(note.id) ?? false
   const outdated = sha !== null && note.docSha !== sha
+  // Zakreślenie i kształt mają geometrię związaną z tekstem, więc przenosi się tylko komentarz i karteczkę.
+  const movable = open && note.anchor !== null && (note.kind === 'comment' || note.kind === 'sticky')
 
   const send = (): void => {
     if (!reply.trim()) return
@@ -196,6 +199,7 @@ function ThreadCard({ note, pop = false }: { note: Annotation; pop?: boolean }):
             <button onClick={() => void window.api.setAnnotationAudience(note.id, note.audience === 'agent' ? 'me' : 'agent')}>
               {note.audience === 'agent' ? t('Tylko dla mnie') : t('Pokaż agentowi')}
             </button>
+            {movable && <button onClick={() => carryNote(note.id)}>{t('Przenieś')}</button>}
             <button
               className="danger"
               onClick={() => {

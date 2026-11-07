@@ -147,6 +147,12 @@ function parseOverlayEvent(value: unknown): OverlayEvent | null {
     }
     case 'erase':
       return typeof event.id === 'string' ? { type: 'erase', id: event.id } : null
+    case 'move': {
+      const anchor = parseAnchor(event.anchor)
+      return typeof event.id === 'string' && anchor ? { type: 'move', id: event.id, anchor } : null
+    }
+    case 'carrying':
+      return { type: 'carrying', id: typeof event.id === 'string' ? event.id : null }
     case 'select':
       return typeof event.id === 'string'
         ? { type: 'select', id: event.id, rect: parseRect(event.rect) }
@@ -423,6 +429,11 @@ export class DocViewer {
   /** Szkic nowej uwagi w prezentacji, przy kadrze kroku. */
   placeNote(docId: string, kind: 'comment' | 'sticky', color: StickyColor): void {
     this.send(docId, 'overlay:place', { kind, color })
+  }
+
+  /** Uwaga odkleja się i idzie za kursorem do kliknięcia. `null` odkłada ją na miejsce. */
+  carryNote(docId: string, id: string | null): void {
+    this.send(docId, 'overlay:carry', id)
   }
 
   setMarker(color: StickyColor | null): void {

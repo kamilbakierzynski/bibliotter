@@ -600,6 +600,11 @@ function registerIpc(): void {
     await noteHistory.setAudience(String(id), parseAudience(audience))
   })
   handle('annotations:delete', (id: unknown) => noteHistory.delete(String(id)))
+  handle('annotations:move', async (id: unknown, anchor: unknown) => {
+    const place = parseAnchor(anchor)
+    if (!place) throw new Error('Niepoprawne miejsce uwagi')
+    await noteHistory.setAnchor(String(id), place)
+  })
   handle('annotations:undo', (docId: unknown) => noteHistory.undo(String(docId)))
   handle('annotations:redo', (docId: unknown) => noteHistory.redo(String(docId)))
 
@@ -675,6 +680,13 @@ function registerIpc(): void {
     assertShell(event)
     if (kind !== 'comment' && kind !== 'sticky') return
     viewer?.placeNote(String(docId), kind, parseStickyColor(color) ?? 'yellow')
+  })
+  ipcMain.on('viewer:carry', (event, docId: unknown, id: unknown) => {
+    assertShell(event)
+    const carried = typeof id === 'string' ? id : null
+    viewer?.carryNote(String(docId), carried)
+    // Esc ma trafić do dokumentu, w którym uwaga wisi przy kursorze.
+    if (carried) viewer?.focus(String(docId))
   })
   ipcMain.on('viewer:pick', (event, docId: unknown, kind: unknown) => {
     assertShell(event)

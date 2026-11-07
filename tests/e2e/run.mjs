@@ -28,6 +28,7 @@ import { routeFlow } from './route.mjs'
 import { shapesFlow } from './shapes.mjs'
 import { skeletonFlow } from './skeleton.mjs'
 import { undoFlow } from './undo.mjs'
+import { moveNoteFlow } from './moveNote.mjs'
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const artifacts = join(projectRoot, 'tests/e2e/artifacts')
@@ -1530,6 +1531,7 @@ async function main() {
   await check('scenariusz zakreślacza dobiega końca', () => markerFlow(workspace))
   await check('scenariusz motywu Markdownu dobiega końca', () => markdownTheme(workspace))
   await check('scenariusz cofania dobiega końca', () => undoFlow(workspace, { check }))
+  await check('scenariusz przenoszenia uwag dobiega końca', () => moveNoteFlow(workspace, { check }))
   await check('scenariusz menu wiersza dobiega końca', () => rowMenuFlow(workspace, { check }))
   await check('scenariusz szkieletów dobiega końca', () => skeletonFlow(workspace, { check }))
   await check('scenariusz opcji dobiega końca', () => optionsFlow(workspace, { check }))

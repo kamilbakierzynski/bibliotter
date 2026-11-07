@@ -137,6 +137,10 @@ export type OverlayEvent =
   /** Skończony kształt, gotowy do zapisania. */
   | { type: 'shape'; color: StickyColor; anchor: Anchor; shape: Shape }
   | { type: 'erase'; id: string }
+  /** Komentarz albo karteczka przeniesione w nowe miejsce. */
+  | { type: 'move'; id: string; anchor: Anchor }
+  /** Uwaga wisi przy kursorze i czeka na kliknięcie. `null` znaczy, że już leży. */
+  | { type: 'carrying'; id: string | null }
   | { type: 'select'; id: string; rect: OverlayRect | null }
   /** Uwaga wybrana poza dokumentem stoi już na ekranie. */
   | { type: 'focused'; id: string; rect: OverlayRect | null }

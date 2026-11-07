@@ -1,4 +1,5 @@
 import type {
+  Anchor,
   Annotation,
   AnnotationStatus,
   Audience,
@@ -249,6 +250,10 @@ export interface ShellApi {
   setAnnotationStatus(id: string, status: AnnotationStatus): Promise<void>
   setAnnotationAudience(id: string, audience: Audience): Promise<void>
   deleteAnnotation(id: string): Promise<void>
+  /** Nowe miejsce komentarza albo karteczki. Cofa się jak każda zmiana uwag. */
+  moveAnnotation(id: string, anchor: Anchor): Promise<void>
+  /** Odkleja uwagę, która potem idzie za kursorem do kliknięcia. `null` odkłada ją z powrotem. */
+  carryAnnotation(docId: string, id: string | null): void
   /** Zwraca komunikat dla użytkownika, a `null`, gdy nie ma czego cofnąć. */
   undoAnnotation(docId: string): Promise<string | null>
   redoAnnotation(docId: string): Promise<string | null>

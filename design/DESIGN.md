@@ -103,6 +103,12 @@ Wszystko, co można przerwać, jest sprężyną z parametrami `k` (sztywność) 
 | Zakreślacz: dotknięcie kartki | 620 | .82 |
 | Zakreślacz: uniesienie | 280 | .52 |
 | Zakreślacz: chwianie za ruchem | 150 | .58 |
+| Uwaga: uniesienie | 260 | .62 |
+| Karteczka: odklejenie rogu (start z prędkością 16) | 300 | .42 |
+| Karteczka: opadnięcie i dociśnięcie rogu | 380 i 140 | .52 i .72 |
+| Pinezka: wbicie | 560 | .42 |
+| Uwaga: kołysanie za ręką | 150 | .58 |
+| Uwaga niesiona za kursorem i powrót na miejsce | 420 i 170 | .84 i .78 |
 
 Lina ma jeszcze sprzężenie 1300 i spadek sztywności .64. Przejścia CSS używają krzywych policzonych ze sprężyn: `springCurve(120, .92)` i `springCurve(170, .62)`.
 
@@ -187,6 +193,9 @@ Widać go po uruchomieniu i po zamknięciu ostatniego arkusza. `H` przechodzi na
 - Panel otwarty: wątki wiszą na ścianie na wysokości cytatu i doganiają go na sprężynie.
 - Przełącznik w nagłówku lub `Shift I` przenosi je na listę.
 - Szereg zajmuje całą ścianę, więc uwagi stają wtedy na panelu. To samo dotyczy okna węższego niż 1180 px, gdzie panel stoi nad arkuszem i kończy się nad dokiem.
+- Komentarz i karteczkę można przenieść. Przeciągnięcie znacznika o więcej niż 4 px przenosi go, a krótsze to zwykłe kliknięcie, które otwiera wątek. Przycisk Przenieś w wątku odkleja uwagę, która idzie za kursorem do kliknięcia, także wtedy, gdy jej miejsca nie ma w tej wersji dokumentu. Kursor wskazuje róg karteczki i czubek pinezki, jak przy stawianiu nowej. Obrys pokazuje element, na który uwaga spadnie, a przy górnej i dolnej krawędzi strona przewija się sama. `Esc` odkłada uwagę tam, gdzie była, a `Ctrl Z` cofa przeniesienie.
+- Ruch karteczki naśladuje prawdziwą. Klej jest u góry, więc pierwszy odchodzi dolny róg: zawija się, pokazując odwrotną stronę papieru, a kartka unosi się z większym cieniem i kołysze za ręką wokół punktu chwytu. Przy przyklejaniu najpierw siada góra, a róg dociska się chwilę później. Pinezka unosi się z przechyleniem i wbija z małym odbiciem. Nowa uwaga pojawia się w ten sam sposób, już uniesiona.
+- Przeniesiona uwaga dostaje nową kotwicę, a rozmowa i wersja dokumentu zostają. Komentarz do zaznaczonego tekstu przesunięty w obrębie swojego akapitu zachowuje cytat, bo dalej mówi o tym samym. Zakreślenia i kształty się nie przenoszą, bo ich geometria leży na tekście.
 
 ### Linki
 
@@ -431,6 +440,7 @@ Dokument to natywny `WebContentsView`, zawsze nad rendererem. Nie da się na nim
 | Trasa prezentacji | Model i sprawdzanie w `src/shared/presentation.ts`, bez DOM i Electrona. Plik `library/<dokument>/presentation.json` pisze `src/main/presentationStore.ts` przez plik tymczasowy i sygnał, jak uwagi. Ramkę kadru i wskazywanie robi `src/preload/routeFrames.ts` w Shadow DOM warstwy. Powłoka trzyma trasę w `src/renderer/src/shell/route.ts` i nie wczytuje zmiany z dysku, gdy czeka jej własny zapis. |
 | Prezentacja | Tryb prowadzi `src/renderer/src/shell/present.ts`: jedno pole `ui.presenting`, a układ bierze z niego krawędzie sceny i szyny. Stan kroku (`stepState` w `src/shared/presentation.ts`) idzie do warstwy dokumentu jako `overlay:present` w haczyku `before` kamery, między zrzutem startowym a ruchem, więc maska i uwagi wchodzą w zrzut końcowy. Maskę kładzie `src/preload/routeFrames.ts` pod kształtami, a pióro rysuje kształt z `partialStrokes` w `src/preload/shapeInk.ts`. Klawisze kroków łapie w dokumencie nasłuch na końcu drogi zdarzenia, tylko w prezentacji. Nowe uwagi trzyma mapa „uwaga → krok” w `present.ts`, a `stepState` dopisuje je do listy kroku. Szkic stawia w dokumencie `overlay:place`, a pole `#presentNote` leży w warstwie doku i poszerza jej wycięcie w `fitLayer`. |
 | Trasa od agenta | Format i sprawdzanie w `src/main/agentPresentation.ts`, bez DOM: kadr opisuje cytat, selektor i nagłówek, a zapis bierze zapisaną kotwicę dla kroku oddanego bez zmian. Cytat sprawdza tekst z `analyzeHtml`, porównywany bez odstępów, jak `findByQuote` w warstwie. Całość przechodzi sprawdzenie przed pierwszym zapisem, więc zły krok nie zostawia połowy kształtów. Kadr Miejsce podnosi trafiony element do bloku w `blockOf` (`src/preload/anchor.ts`), w ramce trasy i w kamerze. |
+| Przenoszenie uwag | Ruch w `src/preload/noteLift.ts`: każda uwaga w ręce albo w locie ma własne sprężyny położenia, uniesienia, rogu i kołysania, a warstwa nie układa jej znacznika, dopóki nie leży płasko. Przerysowanie warstwy podmienia znaczniki, więc moduł co klatkę pisze style do bieżącego i przenosi na niego przechwycenie myszy. Róg karteczki to `clip-path` z wycięciem i `::before` z odwrotną stroną papieru. Kotwicę liczy `moveTo` w `overlay.ts`, dokument wysyła `move`, a powłoka zapisuje ją przez `annotations:move` w historii cofania. |
 | Kształty | Geometria tuszu w `src/preload/shapeInk.ts`, bez DOM, więc ma testy jednostkowe. Rysowanie i układanie w `src/preload/shapes.ts`: jeden SVG w Shadow DOM warstwy, na stronie, więc kształty przewijają się z nią, a pod zoomem kamery rosną z treścią. Szkic zostaje do chwili, gdy apka odeśle zapisany kształt, żeby nie było klatki bez tuszu. Powłoka trzyma kształty w `src/renderer/src/shell/drawings.ts`, poza listą notatek. |
 | Kamera arkusza | W spoczynku skala strony przez `Emulation.setPageScaleFactor` (`src/main/docCamera.ts`), więc układ się nie zmienia, a strona zostaje żywa. W ruchu dwa zrzuty na sprężynie (`src/renderer/src/shell/camera.ts`): gdy jeden kadr mieści się w drugim, kamera przejeżdża przez oba, a przy skoku w daleki kadr obrazy przenikają się z lekkim dryfem. Pinezki, karteczki, ręka i zakreślacz kontrują powiększenie, więc mają stały rozmiar na ekranie. |
 
