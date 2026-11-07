@@ -47,6 +47,14 @@ export async function rowMenuFlow(workspace, { check, entry = projectRoot }) {
       env: { ...process.env, BIBLIOTTER_HOME: home }
     })
   const readConfig = async () => JSON.parse(await readFile(join(home, 'config.json'), 'utf8'))
+  const readMeta = async (path) => {
+    const library = join(home, 'library')
+    for (const id of await readdir(library)) {
+      const meta = await readFile(join(library, id, 'meta.json'), 'utf8').then(JSON.parse, () => null)
+      if (meta?.path === path) return meta
+    }
+    return null
+  }
 
   let app = await launch()
   try {
@@ -75,13 +83,21 @@ export async function rowMenuFlow(workspace, { check, entry = projectRoot }) {
 
     await check('menu folderu ma nazwę, ścieżkę i ukrywanie', async () => {
       await openMenu(row('raporty'))
-      assert.deepEqual(await items(), ['Zmień nazwę', 'Pokaż w Eksploratorze', 'Kopiuj ścieżkę', 'Ukryj folder'])
+      assert.deepEqual(await items(), ['Zmień nazwę', 'Pokaż w Eksploratorze', 'Kopiuj ścieżkę', 'Przenieś do archiwum', 'Ukryj folder'])
       await closeMenu()
     })
 
-    await check('menu dokumentu ma otwieranie, nazwę i ścieżkę', async () => {
+    await check('menu dokumentu ma otwieranie, kieszeń, nazwę i ścieżkę', async () => {
       await openMenu(docRow('Luźny'))
-      assert.deepEqual(await items(), ['Otwórz', 'Zerknij', 'Zmień nazwę', 'Pokaż w Eksploratorze', 'Kopiuj ścieżkę'])
+      assert.deepEqual(await items(), [
+        'Otwórz',
+        'Zerknij',
+        'Włóż do kieszeni',
+        'Zmień nazwę',
+        'Pokaż w Eksploratorze',
+        'Kopiuj ścieżkę',
+        'Przenieś do archiwum'
+      ])
       await closeMenu()
     })
 
@@ -200,6 +216,40 @@ export async function rowMenuFlow(workspace, { check, entry = projectRoot }) {
       assert.ok((await items()).includes('Przywróć nazwę'))
       await menu.getByRole('menuitem', { name: 'Przywróć nazwę' }).click()
       await docRow('Luźny dokument').waitFor()
+    })
+
+    const archivedRow = (name) => shell.locator('.row.archived[data-doc]', { hasText: name })
+
+    await check('dokument trafia z menu do archiwum i wraca z niego przez Odarchiwizuj', async () => {
+      await pick(docRow('Kwartał drugi'), 'Przenieś do archiwum')
+      // Archiwum startuje zwinięte, więc dokument najpierw znika z widoku.
+      await row('Archiwum').waitFor()
+      await waitFor(() => docRow('Kwartał drugi').count(), (count) => count === 0)
+      await row('Archiwum').click()
+      await openMenu(archivedRow('Kwartał drugi'))
+      const titles = await items()
+      assert.equal(titles.at(-1), 'Odarchiwizuj')
+      assert.ok(!titles.includes('Przenieś do archiwum'), titles.join())
+      await menu.getByRole('menuitem', { name: 'Odarchiwizuj' }).click()
+      await waitFor(() => row('Archiwum').count(), (count) => count === 0)
+      await docRow('Kwartał drugi').waitFor()
+      // Wskazany przez użytkownika dokument nie wraca do skrzynki.
+      await waitFor(() => readMeta(join(docs, 'raporty', 'q2.html')).then((meta) => meta?.status), (status) => status === 'read')
+    })
+
+    await check('cały folder trafia do archiwum i wraca z niego razem', async () => {
+      await pick(row('notatki'), 'Przenieś do archiwum')
+      // Archiwum zostało rozwinięte w poprzednim kroku i apka to pamięta.
+      await waitFor(() => archivedRow('Notatka').count(), (count) => count === 2)
+      await delay(600)
+      await openMenu(row('notatki'))
+      assert.deepEqual((await items()).slice(-2), ['Odarchiwizuj', 'Ukryj folder'])
+      await delay(400)
+      await shell.screenshot({ path: join(artifacts, 'row-archive.png') })
+      await menu.getByRole('menuitem', { name: 'Odarchiwizuj' }).click()
+      await waitFor(() => row('Archiwum').count(), (count) => count === 0)
+      await docRow('Notatka pierwsza').waitFor()
+      await docRow('Notatka druga').waitFor()
     })
 
     await check('ukryty folder znika z biblioteki, a jego dokument z arkusza', async () => {

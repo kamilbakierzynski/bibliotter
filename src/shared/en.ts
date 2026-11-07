@@ -493,6 +493,8 @@ export const EN: Record<string, string> = {
   'Otwórz pull request': 'Open pull request',
   'Przywróć nazwę': 'Restore name',
   'Ukryj folder': 'Hide folder',
+  'Przenieś do archiwum': 'Move to archive',
+  'Odarchiwizuj': 'Unarchive',
   'Ukryj projekt': 'Hide project',
   'Zerknij': 'Peek',
 

@@ -1,5 +1,5 @@
 import type { MouseEvent } from 'react'
-import type { DocEntry, ProjectGroup } from '../../../shared/types'
+import type { DocEntry, DocStatus, ProjectGroup } from '../../../shared/types'
 import { t } from '../../../shared/i18n'
 import { displayName, type FolderNode, lastSegment, projectFolders } from '../tree'
 import { hideFly, hideTip, type KeyLike } from './keys'
@@ -90,6 +90,26 @@ const revealItem = (path: string): MenuItem => ({
   run: () => void window.api.revealFolder(path)
 })
 
+/** Wszystkie dokumenty pod węzłem, także w zwiniętych podfolderach. */
+const docsUnder = (node: FolderNode): DocEntry[] =>
+  node.children.flatMap((child) => (child.kind === 'doc' ? [child.doc] : docsUnder(child)))
+
+/**
+ * Archiwum z pierwszego skanu łapie też ważne pliki, więc każdy da się z niego wyjąć. Folder w drzewie
+ * trzyma same bieżące albo same zarchiwizowane dokumenty, więc zwykle widać jedną z dwóch akcji.
+ * Wyjęty dokument nie wraca do skrzynki, bo użytkownik właśnie go wskazał.
+ */
+function archiveItems(docs: DocEntry[]): MenuItem[] {
+  const known = docs.filter((doc) => doc.classification === 'document')
+  const archived = known.filter((doc) => doc.status === 'archived').map((doc) => doc.id)
+  const active = known.filter((doc) => doc.status !== 'archived').map((doc) => doc.id)
+  const move = (ids: string[], status: DocStatus): void => load(() => window.api.setStatuses(ids, status))
+  return [
+    ...(active.length > 0 ? [{ icon: 'archive', title: t('Przenieś do archiwum'), run: () => move(active, 'archived') }] : []),
+    ...(archived.length > 0 ? [{ icon: 'unarchive', title: t('Odarchiwizuj'), run: () => move(archived, 'read') }] : [])
+  ]
+}
+
 /** Wybrany folder obejmuje często wiele repozytoriów, więc ukrycie go opróżniłoby bibliotekę. */
 function hideItems(key: string, title: string, paths: string[]): MenuItem[] {
   const roots = data.library?.roots ?? []
@@ -119,7 +139,8 @@ function docItems(doc: DocEntry): MenuItem[] {
         })
       : [],
     tickets,
-    [...(doc.missing ? [] : [reveal]), copyItem(t('Kopiuj ścieżkę'), doc.path)]
+    [...(doc.missing ? [] : [reveal]), copyItem(t('Kopiuj ścieżkę'), doc.path)],
+    archiveItems([doc])
   )
 }
 
@@ -141,7 +162,7 @@ function folderItems(node: FolderNode): MenuItem[] {
       save: (name) => window.api.renameFolder(node.paths, name)
     }),
     [revealItem(path), copyItem(t('Kopiuj ścieżkę'), path)],
-    hideItems(node.key, t('Ukryj folder'), node.paths)
+    [...archiveItems(docsUnder(node)), ...hideItems(node.key, t('Ukryj folder'), node.paths)]
   )
 }
 
