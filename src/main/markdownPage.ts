@@ -61,6 +61,10 @@ img, video { display: block; max-width: 100%; height: auto; border-radius: 8px; 
 blockquote { padding-left: 1.1em; color: var(--ink-2); border-left: 2px solid var(--hair); }
 code, kbd, samp, pre { font-family: 'Geist Mono', Consolas, monospace; font-size: .875em; transition: background-color .42s ease; }
 :not(pre) > code { padding: .14em .36em; background: var(--tint); border-radius: 5px; }
+/* Ścieżka w kodzie, którą apka znalazła na dysku. Zostaje kodem, a od linku ma kreskę pod spodem i znak pliku. */
+a.code-path { text-decoration: none; }
+a.code-path > code { box-shadow: inset 0 -1px 0 var(--link); transition: background-color .42s ease, box-shadow .16s ease; }
+a.code-path:hover > code { box-shadow: inset 0 0 0 1px var(--hair-2); }
 kbd { padding: .1em .4em; background: var(--tint); border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hair); }
 pre { padding: 16px 18px; overflow-x: auto; line-height: 1.55; background: var(--tint); border-radius: 10px; }
 pre code { font-size: .96em; }
@@ -71,8 +75,8 @@ th:last-child, td:last-child { padding-right: 0; }
 `
 
 /** Składa z Markdownu kompletną stronę arkusza. */
-export function markdownPage(source: string, fallbackTitle: string): string {
-  const { title, html } = renderMarkdown(source, renderMath)
+export function markdownPage(source: string, fallbackTitle: string, codeLinks?: ReadonlyMap<string, string>): string {
+  const { title, html } = renderMarkdown(source, renderMath, codeLinks)
   // Czcionki wzorów ważą kilkaset kilobajtów, więc dostają je tylko strony, które ich używają.
   const math = html.includes('class="katex') ? MATH_SHEET : ''
   return `<!doctype html>

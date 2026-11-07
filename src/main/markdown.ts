@@ -1,6 +1,7 @@
-import { Marked, type Tokens } from 'marked'
+import { Marked, type Token, type Tokens } from 'marked'
 import { WIKI_PREFIX } from '../shared/links'
-import { type MathRenderer, mathExtension, plainMath } from './markdownMath'
+import { codeKey } from './codePaths'
+import { escapeHtml, type MathRenderer, mathExtension, plainMath } from './markdownMath'
 
 export interface RenderedMarkdown {
   title: string | null
@@ -57,19 +58,44 @@ function frontMatterTitle(block: string | undefined): string | null {
   return value ? value.replace(/^(["'])(.*)\1$/, '$2') || null : null
 }
 
-/** Zamienia Markdown na treść strony. Tytuł pochodzi z nagłówka pliku albo z pierwszego `#`. */
-export function renderMarkdown(source: string, renderMath: MathRenderer = plainMath): RenderedMarkdown {
+/** Kod wewnątrz linku zostaje kodem, bo link w linku przeglądarka i tak rozbiłaby na dwa. */
+function codeInLinks(token: Token, inside: WeakSet<Token>): void {
+  if (token.type !== 'link' || !('tokens' in token) || !token.tokens) return
+  const mark = (children: Token[]): void => {
+    for (const child of children) {
+      inside.add(child)
+      if ('tokens' in child && child.tokens) mark(child.tokens)
+    }
+  }
+  mark(token.tokens)
+}
+
+/**
+ * Zamienia Markdown na treść strony. Tytuł pochodzi z nagłówka pliku albo z pierwszego `#`.
+ * `codeLinks` to kod, który wskazuje istniejący plik, i adres linku do niego (zob. `codePaths.ts`).
+ */
+export function renderMarkdown(
+  source: string,
+  renderMath: MathRenderer = plainMath,
+  codeLinks: ReadonlyMap<string, string> = new Map()
+): RenderedMarkdown {
   const text = source.replace(/^﻿/, '')
   const frontMatter = FRONT_MATTER.exec(text)
   let title = frontMatterTitle(frontMatter?.[1])
   const used = new Map<string, number>()
   // Tytuł i identyfikator nagłówka to tekst, a nie HTML, więc wzór zostaje w nich swoim kodem.
   let inPlainText = false
+  const linked = new WeakSet<Token>()
 
   const marked = new Marked({
     gfm: true,
     extensions: [wikilinks],
+    walkTokens: codeLinks.size > 0 ? (token) => codeInLinks(token, linked) : undefined,
     renderer: {
+      codespan(token) {
+        const href = linked.has(token) ? undefined : codeLinks.get(codeKey(token.text))
+        return href === undefined ? false : `<a class="code-path" href="${escapeHtml(href)}"><code>${escapeHtml(token.text)}</code></a>`
+      },
       heading(token) {
         inPlainText = true
         const plain = this.parser.parseInline(token.tokens, this.parser.textRenderer)

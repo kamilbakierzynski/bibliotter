@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parentPort, workerData } from 'node:worker_threads'
 import { AnalysisPool } from './analysisPool'
+import { findCodePaths } from './codePaths'
 import { FolderWatcher } from './folderWatcher'
 import { commandRunner } from './git'
 import { Library, type LibraryConfig } from './library'
@@ -70,7 +71,10 @@ const commands: LibraryCommands = {
   deleteLabel: async (name) => (await opening).deleteLabel(name),
   reloadLabels: async () => (await opening).reloadLabels(),
   search: async (query) => (await opening).search(query),
-  renderMarkdown: async (docPath) => markdownPage(await readFile(docPath, 'utf8'), basename(docPath)),
+  renderMarkdown: async (docPath) => {
+    const source = await readFile(docPath, 'utf8')
+    return markdownPage(source, basename(docPath), await findCodePaths(source, docPath))
+  },
   shutdown: async () => {
     watcher.close()
     const library = await opening

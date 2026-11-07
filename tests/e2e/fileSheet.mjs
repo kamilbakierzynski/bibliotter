@@ -28,6 +28,8 @@ ${prose}
 
 Funkcja [start](../src/app.ts#L140-L142) uruchamia wszystko. Nowy skrypt to [narzędzie](../src/tool.py), a obraz to [logo](../src/logo.png).
 
+Limit leży w \`src/app.ts:5\`, a \`src/brak.ts\` jeszcze nie powstał.
+
 ${prose}
 
 ## Ryzyka
@@ -133,6 +135,17 @@ export async function fileSheetFlow(workspace, { check, entry = projectRoot, sho
       await shell.locator('.pane.focused .file-seg button', { hasText: 'Plik' }).click()
       await until(() => file.evaluate(() => document.documentElement.dataset.mode === 'file'), 'tryb pliku')
       assert.equal(await file.evaluate(() => document.querySelectorAll('.cm-changedLine').length), 0)
+    })
+
+    await check('ścieżka w kodzie Markdownu prowadzi do pliku, a brakujący plik zostaje kodem', async () => {
+      const codes = await page.evaluate(() =>
+        [...document.querySelectorAll('p code')].map((code) => [code.textContent, code.closest('a.code-path')?.getAttribute('href') ?? null])
+      )
+      assert.deepEqual(codes, [['src/app.ts:5', '../src/app.ts:5'], ['src/brak.ts', null]])
+      if (shots) await shots('kod', shell, page)
+      await clickLink(page, '../src/app.ts:5')
+      await until(() => file.evaluate(() => document.querySelectorAll('.cm-line.cm-target').length === 1), 'wskazany wiersz')
+      assert.equal(await file.evaluate(() => document.querySelector('.cm-line.cm-target')?.textContent), 'const limit = 25')
     })
 
     await check('Ctrl + klik zerka na nowy plik, a obraz idzie do Eksploratora', async () => {
