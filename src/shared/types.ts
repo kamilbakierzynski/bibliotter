@@ -254,6 +254,10 @@ export interface ShellApi extends TerminalApi {
   followLink(docId: string, href: string, mode: OpenMode): Promise<LinkOutcome>
   /** Przełącza arkusz pliku między plikiem a zmianami. Zwraca jego nowy opis. */
   setFileMode(docId: string, mode: FileMode): Promise<DocEntry | null>
+  /** Pokazuje albo chowa drzewo plików obok każdego arkusza pliku. */
+  setFileTree(shown: boolean): Promise<void>
+  /** Nowy opis arkusza pliku, gdy git odpowie już po otwarciu panelu. */
+  onFileEntry(listener: (entry: DocEntry) => void): () => void
   /** Zrzut miejsca linku do karty w panelu Linki. `later` znaczy, że nowsze zamówienie je wyprzedziło. */
   linkShot(request: LinkShotRequest): Promise<string | null | 'later'>
   onFollowLink(listener: (link: FollowLink) => void): () => void

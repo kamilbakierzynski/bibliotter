@@ -20,9 +20,10 @@ import { yaml } from '@codemirror/lang-yaml'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState, type Extension, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state'
-import { Decoration, type DecorationSet, EditorView, GutterMarker, gutterLineClass, highlightSpecialChars, lineNumbers } from '@codemirror/view'
+import { type BlockInfo, BlockType, Decoration, type DecorationSet, EditorView, GutterMarker, gutterLineClass, highlightSpecialChars, lineNumbers } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
-import { type FileMode, type FileViewData, type LineRange, parseFileFragment } from '../shared/fileView'
+import { type FileMode, type FileViewData, type LineRange, parseFileFragment, treeFragment } from '../shared/fileView'
+import { startTree } from './tree'
 
 const LANGUAGES: Record<string, () => Extension> = {
   typescript: () => javascript({ typescript: true }),
@@ -44,18 +45,26 @@ const LANGUAGES: Record<string, () => Extension> = {
   php: () => php()
 }
 
-/** Składnia jak w listingach kitu explain: słowa kluczowe mają masę, komentarze i napisy są szarsze. */
+/**
+ * Składnia w atramentach papieru etykiet: za dnia ciemny odcień papieru, nocą sam papier. Bez
+ * pomarańczu, bo ten znaczy w apce tylko „czeka na Ciebie”. Słowa kluczowe dalej mają też masę,
+ * więc kod czyta się podobnie nawet w szarościach, np. na zrzucie albo w minimapie.
+ */
 const ink = HighlightStyle.define([
-  { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.operatorKeyword, tags.modifier], fontWeight: '650' },
-  { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--ink-3)' },
-  { tag: [tags.string, tags.special(tags.string), tags.regexp, tags.character], color: 'var(--ink-2)' },
-  { tag: [tags.number, tags.bool, tags.null, tags.atom], color: 'var(--ink-2)' },
-  { tag: [tags.typeName, tags.className, tags.namespace], fontWeight: '550' },
-  { tag: [tags.function(tags.definition(tags.variableName)), tags.definition(tags.propertyName)], fontWeight: '550' },
+  { tag: [tags.keyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword, tags.operatorKeyword, tags.modifier, tags.self], color: 'var(--syn-keyword)', fontWeight: '600' },
+  { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: 'var(--ink-3)', fontStyle: 'italic' },
+  { tag: [tags.string, tags.special(tags.string), tags.character, tags.docString], color: 'var(--syn-string)' },
+  { tag: [tags.regexp, tags.escape], color: 'var(--syn-escape)' },
+  { tag: [tags.number, tags.bool, tags.null, tags.atom, tags.unit], color: 'var(--syn-number)' },
+  { tag: [tags.typeName, tags.className, tags.namespace, tags.standard(tags.typeName)], color: 'var(--syn-type)' },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.function(tags.definition(tags.variableName)), tags.macroName], color: 'var(--syn-function)' },
+  { tag: [tags.definition(tags.variableName), tags.definition(tags.propertyName)], fontWeight: '550' },
   { tag: [tags.meta, tags.processingInstruction, tags.annotation], color: 'var(--ink-3)' },
-  { tag: tags.tagName, fontWeight: '600' },
-  { tag: tags.attributeName, color: 'var(--ink-2)' },
-  { tag: tags.heading, fontWeight: '650' },
+  { tag: [tags.tagName, tags.angleBracket], color: 'var(--syn-tag)' },
+  { tag: tags.attributeName, color: 'var(--syn-number)' },
+  { tag: [tags.propertyName, tags.labelName], color: 'var(--syn-property)' },
+  { tag: [tags.punctuation, tags.bracket, tags.separator], color: 'var(--ink-2)' },
+  { tag: tags.heading, fontWeight: '650', color: 'var(--syn-type)' },
   { tag: tags.strong, fontWeight: '650' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.link, textDecoration: 'underline', textDecorationColor: 'var(--hair-2)' },
@@ -143,6 +152,90 @@ const targetGutter = gutterLineClass.compute([target, 'doc'], (state) => {
   return builder.finish()
 })
 
+/*
+ * Szkic dla minimapy. CodeMirror rysuje tylko wiersze w pobliżu okna, więc szkic z DOM kończył się
+ * tam, gdzie kończył się wyrenderowany kawałek. Strona zna jednak wysokość każdego wiersza z mapy
+ * wysokości edytora, więc sama podaje paski: po pięć liczb (x, y, szerokość, wysokość, rodzaj)
+ * w układzie strony, w bloku danych, który minimapa czyta zamiast chodzić po tekście.
+ */
+const SKETCH_ID = 'bibliotter-sketch'
+const SKETCH_MS = 160
+/** Dalej szkic bierze co n-ty wiersz, bo minimapa i tak nie pokaże więcej niż kilku tysięcy pasków. */
+const SKETCH_MAX_LINES = 30000
+
+let sketchTimer = 0
+
+function textBlock(block: BlockInfo): BlockInfo | null {
+  if (Array.isArray(block.type)) return (block.type as readonly BlockInfo[]).find((part) => part.type === BlockType.Text) ?? null
+  return block.type === BlockType.Text ? block : null
+}
+
+/** Kolumna znaku z tabulatorami rozwiniętymi tak jak w edytorze. */
+function columns(text: string, end: number, tab: number): number {
+  let column = 0
+  for (let i = 0; i < end; i++) column = text.charCodeAt(i) === 9 ? column + tab - (column % tab) : column + 1
+  return column
+}
+
+function writeSketch(editor: EditorView): void {
+  sketchTimer = 0
+  editor.requestMeasure({
+    read(): number[] | null {
+      const sample = editor.contentDOM.querySelector('.cm-line')
+      if (!sample) return null
+      const rect = sample.getBoundingClientRect()
+      const left = rect.left + scrollX + parseFloat(getComputedStyle(sample).paddingLeft || '0')
+      const width = Math.max(1, rect.right - left + scrollX)
+      const top = editor.documentTop + scrollY
+      const charW = editor.defaultCharacterWidth
+      const rowH = editor.defaultLineHeight
+      const barH = Math.max(2, rowH * 0.62)
+      const perRow = Math.max(1, Math.floor(width / charW))
+      const tab = editor.state.tabSize
+      const doc = editor.state.doc
+      const step = Math.max(1, Math.ceil(doc.lines / SKETCH_MAX_LINES))
+      const out: number[] = []
+      // Minimapa przyjmuje najwyżej 60 tys. pasków, więc dłuższy szkic ucinamy, zanim go odrzuci.
+      for (let n = 1; n <= doc.lines && out.length < 295000; n += step) {
+        const line = doc.line(n)
+        const first = line.text.search(/\S/)
+        if (first < 0) continue
+        const block = textBlock(editor.lineBlockAt(line.from))
+        // Wiersz w zwiniętym fragmencie diffu nie ma własnego bloku tekstu.
+        if (!block || block.from !== line.from) continue
+        const start = columns(line.text, first, tab)
+        const end = columns(line.text, line.text.trimEnd().length, tab)
+        const rows = Math.max(1, Math.round(block.height / rowH))
+        for (let row = 0; row < rows; row++) {
+          const from = row === 0 ? start : row * perRow
+          const to = Math.min(end, (row + 1) * perRow)
+          if (to <= from) continue
+          const y = top + block.top + row * rowH + (rowH - barH) / 2
+          out.push(left + (from - row * perRow) * charW, y, (to - from) * charW, barH, 2)
+        }
+      }
+      return out
+    },
+    write(lines): void {
+      if (!lines) return
+      let node = document.getElementById(SKETCH_ID)
+      if (!node) {
+        node = document.createElement('script')
+        node.setAttribute('type', 'application/json')
+        node.id = SKETCH_ID
+        document.body.append(node)
+      }
+      const next = JSON.stringify(lines.map((value) => Math.round(value * 10) / 10))
+      if (node.textContent !== next) node.textContent = next
+    }
+  })
+}
+
+const sketchOnChange = EditorView.updateListener.of((update) => {
+  if (!update.geometryChanged && !update.heightChanged && !update.docChanged) return
+  if (!sketchTimer) sketchTimer = window.setTimeout(() => writeSketch(update.view), SKETCH_MS)
+})
+
 function readData(): FileViewData {
   const node = document.getElementById('file-data')
   return JSON.parse(node?.textContent ?? '{}') as FileViewData
@@ -169,6 +262,7 @@ function extensions(diff: boolean): Extension[] {
     target,
     targetLines,
     targetGutter,
+    sketchOnChange,
     language ? language() : [],
     diff && data.original !== null
       ? unifiedMergeView({
@@ -188,6 +282,7 @@ function build(next: FileMode): void {
   mode = next === 'diff' && data.original !== null ? 'diff' : 'file'
   view = new EditorView({ parent: root, state: EditorState.create({ doc: data.text, extensions: extensions(mode === 'diff') }) })
   document.documentElement.dataset.mode = mode
+  writeSketch(view)
 }
 
 function aim(lines: LineRange | null): void {
@@ -198,10 +293,30 @@ function aim(lines: LineRange | null): void {
   view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) })
 }
 
+const tree = data.tree ? startTree(data.tree, data.labels ?? {}, data.folder === true) : null
+
+// Arkusz folderu to samo drzewo, które przewija się samo, więc minimapa dostaje pusty szkic i znika.
+if (data.folder) {
+  const empty = document.createElement('script')
+  empty.setAttribute('type', 'application/json')
+  empty.id = SKETCH_ID
+  empty.textContent = '[]'
+  document.body.append(empty)
+}
+
+/**
+ * Kotwica steruje stroną bez przeładowania: tryb, wiersze i drzewo. Sama zmiana drzewa nie
+ * przewija pliku z powrotem do wierszy z linku.
+ */
 function follow(): void {
-  const { mode: wanted, lines } = parseFileFragment(decodeURIComponent(location.hash.slice(1)))
-  if (!view || (wanted && wanted !== mode)) build(wanted ?? mode)
-  aim(lines ?? data.lines)
+  const fragment = decodeURIComponent(location.hash.slice(1))
+  const shown = treeFragment(fragment)
+  if (shown !== null) tree?.setShown(shown)
+  if (data.folder) return
+  const { mode: wanted, lines } = parseFileFragment(fragment)
+  const rebuilt = !view || (wanted !== null && wanted !== mode)
+  if (rebuilt) build(wanted ?? mode)
+  if (rebuilt || lines) aim(lines ?? data.lines)
 }
 
 window.addEventListener('hashchange', follow)

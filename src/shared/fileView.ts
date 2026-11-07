@@ -13,6 +13,36 @@ export interface FileSheetInfo {
   changed: boolean
   added: number
   removed: number
+  /** Arkusz folderu: samo drzewo plików, bez pliku. Powstaje z linku do katalogu. */
+  folder?: boolean
+}
+
+/** Znak gita przy pliku w drzewie: zmieniony, dodany, nowy (nieśledzony) albo przemianowany. */
+export type GitMark = 'M' | 'A' | 'U' | 'R' | 'D'
+
+/** Wiersz drzewa plików. Ścieżki są względem korzenia drzewa, z ukośnikami. */
+export interface FileTreeEntry {
+  name: string
+  rel: string
+  /** Pełna ścieżka w formie linku, który strona podaje przy kliknięciu. */
+  href: string
+  dir: boolean
+  mark?: GitMark
+  /** Folder ma w środku zmienione albo nowe pliki. */
+  changed?: boolean
+  /** Plik albo folder pominięty przez `.gitignore`. */
+  ignored?: boolean
+}
+
+/** Drzewo obok pliku: korzeń repozytorium albo folder pliku, gdy repozytorium nie ma. */
+export interface FileTreeInfo {
+  /** Nazwa korzenia w nagłówku drzewa. */
+  name: string
+  /** Plik w arkuszu, względem korzenia. `null` w arkuszu folderu. */
+  current: string | null
+  /** Folder, który drzewo ma rozwinąć na start. */
+  reveal: string | null
+  shown: boolean
 }
 
 /** Wiersze, na które wskazuje link: `#L12`, `#L12-L20` albo `plik.ts:12`. */
@@ -34,6 +64,11 @@ export interface FileViewData {
   language: string
   /** Napisy CodeMirrora w języku apki, np. o zwiniętych wierszach diffu. */
   phrases?: Record<string, string>
+  /** Arkusz folderu: drzewo bez pliku. */
+  folder?: boolean
+  tree?: FileTreeInfo | null
+  /** Napisy drzewa w języku apki. */
+  labels?: Record<string, string>
 }
 
 const LINES = /^L(\d+)(?:-L?(\d+))?$/i
@@ -66,7 +101,14 @@ export function lineSuffix(href: string): LineRange | null {
   return match ? range(match[1] as string, match[2]) : null
 }
 
-export function fileFragment(mode: FileMode, lines: LineRange | null): string {
+/** Kotwica `tree` pokazuje drzewo plików obok pliku, a `notree` je chowa. `null`, gdy kotwica o nim milczy. */
+export function treeFragment(fragment: string): boolean | null {
+  const parts = fragment.split(/[&,]/).map((part) => part.trim())
+  if (parts.includes('notree')) return false
+  return parts.includes('tree') ? true : null
+}
+
+export function fileFragment(mode: FileMode | null, lines: LineRange | null): string {
   const at = lines ? (lines.from === lines.to ? `L${lines.from}` : `L${lines.from}-L${lines.to}`) : ''
   return [mode, at].filter(Boolean).join('&')
 }

@@ -35,8 +35,11 @@ const lightbox = startLightbox({
 })
 /** O tym, czy to arkusz, decyduje proces główny, więc dokument HTML nie może tego udawać. */
 let isSheet = false
-void ipcRenderer.invoke('doc:is-sheet').then((answer: boolean) => {
-  isSheet = answer
+/** Arkusz pliku nie należy do biblioteki, więc uwag nie ma gdzie zapisać. */
+let takesNotes = true
+void ipcRenderer.invoke('doc:is-sheet').then((answer: boolean | { sheet: boolean; notes: boolean }) => {
+  isSheet = typeof answer === 'boolean' ? answer : answer.sheet
+  takesNotes = typeof answer === 'boolean' ? true : answer.notes
 })
 let linkPreview: LinkPreviewHandle | null = null
 
@@ -141,6 +144,7 @@ window.addEventListener(
     startOverlay(
       {
       send: (event: OverlayEvent) => ipcRenderer.send('overlay:event', event),
+      takesNotes: () => takesNotes,
       onMode: (listener) => subscribe<OverlayMode>('overlay:mode', listener),
       onItems: (listener) => subscribe<OverlayItem[]>('overlay:items', listener),
       onFocus: (listener) => subscribe<string | null>('overlay:focus', listener),

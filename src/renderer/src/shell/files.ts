@@ -29,6 +29,42 @@ export function followFileLink({ from, docId, mode, file }: FollowLink): void {
   followLink(from, docId, mode)
 }
 
+/** Git odpowiedział po otwarciu panelu. Arkusz, którego już nie ma, nie wraca. */
+export function updateFile(entry: DocEntry): void {
+  if (!files.has(entry.id)) return
+  rememberFile(entry)
+  notify()
+}
+
+const TREE_KEY = 'bibliotter.fileTree'
+
+function readTree(): boolean {
+  try {
+    return localStorage.getItem(TREE_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
+
+/** Drzewo plików obok arkusza jest jedno dla wszystkich plików, jak panel w edytorze. */
+export const fileTree = { shown: readTree() }
+
+/** Proces główny nie pamięta drzewa między uruchomieniami, więc powłoka mówi mu o nim na starcie. */
+export function syncFileTree(): void {
+  void window.api.setFileTree(fileTree.shown)
+}
+
+export function toggleFileTree(): void {
+  fileTree.shown = !fileTree.shown
+  try {
+    localStorage.setItem(TREE_KEY, fileTree.shown ? 'on' : 'off')
+  } catch {
+    // Bez pamięci przełącznik działa do zamknięcia apki.
+  }
+  syncFileTree()
+  notify()
+}
+
 export function setFileMode(id: string, mode: FileMode): void {
   const entry = files.get(id)
   if (!entry?.file || entry.file.mode === mode) return

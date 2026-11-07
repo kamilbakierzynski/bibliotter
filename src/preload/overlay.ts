@@ -197,6 +197,8 @@ export function guardPointerEvents(): PointerGuard {
 
 export interface OverlayBridge {
   send(event: OverlayEvent): void
+  /** Arkusz pliku nie ma gdzie zapisać uwag, więc menu zaznaczenia ich nie proponuje. */
+  takesNotes?: () => boolean
   onMode(listener: (mode: OverlayMode) => void): void
   onItems(listener: (items: OverlayItem[]) => void): void
   onFocus(listener: (id: string | null) => void): void
@@ -264,6 +266,9 @@ function isSelectedQuote(element: Element, quote: string): boolean {
  * Warstwa z pinezkami. Działa w odizolowanym świecie i w zamkniętym Shadow DOM, więc skrypty
  * dokumentu nie widzą treści uwag. Tekst trafia tu tylko przez `textContent`.
  */
+/** Wiersze menu zaznaczenia, które tworzą uwagę albo krok prezentacji. */
+const NOTE_ACTIONS = new Set(['comment', 'sticky', 'highlight', 'step'])
+
 export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   const host = document.createElement('bibliotter-overlay')
   host.style.cssText = `all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: ${MAX_Z_INDEX}; pointer-events: none;`
@@ -779,6 +784,7 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     blocked: () =>
       mode !== null || pointing || marking || shaping || picking || lift.busy || (present !== null && !present.edit),
     unzoom: () => unzoom,
+    offers: (action) => bridge.takesNotes?.() !== false || !NOTE_ACTIONS.has(action),
     run: (action, range, color) => {
       switch (action) {
         case 'copy':

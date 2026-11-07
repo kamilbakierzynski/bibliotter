@@ -18,6 +18,8 @@ export interface SelectionMenuOptions {
   blocked: () => boolean
   unzoom: () => number
   run: (action: SelectionMenuAction, range: Range, color: StickyColor) => void
+  /** Czy wiersz ma sens na tej stronie. Arkusz pliku nie przyjmuje uwag ani kroków prezentacji. */
+  offers?: (action: SelectionMenuAction) => boolean
 }
 
 export interface SelectionMenu {
@@ -191,7 +193,7 @@ export function createSelectionMenu(options: SelectionMenuOptions): SelectionMen
   let list: Row[] = []
 
   const build = (): void => {
-    list = rows()
+    list = rows().filter((row) => options.offers?.(row.action) ?? true)
     element.replaceChildren()
     for (const row of list) {
       if (row.gap) element.append(document.createElement('hr'))

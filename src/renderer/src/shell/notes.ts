@@ -1,10 +1,13 @@
 import type { Anchor, Audience, NoteKind, OverlayEvent, OverlayRect, ShapeType, StickyColor } from '../../../shared/annotations'
+import { t } from '../../../shared/i18n'
 import { rectIn } from '../motion/pill'
 import { clamp, followFor, Spring, wake } from '../motion/spring'
 import { inLayer } from './layer'
 import { drawings, findShape, revealDrawings, setShapeType } from './drawings'
 import { applyLayout, els, G, sheets, toolPill, trayW, viewPill } from './layout'
 import { refreshFrame, touch } from './native'
+import { isFileSheet } from './files'
+import { sayTip } from './keys'
 import { endPick } from './route'
 import { focusPane } from './sheets'
 import { data, type Draft, findNote, focusedId, notify, openNotes, pinned, type InspView, type Tool, ui } from './state'
@@ -262,6 +265,10 @@ export function setTool(tool: Tool): void {
   const shaping = tool === 'shape'
   const docId = focusedId()
   if (docId) window.api.setOverlayMode(docId, tool === 'comment' || tool === 'sticky' ? tool : null)
+  // Arkusz pliku nie przyjmuje uwag, więc narzędzie w nim nic nie zrobi. Lepiej to powiedzieć niż milczeć.
+  if (isFileSheet(docId) && (tool === 'comment' || tool === 'sticky' || marker || shaping)) {
+    sayTip(t('Uwagi zapisują się w dokumentach z biblioteki, a ten arkusz to plik z dysku.'))
+  }
   window.api.setPointer(pointer)
   window.api.setMarker(marker ? ui.color : null)
   syncShaper()

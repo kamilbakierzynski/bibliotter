@@ -40,6 +40,7 @@ import {
   resolveAssetPath
 } from './docPolicy'
 import { MARKDOWN_BACKGROUND } from './markdownPage'
+import type { FileSheets } from './fileSheets'
 import { fileViewResponse } from './fileViewPage'
 import { formatOf } from './scanner'
 
@@ -83,7 +84,7 @@ interface DocViewerOptions {
   /** Składanie Markdownu to czysty procesor, więc nie może działać w tym wątku. */
   renderMarkdown: (docPath: string) => Promise<string>
   /** Strona arkusza pliku. `null` dla zwykłego dokumentu. */
-  fileSheets?: { has(docId: string): boolean; page(docId: string): string | null }
+  fileSheets?: Pick<FileSheets, 'has' | 'page' | 'tree' | 'files'>
   onState: (state: ViewerState) => void
   onOverlayEvent: (docId: string, event: OverlayEvent) => void
   /** Warstwa w dokumencie jest gotowa na przyjęcie uwag. */
@@ -215,6 +216,9 @@ function parseOverlayEvent(value: unknown): OverlayEvent | null {
   }
 }
 
+/** Zdarzenia, które tworzą albo przestawiają uwagę. Arkusz pliku ich nie wysyła. */
+const NOTE_EVENTS = new Set<OverlayEvent['type']>(['place', 'highlight', 'shape', 'move', 'erase', 'add-step'])
+
 /** Skróty apki, które dokument ma oddać, zanim je zobaczą jego skrypty. */
 function isAppChord(key: string, ctrl: boolean, alt = false): boolean {
   // Alt ← i Alt → chodzą po historii dokumentów w powłoce.
@@ -302,13 +306,13 @@ export class DocViewer {
     ipcMain.removeHandler('doc:is-sheet')
     ipcMain.handle('doc:is-sheet', (event) => {
       const docId = this.viewOf(event.sender)?.docId
-      return docId !== undefined && this.isSheet(docId)
+      return { sheet: docId !== undefined && this.isSheet(docId), notes: docId !== undefined && this.takesNotes(docId) }
     })
     ipcMain.on('overlay:event', (event, payload: unknown) => {
       const open = this.viewOf(event.sender)
       if (!open) return
       const parsed = parseOverlayEvent(payload)
-      if (parsed) this.options.onOverlayEvent(open.docId, parsed)
+      if (parsed && (this.takesNotes(open.docId) || !NOTE_EVENTS.has(parsed.type))) this.options.onOverlayEvent(open.docId, parsed)
     })
     ipcMain.on('camera:reply', (event, id: unknown, result: unknown) => {
       if (this.viewOf(event.sender)) this.camera.reply(event.sender, id, result)
@@ -324,8 +328,8 @@ export class DocViewer {
       this.send(open.docId, 'overlay:language', language())
       // Dokument otwarty albo przeładowany w trakcie prezentacji też ma pokazać rękę.
       if (this.pointer) this.send(open.docId, 'overlay:pointer', true)
-      if (this.marker) this.send(open.docId, 'overlay:marker', this.marker)
-      if (this.shaper) this.send(open.docId, 'overlay:shaper', this.shaper)
+      if (this.marker && this.takesNotes(open.docId)) this.send(open.docId, 'overlay:marker', this.marker)
+      if (this.shaper && this.takesNotes(open.docId)) this.send(open.docId, 'overlay:shaper', this.shaper)
       if (this.hiddenDrawings.has(open.docId)) this.send(open.docId, 'overlay:drawings', false)
       const route = this.routes.get(open.docId)
       if (route) this.send(open.docId, 'overlay:route', route)
@@ -365,9 +369,16 @@ export class DocViewer {
     this.options.onLinkHover(null)
   }
 
+  /** Arkusz to strona apki, a nie HTML z cudzymi skryptami: Markdown albo plik z linku. */
   private isSheet(docId: string): boolean {
+    if (this.options.fileSheets?.has(docId)) return true
     const docPath = this.options.lookupDocPath(docId)
     return docPath !== undefined && formatOf(docPath) === 'markdown'
+  }
+
+  /** Uwagi zapisują się przy dokumencie z biblioteki. Arkusz pliku ich nie przyjmuje. */
+  takesNotes(docId: string): boolean {
+    return !this.options.fileSheets?.has(docId)
   }
 
   /** Wpuszcza stronę do sesji dokumentów, np. ukryte okno robiące miniaturę. */
@@ -405,7 +416,7 @@ export class DocViewer {
   }
 
   setOverlayMode(docId: string, mode: OverlayMode): void {
-    this.send(docId, 'overlay:mode', mode)
+    this.send(docId, 'overlay:mode', this.takesNotes(docId) ? mode : null)
   }
 
   setLanguage(next: Language): void {
@@ -420,7 +431,7 @@ export class DocViewer {
   /** Kształt też działa na wszystkich arkuszach. `null` wyłącza narzędzie. */
   setShaper(tool: ShapeTool | null): void {
     this.shaper = tool
-    for (const docId of this.views.keys()) this.send(docId, 'overlay:shaper', tool)
+    for (const docId of this.views.keys()) if (this.takesNotes(docId)) this.send(docId, 'overlay:shaper', tool)
   }
 
   /** Pełna lista dokumentów ze schowanymi rysunkami. Powłoka pamięta ją między uruchomieniami. */
@@ -465,7 +476,7 @@ export class DocViewer {
 
   setMarker(color: StickyColor | null): void {
     this.marker = color
-    for (const docId of this.views.keys()) this.send(docId, 'overlay:marker', color)
+    for (const docId of this.views.keys()) if (this.takesNotes(docId)) this.send(docId, 'overlay:marker', color)
   }
 
   setOverlayItems(docId: string, items: OverlayItem[]): void {
@@ -791,11 +802,12 @@ export class DocViewer {
   }
 
   private async serve(request: Request): Promise<Response> {
-    const { hostname, pathname } = new URL(request.url)
+    const url = new URL(request.url)
+    const { hostname, pathname } = url
     const docPath = this.isServed(hostname) ? this.options.lookupDocPath(hostname) : undefined
     if (!docPath) return new Response(t('Nie znaleziono dokumentu'), { status: 404 })
-    const filePage = this.options.fileSheets?.page(hostname)
-    if (filePage) return fileViewResponse(pathname, filePage)
+    const files = this.options.fileSheets
+    if (files?.has(hostname)) return fileViewResponse(files, hostname, url)
 
     try {
       if (pathname === '/' && formatOf(docPath) === 'markdown') {

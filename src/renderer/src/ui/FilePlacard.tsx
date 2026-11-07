@@ -1,7 +1,7 @@
 import type { FileMode } from '../../../shared/fileView'
 import { t } from '../../../shared/i18n'
 import type { DocEntry } from '../../../shared/types'
-import { refreshFile, setFileMode } from '../shell/files'
+import { fileTree, refreshFile, setFileMode, toggleFileTree } from '../shell/files'
 import { find, toggleFind } from '../shell/find'
 import { closeSheet, pinPeek, splitKey } from '../shell/sheets'
 import { pinned, ui } from '../shell/state'
@@ -56,7 +56,7 @@ export function FilePlacard({ i, doc }: { i: number; doc: DocEntry }): React.JSX
               <span>{doc.branch}</span>
             </>
           )}
-          {!doc.file?.changed && doc.branch && <span>{t('bez zmian')}</span>}
+          {!doc.file?.changed && !doc.file?.folder && doc.branch && <span>{t('bez zmian')}</span>}
         </span>
       </div>
       {find.open && find.docId === doc.id && ui.panes[ui.focus] === doc.id && <FindBar />}
@@ -70,6 +70,17 @@ export function FilePlacard({ i, doc }: { i: number; doc: DocEntry }): React.JSX
             <Icon name="split" />
           </button>
         </span>
+        {!doc.file?.folder && (
+          <button
+            className={fileTree.shown ? 'mini on' : 'mini'}
+            data-act="tree"
+            aria-label={t('Drzewo plików')}
+            aria-pressed={fileTree.shown}
+            onClick={toggleFileTree}
+          >
+            <Icon name="folder" />
+          </button>
+        )}
         <button className="mini" data-act="refresh" aria-label={t('Odśwież plik')} onClick={() => refreshFile(doc.id)}>
           <Icon name="refresh" />
         </button>

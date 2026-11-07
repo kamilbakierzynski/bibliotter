@@ -206,7 +206,8 @@ export function startMinimap(bridge: MinimapBridge): void {
     const docH = scroller().scrollHeight
     const top = Math.max(INSET_Y, bars.top + BAR_GAP)
     const height = viewH - top - Math.max(INSET_Y, bars.bottom + BAR_GAP)
-    if (!sketch || height < 120 || viewW < STRIP * 4) return null
+    // Pusty szkic, np. arkusz folderu z samym drzewem, nie ma czego pokazać na mapie.
+    if (!sketch || sketch.lines.length + sketch.blocks.length === 0 || height < 120 || viewW < STRIP * 4) return null
     const innerW = STRIP - PAD_X * 2
     const contentW = Math.max(1, sketch.right - sketch.left)
     const sx = Math.min(MAX_SCALE_X, innerW / contentW)

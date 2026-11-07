@@ -71,7 +71,7 @@ import { HitPreviewer } from './hitPreview'
 import type { LibraryConfig } from './library'
 import { LibraryClient } from './libraryClient'
 import { isInside } from './scanner'
-import { FileSheets } from './fileSheets'
+import { FileSheets, isDirectory } from './fileSheets'
 import { fileFragment, lineSuffix, parseFileFragment } from '../shared/fileView'
 import { PresentationStore, readPresentation, watchPresentation } from './presentationStore'
 import { watchSignal } from './signals'
@@ -130,7 +130,8 @@ const searcher = new ContentSearcher(join(__dirname, 'searchWorker.js'), join(da
 /** Linki zwrotne wymagają złożenia każdego dokumentu, a ten wątek ma obsługiwać okno. */
 const linkReaders = new AnalysisPool(join(__dirname, 'analysisWorker.js'))
 const links = new LinkGraph(() => library?.getSnapshot() ?? null, linkReaders.readLinks)
-const files = new FileSheets()
+/** Git odpowiada już po otwarciu panelu, więc nagłówek arkusza dostaje gałąź i liczby zmian chwilę później. */
+const files = new FileSheets((entry) => sendToShell('files:entry', entry))
 const terminals = new Terminals((channel, payload) => sendToShell(channel, payload))
 
 /** Wysyła uwagi do panelu i do warstw otwartych dokumentów. Działa też po zmianach agenta. */
@@ -175,18 +176,28 @@ function warmDocument(doc: DocEntry): void {
  * Zwykłe kliknięcie od razu dzieli widok, a `Ctrl` + klik zerka. Reszta plików idzie do Eksploratora.
  */
 async function openFile(from: DocEntry, path: string, href: string, fragment: string, mode: OpenMode): Promise<LinkOutcome> {
+  // Klik w drzewie arkusza zostaje w tym arkuszu, a link z dokumentu staje obok niego.
+  const split: OpenMode = mode === 'open' && !files.has(from.id) ? 'split' : mode
+  if (await isDirectory(path)) {
+    const folder = await files.openFolder(path)
+    sendToShell('viewer:follow-link', { from: from.id, docId: folder.id, mode: split, file: folder } satisfies FollowLink)
+    return 'opened'
+  }
   if (!(await files.viewable(path))) {
     shell.showItemInFolder(path)
     return 'revealed'
   }
   const target = parseFileFragment(fragment)
   const lines = target.lines ?? lineSuffix(href)
+  // Panel staje od razu, a tryb pliku ustali strona, gdy git powie, czy plik ma zmiany.
   const entry = await files.open(path, target.mode, lines)
-  viewer?.aim(entry.id, fileFragment(entry.file?.mode ?? 'file', lines))
-  const split: OpenMode = mode === 'open' ? 'split' : mode
+  viewer?.aim(entry.id, fileFragment(target.mode, lines))
   sendToShell('viewer:follow-link', { from: from.id, docId: entry.id, mode: split, file: entry } satisfies FollowLink)
   return 'opened'
 }
+
+/** Linki w arkuszu pliku, np. z drzewa, liczą się od pliku tak samo jak od dokumentu. */
+const linkSource = (docId: string): DocEntry | undefined => library?.getEntry(docId) ?? files.entry(docId)
 
 /** Link prowadzi tam, gdzie wskazuje: dokument otwiera się w apce, a inny plik w Eksploratorze. */
 async function followLink(from: DocEntry, href: string, mode: OpenMode): Promise<LinkOutcome> {
@@ -200,7 +211,8 @@ async function followLink(from: DocEntry, href: string, mode: OpenMode): Promise
   if (!link.docId) return openFile(from, link.path, href, link.fragment, mode)
   if (link.fragment) viewer?.aim(link.docId, link.fragment)
   if (link.docId !== from.id) {
-    links.noteFollow(from, link.docId)
+    // Arkusz pliku nie jest dokumentem, więc nie staje się linkiem zwrotnym.
+    if (!files.has(from.id)) links.noteFollow(from, link.docId)
     sendToShell('viewer:follow-link', { from: from.id, docId: link.docId, mode } satisfies FollowLink)
   }
   return 'opened'
@@ -225,7 +237,7 @@ async function linkShot(request: LinkShotRequest | null): Promise<string | null 
 }
 
 async function followLinkFrom(docId: string, href: string, mode: OpenMode): Promise<LinkOutcome> {
-  const doc = library?.getEntry(docId)
+  const doc = linkSource(docId)
   return doc ? followLink(doc, href, mode) : 'none'
 }
 
@@ -638,6 +650,11 @@ function registerIpc(): void {
     const entry = files.setMode(id, mode === 'diff' ? 'diff' : 'file')
     if (entry?.file) viewer?.aim(id, entry.file.mode)
     return entry ?? null
+  })
+  handle('files:tree', (shown: unknown) => {
+    files.setTreeShown(shown === true)
+    // Strona arkusza przełącza drzewo przez kotwicę, bez przeładowania.
+    for (const id of files.ids()) viewer?.aim(id, shown === true ? 'tree' : 'notree')
   })
   handle('viewer:close', (docId: unknown) => viewer?.close(String(docId)))
   handle('viewer:reload', async (docId: unknown) => {

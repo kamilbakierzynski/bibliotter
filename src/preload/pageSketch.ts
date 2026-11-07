@@ -113,8 +113,40 @@ function collectBlocks(root: Element, out: number[], clipOf: (element: Element |
   }
 }
 
+/** Element z gotowym szkicem, który podaje strona rysująca tylko część treści, np. arkusz pliku. */
+export const SKETCH_HINT_ID = 'bibliotter-sketch'
+
+/**
+ * Edytor kodu rysuje tylko wiersze przy oknie, więc z DOM szkic kończyłby się w połowie pliku.
+ * Taka strona podaje paski sama, w tym samym układzie co szkic z tekstu. Hint to tylko liczby,
+ * więc strona nie może nim zrobić nic poza narysowaniem kresek na własnej minimapie.
+ */
+function hintedSketch(): Sketch | null {
+  const node = document.getElementById(SKETCH_HINT_ID)
+  if (!node || node.tagName !== 'SCRIPT') return null
+  let lines: unknown
+  try {
+    lines = JSON.parse(node.textContent ?? '')
+  } catch {
+    return null
+  }
+  if (!Array.isArray(lines) || lines.length % 5 !== 0 || lines.length > MAX_NODES * 5) return null
+  if (!lines.every((value) => typeof value === 'number' && Number.isFinite(value))) return null
+  const numbers = lines as number[]
+  let left = Infinity
+  let right = -Infinity
+  for (let i = 0; i < numbers.length; i += 5) {
+    left = Math.min(left, numbers[i] as number)
+    right = Math.max(right, (numbers[i] as number) + (numbers[i + 2] as number))
+  }
+  if (!Number.isFinite(left)) return { lines: numbers, blocks: [], left: 0, right: document.documentElement.clientWidth }
+  return { lines: numbers, blocks: [], left: Math.max(0, left), right }
+}
+
 /** Zwraca `null`, gdy w trakcie zaczął się nowszy szkic. */
 export async function sketchPage(stale: () => boolean, skip?: ReadonlySet<Element>): Promise<Sketch | null> {
+  const hinted = hintedSketch()
+  if (hinted) return hinted
   const root = document.body ?? document.documentElement
   const lines: number[] = []
   const blocks: number[] = []

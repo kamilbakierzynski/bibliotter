@@ -235,12 +235,17 @@ function Pane({ sheet }: { sheet: Sheet }): React.JSX.Element {
   )
 }
 
+/**
+ * Uchwyt idzie za ręką bez sprężyny. Sprężyna w ruchu zdejmowała dokumenty na zrzuty, a te
+ * odświeżały się co kilkadziesiąt milisekund, więc treść zmieniała szerokość skokami. Bez niej
+ * układ stoi w miejscu, które wskazuje kursor, więc żywe widoki zostają i przelewają tekst co klatkę.
+ */
 function SplitHandle(): React.JSX.Element {
   const dragging = useRef(false)
   const move = (e: PointerEvent<HTMLElement>): void => {
     if (!dragging.current) return
     const r = els.stage.getBoundingClientRect()
-    ratio.to(clamp((e.clientX - r.left) / r.width, 0.28, 0.72))
+    ratio.set(clamp((e.clientX - r.left) / r.width, 0.28, 0.72))
     touch()
   }
   return (

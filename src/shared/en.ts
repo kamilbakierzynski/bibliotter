@@ -657,5 +657,18 @@ export const EN: Record<string, string> = {
   'Widok pliku': 'File view',
   'bez zmian': 'no changes',
   'Odśwież plik': 'Reload file',
-  'Niezmienione wiersze: $': 'Unchanged lines: $'
+  'Niezmienione wiersze: $': 'Unchanged lines: $',
+  'Uwagi zapisują się w dokumentach z biblioteki, a ten arkusz to plik z dysku.': 'Notes are saved in library documents, and this sheet is a file from disk.',
+  'Filtruj pliki': 'Filter files',
+  'Pusty folder': 'Empty folder',
+  'Nie ma takich plików': 'No matching files',
+  'Pokazano pierwsze $ trafień': 'Showing the first $ matches',
+  'Wybierz plik z drzewa': 'Pick a file from the tree',
+  'Drzewo plików': 'File tree',
+  'Pominięty w .gitignore': 'Ignored by .gitignore',
+  'Nowy': 'New',
+  'Dodany': 'Added',
+  'Zmieniony': 'Modified',
+  'Przemianowany': 'Renamed',
+  'Usunięty': 'Deleted'
 }

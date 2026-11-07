@@ -3,7 +3,7 @@ import type { Annotation, OverlayEvent } from '../shared/annotations'
 import type { AutoLabelState } from '../shared/autoLabel'
 import type { FollowLink, LinkHoverCard } from '../shared/links'
 import type { TerminalOutput } from '../shared/terminal'
-import type { DocThumb, ScanProgress, ShellApi, ViewerKey, ViewerState } from '../shared/types'
+import type { DocEntry, DocThumb, ScanProgress, ShellApi, ViewerKey, ViewerState } from '../shared/types'
 
 function subscribe<Payload>(channel: string, listener: (payload: Payload) => void): () => void {
   const forward = (_event: IpcRendererEvent, payload: Payload): void => listener(payload)
@@ -64,6 +64,8 @@ const api: ShellApi = {
   docPair: (docId) => ipcRenderer.invoke('links:pair', docId),
   followLink: (docId, href, mode) => ipcRenderer.invoke('links:follow', docId, href, mode),
   setFileMode: (docId, mode) => ipcRenderer.invoke('files:mode', docId, mode),
+  setFileTree: (shown) => ipcRenderer.invoke('files:tree', shown),
+  onFileEntry: (listener) => subscribe<DocEntry>('files:entry', listener),
   linkShot: (request) => ipcRenderer.invoke('links:shot', request),
   onFollowLink: (listener) => subscribe<FollowLink>('viewer:follow-link', listener),
   listAnnotations: () => ipcRenderer.invoke('annotations:list'),

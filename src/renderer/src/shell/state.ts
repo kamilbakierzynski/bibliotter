@@ -323,7 +323,8 @@ export const focusedDoc = (): DocEntry | null => {
   const id = focusedId()
   return id ? (data.entries.get(id) ?? null) : null
 }
-export const canAnnotate = (doc: DocEntry | null): boolean => doc?.classification === 'document'
+/** Arkusz pliku udaje dokument, ale uwagi i etykiety zapisują się tylko przy dokumencie z biblioteki. */
+export const canAnnotate = (doc: DocEntry | null): boolean => doc?.classification === 'document' && !doc.file
 export const openNotes = (docId: string): Annotation[] =>
   data.annotations.filter((note) => note.docId === docId && note.status === 'open')
 export const findNote = (id: string | null): Annotation | undefined =>

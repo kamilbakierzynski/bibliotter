@@ -26,7 +26,7 @@ ${prose}
 
 ## Start
 
-Funkcja [start](../src/app.ts#L140-L142) uruchamia wszystko. Nowy skrypt to [narzędzie](../src/tool.py), a obraz to [logo](../src/logo.png).
+Funkcja [start](../src/app.ts#L140-L142) uruchamia wszystko. Nowy skrypt to [narzędzie](../src/tool.py), a obraz to [logo](../src/logo.png). Całość leży w [folderze](../src/).
 
 Limit leży w \`src/app.ts:5\`, a \`src/brak.ts\` jeszcze nie powstał.
 
@@ -84,6 +84,9 @@ export async function fileSheetFlow(workspace, { check, entry = projectRoot, sho
   await writeFile(join(repo, 'docs', 'notatki.md'), doc)
   await writeFile(join(repo, 'src', 'app.ts'), `${before}\n`)
   await writeFile(join(repo, 'src', 'logo.png'), Buffer.from([137, 80, 78, 71, 0, 0]))
+  await writeFile(join(repo, '.gitignore'), 'build/\n')
+  await mkdir(join(repo, 'build'), { recursive: true })
+  await writeFile(join(repo, 'build', 'out.js'), 'void 0\n')
   const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' })
   git('init', '-q', '-b', 'main')
   git('add', '.')
@@ -120,6 +123,91 @@ export async function fileSheetFlow(workspace, { check, entry = projectRoot, sho
     })
     if (shots && file) await shots('plik', shell, file)
 
+    await check('minimapa dostaje szkic całego pliku, a nie tylko wyrenderowanych wierszy', async () => {
+      await until(() => file.evaluate(() => !!document.getElementById('bibliotter-sketch')), 'szkic strony')
+      const measure = () =>
+        file.evaluate(() => {
+          const lines = JSON.parse(document.getElementById('bibliotter-sketch').textContent)
+          let bottom = 0
+          for (let i = 1; i < lines.length; i += 5) bottom = Math.max(bottom, lines[i] + lines[i + 2])
+          // Pod treścią edytora strona ma jeszcze margines, więc koniec pliku to dół `.cm-content`.
+          const end = document.querySelector('.cm-content').getBoundingClientRect().bottom + scrollY
+          const rowH = parseFloat(getComputedStyle(document.querySelector('.cm-line')).lineHeight)
+          return { bars: lines.length / 5, bottom, end, rowH, rendered: document.querySelectorAll('.cm-line').length }
+        })
+      // Strona dopisuje szkic po każdym przeliczeniu wysokości wierszy, więc czekamy, aż dogoni układ.
+      await until(async () => {
+        const now = await measure()
+        return now.bottom > now.end - 3 * now.rowH
+      }, 'szkic do końca pliku', 3000).catch(() => {})
+      const { bars, bottom, end, rowH, rendered } = await measure()
+      // Pasek pierwszego rzędu wiersza z linku ma leżeć tam, gdzie ten rząd naprawdę jest.
+      const drift = await file.evaluate((row) => {
+        const lines = JSON.parse(document.getElementById('bibliotter-sketch').textContent)
+        const target = document.querySelector('.cm-line.cm-target').getBoundingClientRect()
+        const real = target.top + scrollY + row / 2
+        let best = Infinity
+        for (let i = 1; i < lines.length; i += 5) best = Math.min(best, Math.abs(lines[i] + lines[i + 2] / 2 - real))
+        return best
+      }, rowH)
+      assert.ok(drift < 3, `pasek wiersza z linku odjechał o ${drift} px`)
+      assert.ok(bars >= 220, `szkic ma ${bars} pasków`)
+      assert.ok(rendered < 220, `CodeMirror wyrenderował wszystkie ${rendered} wierszy, więc test niczego nie sprawdza`)
+      // Ostatni wiersz pliku jest pusty, więc ostatni pasek kończy się najwyżej dwa rzędy nad dołem treści.
+      assert.ok(bottom > end - 3 * rowH, `szkic kończy się na ${bottom}, a treść na ${end} px`)
+    })
+
+    await check('obok pliku stoi drzewo repozytorium z otwartym plikiem i stanem gita', async () => {
+      await until(() => file.evaluate(() => !!document.querySelector('#file-tree .ft-row.on')), 'wiersz otwartego pliku')
+      const tree = await file.evaluate(() =>
+        [...document.querySelectorAll('#file-tree .ft-row')].map((row) => ({
+          rel: row.dataset.rel,
+          on: row.classList.contains('on'),
+          mark: row.dataset.mark ?? null,
+          ignored: row.classList.contains('ignored'),
+          dot: !!row.querySelector('.ft-dot')
+        }))
+      )
+      const at = (rel) => tree.find((row) => row.rel === rel)
+      assert.equal(at('src/app.ts')?.on, true, 'otwarty plik nie jest zaznaczony')
+      assert.equal(at('src/app.ts')?.mark, 'M')
+      assert.equal(at('src/tool.py')?.mark, 'U')
+      assert.equal(at('src')?.dot, true, 'folder ze zmianami nie ma kropki')
+      assert.equal(at('build')?.ignored, true, 'folder z .gitignore nie jest przygaszony')
+      assert.deepEqual(tree.slice(0, 4).map((row) => row.rel), ['build', 'docs', 'src', 'src/app.ts'])
+      const left = await file.evaluate(() => document.querySelector('.cm-content').getBoundingClientRect().left)
+      assert.ok(left > 200, 'kod nie odsunął się od drzewa')
+    })
+
+    await check('przeciąganie podziału zostawia żywe dokumenty i zmienia ich szerokość od razu', async () => {
+      const handle = await shell.locator('#splitHandle').boundingBox()
+      const x = handle.x + handle.width / 2
+      const y = handle.y + handle.height / 2
+      const widthOf = () => file.evaluate(() => innerWidth)
+      const start = await widthOf()
+      await shell.mouse.move(x, y)
+      await shell.mouse.down()
+      let frames = 0
+      const widths = []
+      for (let step = 1; step <= 12; step++) {
+        await shell.mouse.move(x - step * 12, y)
+        await delay(40)
+        if (await shell.evaluate(() => !!document.querySelector('canvas.sheet-frame'))) frames++
+        widths.push(await widthOf())
+      }
+      await shell.mouse.up()
+      assert.equal(frames, 0, 'w trakcie przeciągania arkusz zszedł na zrzut')
+      assert.ok(widths.at(-1) > start + 100, `plik nie urósł: ${start} → ${widths.at(-1)}`)
+      assert.ok(new Set(widths).size >= 8, `szerokość zmieniała się skokami: ${widths.join(', ')}`)
+    })
+
+    await check('arkusz pliku nie przyjmuje uwag, więc zakreślacz się w nim nie włącza', async () => {
+      await shell.locator('.pane.focused .pl-title').click()
+      await shell.keyboard.press('m')
+      await delay(200)
+      assert.notEqual(await shell.evaluate(() => document.getElementById('app')?.dataset.tool), 'highlight')
+    })
+
     await check('przełącznik Zmiany pokazuje diff względem HEAD', async () => {
       const toggle = shell.locator('.pane.focused .file-seg button', { hasText: 'Zmiany' })
       assert.match(await toggle.textContent(), /\+2\s*−1/)
@@ -155,6 +243,44 @@ export async function fileSheetFlow(workspace, { check, entry = projectRoot, sho
       await clickLink(page, '../src/logo.png')
       await until(async () => (await app.evaluate(() => globalThis.outside)).length === 1, 'Eksplorator')
       assert.deepEqual(await app.evaluate(() => globalThis.outside), [join(repo, 'src', 'logo.png')])
+    })
+
+    await check('klik w drzewie otwiera plik w tym samym arkuszu', async () => {
+      await shell.keyboard.press('Escape')
+      await until(() => shell.evaluate(() => !document.querySelector('.pane.peek')), 'koniec zerknięcia')
+      // Zamknięte arkusze zostają w DOM, więc liczą się tylko te, które widać na scenie.
+      const shown = () =>
+        shell.evaluate(() =>
+          [...document.querySelectorAll('.pane[data-pane]')]
+            .filter((pane) => {
+              const box = pane.getBoundingClientRect()
+              return box.width > 50 && box.right > 0 && box.left < innerWidth && Number(getComputedStyle(pane).opacity) > 0.5
+            })
+            .map((pane) => pane.querySelector('.pl-title')?.textContent ?? '')
+        )
+      await until(async () => (await shown()).length === 2, 'para arkuszy po zerknięciu')
+      const before = await shown()
+      assert.ok(before.includes('app.ts'), `przed klikiem widać: ${before.join(', ')}`)
+      const { x, y } = await file.evaluate(() => {
+        const box = document.querySelector('#file-tree .ft-row[data-rel="src/tool.py"]').getBoundingClientRect()
+        return { x: box.x + 30, y: box.y + box.height / 2 }
+      })
+      await file.mouse.click(x, y)
+      await until(async () => (await shown()).includes('tool.py'), 'tool.py w arkuszu')
+      await delay(400)
+      const after = await shown()
+      assert.equal(await shell.evaluate(() => !!document.querySelector('.pane.peek')), false, 'klik w drzewie otworzył zerknięcie')
+      assert.deepEqual(after, before.map((title) => (title === 'app.ts' ? 'tool.py' : title)), `po kliku widać: ${after.join(', ')}`)
+    })
+
+    await check('link do folderu otwiera w apce drzewo rozwinięte do tego folderu', async () => {
+      await clickLink(page, '../src/')
+      const folder = await pageAt(app, (view) => view.evaluate(() => document.documentElement.hasAttribute('data-folder')), 'arkusz folderu')
+      await until(() => folder.evaluate(() => !!document.querySelector('#file-tree .ft-row[data-rel="src/app.ts"]')), 'pliki folderu')
+      assert.equal(await folder.evaluate(() => document.querySelector('#file-tree .ft-row[data-rel="src"]')?.getAttribute('aria-expanded')), 'true')
+      assert.equal(await app.evaluate(() => globalThis.outside.length), 1, 'folder poszedł do Eksploratora')
+      assert.equal(await folder.evaluate(() => document.getElementById('bibliotter-sketch')?.textContent), '[]', 'minimapa dostała szkic drzewa')
+      if (shots) await shots('folder', shell, folder)
     })
   } finally {
     await app.close()
