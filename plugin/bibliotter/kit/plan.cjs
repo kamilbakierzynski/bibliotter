@@ -100,14 +100,19 @@ module.exports = function planKit(ctx) {
   }
   function planSection(heading, where) {
     if (!planMd) {
-      problem(`${where}: points into the plan, but doc.json has no "plan" file`)
+      // Brak pliku planu zgłosił już build; kolejne błędy o każdym odnośniku tylko by go zasłoniły.
+      if (!doc.plan) problem(`${where}: points into the plan, but doc.json has no "plan" file`)
       return null
     }
-    const wanted = String(heading).trim()
-    const found = planMd.headings.find((item) => item.text === wanted || item.id === wanted) ?? planMd.headings.find((item) => item.text.toLowerCase() === wanted.toLowerCase())
+    // Nagłówek można podać tak, jak stoi w Markdownie (z `kodem` i **wyróżnieniem**), jako tekst albo jako kotwicę.
+    const wanted = String(heading).trim().replace(/^#+\s*/, '')
+    const plain = headingText(wanted)
+    const found =
+      planMd.headings.find((item) => item.text === plain || item.id === wanted) ??
+      planMd.headings.find((item) => item.text.toLowerCase() === plain.toLowerCase())
     if (!found) {
-      const names = planMd.headings.slice(0, 12).map((item) => `"${item.text}"`).join(', ')
-      problem(`${where}: no heading "${wanted}" in ${basename(planMd.path)}. Headings: ${names}`)
+      const names = planMd.headings.slice(0, 40).map((item) => `"${item.text}"`).join(', ')
+      problem(`${where}: no heading "${wanted}" in ${basename(planMd.path)}. Headings: ${names}${planMd.headings.length > 40 ? ', …' : ''}`)
       return null
     }
     return { ...found, href: `${planMd.href}#${found.id}` }
@@ -156,6 +161,8 @@ module.exports = function planKit(ctx) {
   const stages = []
   for (const step of steps) (stages[step.level] ??= []).push(step)
   const parallel = stages.some((stage) => stage && stage.length > 1)
+  // W planie z równoległymi etapami układ nie mówi, po którym kroku idzie dany krok, więc karta to pisze.
+  const showDeps = (step) => step.deps.length > 0 && (step.explicitAfter || parallel)
 
   /* Pliki zebrane ze wszystkich kroków. Plik tworzony w planie zostaje nowy, choć później się zmienia. */
   const files = new Map()
@@ -241,7 +248,7 @@ module.exports = function planKit(ctx) {
         const meta = [
           step.status && step.status !== 'todo' ? `<span class="st">${T.stepStatus[step.status]}</span>` : '',
           step.files.length ? T.files(step.files.length) : '',
-          step.explicitAfter && step.deps.length > 0 ? T.after(step.deps.map((dep) => byId.get(dep)?.n ?? '?')) : ''
+          showDeps(step) ? T.after(step.deps.map((dep) => byId.get(dep)?.n ?? '?')) : ''
         ]
           .filter(Boolean)
           .join(' · ')
@@ -264,7 +271,7 @@ module.exports = function planKit(ctx) {
       if (placed.steps.includes(id)) problem(`step "${id}" is placed twice`)
       placed.steps.push(id)
       const status = step.status && step.status !== 'todo' ? `<span class="st">${T.stepStatus[step.status]}${step.commitText ? ` · ${escape(step.commitText)}` : ''}</span>` : ''
-      const after = step.explicitAfter && step.deps.length > 0 ? `<span>${T.after(step.deps.map((dep) => stepLink(dep)))}</span>` : ''
+      const after = showDeps(step) ? `<span>${T.after(step.deps.map((dep) => stepLink(dep)))}</span>` : ''
       const section = step.planSection?.()
       const fileList = step.files.length
         ? `<ul class="step-files">${step.files.map((file) => `<li>${glyph(file.change)}<code>${escape(file.path)}</code><span class="what">${T.fileChange[file.change]}</span>${file.note ? `<span class="fnote">${file.note}</span>` : ''}</li>`).join('')}</ul>`
@@ -310,7 +317,8 @@ module.exports = function planKit(ctx) {
           const pros = (option.pros ?? []).map((text) => `<li class="pro">${text}</li>`).join('')
           const cons = (option.cons ?? []).map((text) => `<li class="con">${text}</li>`).join('')
           const tag = item.chosen === index ? `<span class="pill solid">${T.chosen}</span>` : option.recommended && !item.decided ? `<span class="pill solid">${T.recommend}</span>` : option.recommended ? `<span class="pill">${T.recommend}</span>` : ''
-          return `<div class="dec-opt${cls ? ` ${cls}` : ''}"><p class="dec-name"><span class="dec-mark">${letters[index]}</span><span>${option.text}</span>${tag}</p>${option.detail ? `<p class="dec-detail">${option.detail}</p>` : ''}${pros || cons ? `<ul class="dec-pc">${pros}${cons}</ul>` : ''}</div>`
+          // Plakietka stoi nad nazwą, bo przy trzech opcjach w wierszu zabierałaby nazwie miejsce.
+          return `<div class="dec-opt${cls ? ` ${cls}` : ''}">${tag ? `<p class="dec-tag">${tag}</p>` : ''}<p class="dec-name"><span class="dec-mark">${letters[index]}</span><span>${option.text}</span></p>${option.detail ? `<p class="dec-detail">${option.detail}</p>` : ''}${pros || cons ? `<ul class="dec-pc">${pros}${cons}</ul>` : ''}</div>`
         })
         .join('')
       const recIndex = (item.options ?? []).findIndex((option) => option.recommended)
@@ -358,7 +366,8 @@ module.exports = function planKit(ctx) {
       const target = spec.target ? spec.target.replace(/\\/g, '/') : ''
       const exists = target ? fileAt(target).exists : false
       const where = target ? (exists ? T.sketchChange(target) : T.sketchNew(target)) : ''
-      return `<figure class="listing sketch"><span class="sketch-tag">${T.sketch}</span>${ctx.sketchBlock(lines, target || spec.file)}<figcaption>${T.sketch} ${number}. ${escape(where)}${where ? ', ' : ''}${T.sketchNote}.${spec.caption ? ` ${spec.caption}` : ''}</figcaption></figure>`
+      const phrase = where ? `${escape(where)}, ${T.sketchNote}` : T.sketchNote
+      return `<figure class="listing sketch"><span class="sketch-tag">${T.sketch}</span>${ctx.sketchBlock(lines, target || spec.file)}<figcaption>${T.sketch} ${number}. ${phrase[0].toUpperCase()}${phrase.slice(1)}.${spec.caption ? ` ${spec.caption}` : ''}</figcaption></figure>`
     },
 
     /* Plan w pigułce pod streszczeniem: kafle z liczbami, każdy prowadzi do swojej części. */
@@ -377,8 +386,9 @@ module.exports = function planKit(ctx) {
         tiles.push(tile(`#decyzja-${escape(first)}`, T.glance.decisions, open || decisionIds.length, open ? T.glance.open(open) : T.glance.closed))
       }
       if (risks.length > 0) {
-        const top = Math.max(...risks.map((risk) => band(score(risk))))
-        tiles.push(tile('#ryzyka', T.glance.risks, risks.length, T.glance.top(T.glance.bands[top - 1])))
+        // Od najpoważniejszych: ile ryzyk wysokich, średnich i niskich.
+        const byBand = [3, 2, 1].map((level) => [level, risks.filter((risk) => band(score(risk)) === level).length]).filter(([, count]) => count > 0)
+        tiles.push(tile('#ryzyka', T.glance.risks, risks.length, byBand.map(([level, count]) => T.glance.band(level, count)).join(', ')))
       }
       return `<section class="glance" aria-label="${T.glance.label}"><h2>${T.glance.label}</h2><div class="tiles" style="--n:${tiles.length}">${tiles.join('')}</div></section>`
     },

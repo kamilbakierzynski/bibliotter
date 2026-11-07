@@ -69,7 +69,7 @@ module.exports = function figures(ctx) {
     if (list.length === 0) return ''
     const width = Math.max(...list.map((line) => textWidth(line, 10.5, true))) + 8
     const height = list.length * 13 + 4
-    const left = anchor === 'middle' ? x - width / 2 : x - 4
+    const left = anchor === 'middle' ? x - width / 2 : anchor === 'end' ? x - width + 4 : x - 4
     return `<rect class="bg" x="${left.toFixed(1)}" y="${(y - 11).toFixed(1)}" width="${width.toFixed(1)}" height="${height}" rx="3"/>${lines(list, x, y, 13, 'el', anchor)}`
   }
 
@@ -92,16 +92,23 @@ module.exports = function figures(ctx) {
     return d
   }
 
-  function legend(used) {
-    const shown = STATES.filter((name) => used.has(name))
-    if (shown.length < 2 && !shown.some((name) => name !== 'same')) return ''
-    return `<p class="legend">${shown.map((name) => `<span class="key"><i class="fs ${name}"></i>${T.states[name]}</span>`).join('')}</p>`
+  /* Legenda: pudełka mówią o częściach, linie o połączeniach, więc mają osobne wpisy. */
+  function legend(used, words) {
+    const boxes = STATES.filter((name) => used.boxes.has(name))
+    const links = STATES.filter((name) => name !== 'same' && used.lines.has(name))
+    const showBoxes = boxes.some((name) => name !== 'same') ? boxes : []
+    if (showBoxes.length === 0 && links.length === 0) return ''
+    const keys = [
+      ...showBoxes.map((name) => `<span class="key"><i class="fs ${name}"></i>${T.states[name]}</span>`),
+      ...links.map((name) => `<span class="key"><i class="ls ${name}"></i>${words[name]}</span>`)
+    ]
+    return `<p class="legend">${keys.join('')}</p>`
   }
 
-  function frame(id, spec, svg, height, used) {
+  function frame(id, spec, svg, height, used, words) {
     const label = spec.alt ?? plain(spec.caption)
     if (!spec.caption) warn(`figure "${id}": add a "caption" that says what to look at`)
-    return `<figure class="fig diagram wide" id="${escape(id)}"><div class="canvas"><svg viewBox="0 0 ${W} ${Math.ceil(height)}" role="img" aria-label="${escape(label)}">${svg}</svg></div>${legend(used)}${spec.caption ? `<figcaption>${spec.caption}</figcaption>` : ''}</figure>`
+    return `<figure class="fig diagram wide" id="${escape(id)}"><div class="canvas"><svg viewBox="0 0 ${W} ${Math.ceil(height)}" role="img" aria-label="${escape(label)}">${svg}</svg></div>${legend(used, words)}${spec.caption ? `<figcaption>${spec.caption}</figcaption>` : ''}</figure>`
   }
 
   /* Przepływ: tory to kolumny (np. procesy Electrona), wiersze ustawia autor. */
@@ -113,7 +120,7 @@ module.exports = function figures(ctx) {
       problem(`${where}: a flow needs "nodes"`)
       return ''
     }
-    const used = new Set()
+    const used = { boxes: new Set(), lines: new Set() }
     const byId = new Map()
     const cells = new Map()
     for (const node of nodes) {
@@ -121,7 +128,7 @@ module.exports = function figures(ctx) {
       if (byId.has(node.id)) problem(`${where}: node "${node.id}" is defined twice`)
       byId.set(node.id, node)
       node.state = state(node.state, `${where} node "${node.id}"`)
-      used.add(node.state)
+      used.boxes.add(node.state)
       node.col = node.lane ?? node.col ?? 0
       node.row = node.row ?? 0
       if (lanes.length > 0 && (node.col < 0 || node.col >= lanes.length)) problem(`${where}: node "${node.id}" has lane ${node.col}, but there are ${lanes.length} lanes (counted from 0)`)
@@ -173,6 +180,7 @@ module.exports = function figures(ctx) {
       pairs.set(key, [...(pairs.get(key) ?? []), edge])
     }
     let edgeSvg = ''
+    const segments = []
     for (const edge of spec.edges ?? []) {
       const a = byId.get(edge.from)
       const b = byId.get(edge.to)
@@ -185,7 +193,7 @@ module.exports = function figures(ctx) {
         continue
       }
       const name = state(edge.state, `${where} edge ${edge.from} → ${edge.to}`)
-      used.add(name)
+      used.lines.add(name)
       const group = pairs.get([edge.from, edge.to].sort().join('\n'))
       const shift = (group.indexOf(edge) - (group.length - 1) / 2) * 14
       let points
@@ -208,9 +216,9 @@ module.exports = function figures(ctx) {
         const xx = a.cx + shift
         points = [[xx, dir > 0 ? a.y + a.h : a.y], [xx, dir > 0 ? b.y : b.y + b.h]]
         label = text ? wrap(text, colW / 2 - 14, 10.5, true) : []
-        lx = xx + 8
+        anchor = shift < 0 ? 'end' : 'start'
+        lx = shift < 0 ? xx - 8 : xx + 8
         ly = (points[0][1] + points[1][1]) / 2 - ((label.length - 1) * 13) / 2 + 4
-        anchor = 'start'
       } else if ((edge.route ?? 'vh') === 'vh') {
         // Najpierw w pionie, bo poziome odcinki w wierszu zajmuje zwykle główna droga.
         const dx = b.col > a.col ? 1 : -1
@@ -241,9 +249,29 @@ module.exports = function figures(ctx) {
         })
         if (hit) warn(`${where}: edge ${edge.from} → ${edge.to} crosses node "${other.id}"; move a node or set "route": "hv"`)
       }
+      for (const [i, point] of points.slice(1).entries()) segments.push({ edge, a: points[i], b: point })
       const dashed = edge.dashed || name === 'removed' ? ' dashed' : ''
       const ends = `${edge.both ? ` marker-start="url(#m-${id}-${name})"` : ''} marker-end="url(#m-${id}-${name})"`
       edgeSvg += `<g class="edge ${name}${dashed}"><path d="${path(points)}"${ends}/>${edgeLabel(label, lx, ly, anchor)}</g>`
+    }
+
+    // Dwie krawędzie na jednym odcinku czytają się jak jedna, a ich napisy stają obok siebie.
+    const reported = new Set()
+    for (const [i, one] of segments.entries()) {
+      for (const two of segments.slice(i + 1)) {
+        if (one.edge === two.edge) continue
+        const flat = (seg) => Math.abs(seg.a[1] - seg.b[1]) < 0.5
+        const upright = (seg) => Math.abs(seg.a[0] - seg.b[0]) < 0.5
+        const overlap = (p1, p2, q1, q2) => Math.min(Math.max(p1, p2), Math.max(q1, q2)) - Math.max(Math.min(p1, p2), Math.min(q1, q2))
+        const along =
+          (flat(one) && flat(two) && Math.abs(one.a[1] - two.a[1]) < 4 && overlap(one.a[0], one.b[0], two.a[0], two.b[0]) > 12) ||
+          (upright(one) && upright(two) && Math.abs(one.a[0] - two.a[0]) < 4 && overlap(one.a[1], one.b[1], two.a[1], two.b[1]) > 12)
+        const key = `${one.edge.from}>${one.edge.to}|${two.edge.from}>${two.edge.to}`
+        if (along && !reported.has(key)) {
+          reported.add(key)
+          warn(`${where}: edges ${one.edge.from} → ${one.edge.to} and ${two.edge.from} → ${two.edge.to} run along the same line; move a node or set "route"`)
+        }
+      }
     }
 
     let nodeSvg = ''
@@ -252,7 +280,7 @@ module.exports = function figures(ctx) {
       nodeSvg += `<g class="node ${node.state}"><rect x="${node.x.toFixed(1)}" y="${node.y.toFixed(1)}" width="${boxW.toFixed(1)}" height="${node.h}" rx="8"/>${lines(node.lines, node.cx.toFixed(1), labelTop.toFixed(1), 17, 'nl')}${node.subLines.length ? lines(node.subLines, node.cx.toFixed(1), (labelTop + (node.lines.length - 1) * 17 + 18).toFixed(1), 14, 'ns') : ''}</g>`
     }
     // Krawędzie pod pudełkami, ale napisy krawędzi nad nimi: napis bywa szerszy niż odstęp.
-    return frame(id, spec, svg + edgeSvg.replace(/<rect class="bg"[\s\S]*?<\/text>/g, '') + nodeSvg + edgeSvg.replace(/<path [^>]*\/>/g, ''), height, used)
+    return frame(id, spec, svg + edgeSvg.replace(/<rect class="bg"[\s\S]*?<\/text>/g, '') + nodeSvg + edgeSvg.replace(/<path [^>]*\/>/g, ''), height, used, T.lineStates)
   }
 
   /* Sekwencja: uczestnicy w kolumnach, wiadomości z góry na dół, numerowane. */
@@ -263,7 +291,7 @@ module.exports = function figures(ctx) {
       problem(`${where}: a sequence needs at least two "actors"`)
       return ''
     }
-    const used = new Set()
+    const used = { boxes: new Set(), lines: new Set() }
     const byId = new Map(actors.map((actor, index) => [actor.id, Object.assign(actor, { index })]))
     if (byId.size !== actors.length) problem(`${where}: actor ids must be unique`)
     const colW = W / actors.length
@@ -271,7 +299,7 @@ module.exports = function figures(ctx) {
     for (const actor of actors) {
       if (!actor.id || !actor.label) problem(`${where}: every actor needs "id" and "label"`)
       actor.state = state(actor.state, `${where} actor "${actor.id}"`)
-      used.add(actor.state)
+      used.boxes.add(actor.state)
       actor.x = colW * (actor.index + 0.5)
       actor.lines = wrap(actor.label, boxW - 18, 13, false)
       actor.subLines = actor.sub ? wrap(actor.sub, boxW - 18, 10.5, true) : []
@@ -312,7 +340,7 @@ module.exports = function figures(ctx) {
       }
       number += 1
       const name = state(item.state, at)
-      used.add(name)
+      used.lines.add(name)
       const dashed = item.reply || name === 'removed' ? ' dashed' : ''
       const text = `${number}  ${item.label ?? ''}`.trim()
       if (a === b) {
@@ -336,7 +364,7 @@ module.exports = function figures(ctx) {
       svg += `<g class="node ${actor.state}"><rect x="${(actor.x - boxW / 2).toFixed(1)}" y="${boxY}" width="${boxW.toFixed(1)}" height="${actor.h}" rx="8"/>${lines(actor.lines, actor.x.toFixed(1), labelTop, 17, 'nl')}${actor.subLines.length ? lines(actor.subLines, actor.x.toFixed(1), labelTop + (actor.lines.length - 1) * 17 + 17, 14, 'ns') : ''}</g>`
     }
     if (number === 0) problem(`${where}: a sequence needs "messages"`)
-    return frame(id, spec, svg + body, bottom + 12, used)
+    return frame(id, spec, svg + body, bottom + 12, used, T.callStates)
   }
 
   return {

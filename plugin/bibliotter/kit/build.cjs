@@ -72,6 +72,8 @@ const TEXT = {
     biblioIntroPlanWorktree: 'Fragmenty kodu pochodzą z plików na dysku z dnia {date}, czyli ze stanu, od którego plan zaczyna, i mogły się od tego czasu zmienić. Wyniki eksperymentów pochodzą z plików zapisanych przy ich uruchomieniu.',
     figure: 'Rysunek',
     states: { same: 'bez zmian', changed: 'zmienione', new: 'nowe', removed: 'usunięte' },
+    lineStates: { changed: 'zmienione połączenie', new: 'nowe połączenie', removed: 'usunięte połączenie' },
+    callStates: { changed: 'zmienione wywołanie', new: 'nowe wywołanie', removed: 'usunięte wywołanie' },
     fileChange: { new: 'nowy', changed: 'zmiana', removed: 'usunięty' },
     stepOf: (n, all) => `Krok ${n} z ${all}`,
     stepWord: 'krok',
@@ -116,8 +118,7 @@ const TEXT = {
       done: (n) => `${n} ${plural(n, 'zrobiony', 'zrobione', 'zrobionych')}`,
       open: (n) => `${plural(n, 'czeka', 'czekają', 'czeka')} na Ciebie`,
       closed: 'rozstrzygnięte',
-      top: (word) => `najwyższe ${word}`,
-      bands: ['niskie', 'średnie', 'wysokie']
+      band: (level, n) => `${n} ${[plural(n, 'niskie', 'niskie', 'niskich'), plural(n, 'średnie', 'średnie', 'średnich'), plural(n, 'wysokie', 'wysokie', 'wysokich')][level - 1]}`
     }
   },
   en: {
@@ -163,6 +164,8 @@ const TEXT = {
     biblioIntroPlanWorktree: 'Code excerpts come from the files on disk on {date}, the state the plan starts from, and may have changed since. Experiment results come from files saved when they ran.',
     figure: 'Figure',
     states: { same: 'unchanged', changed: 'changed', new: 'new', removed: 'removed' },
+    lineStates: { changed: 'changed connection', new: 'new connection', removed: 'removed connection' },
+    callStates: { changed: 'changed call', new: 'new call', removed: 'removed call' },
     fileChange: { new: 'new', changed: 'changed', removed: 'removed' },
     stepOf: (n, all) => `Step ${n} of ${all}`,
     stepWord: 'step',
@@ -203,8 +206,7 @@ const TEXT = {
       done: (n) => `${n} done`,
       open: () => 'waiting for you',
       closed: 'decided',
-      top: (word) => `highest ${word}`,
-      bands: ['low', 'medium', 'high']
+      band: (level, n) => `${n} ${['low', 'medium', 'high'][level - 1]}`
     }
   }
 }
@@ -502,9 +504,11 @@ const figureKit = figuresKit({ T, escape, problem, warn, checkFile })
 function planFile() {
   if (!doc.plan) return null
   const spec = typeof doc.plan === 'string' ? { file: doc.plan } : doc.plan
-  const path = resolve(repo, String(spec.file ?? ''))
-  if (!spec.file || !existsSync(path)) {
-    problem(`"plan": ${path} not found; give an absolute path or one relative to the repository`)
+  // Względna ścieżka to najpierw folder roboczy, bo tam leży plan napisany na potrzeby dokumentu.
+  const candidates = [resolve(work, String(spec.file ?? '')), resolve(repo, String(spec.file ?? ''))]
+  const path = candidates.find((candidate) => spec.file && existsSync(candidate))
+  if (!path) {
+    problem(`"plan": ${spec.file} not found in the work folder or the repository; give an absolute path or one relative to either`)
     return null
   }
   if (extname(path).toLowerCase() !== '.md') warn(`"plan": ${basename(path)} is not a .md file`)
@@ -675,6 +679,7 @@ function listingHtml(id) {
     problem(`listing "${id}" is used in essay.html but missing in doc.json`)
     return ''
   }
+  spec.used = true
   const part = resolvePart(spec, `listing "${id}"`)
   if (!part) return ''
   if (part.to - part.from + 1 > 12) warn(`listing "${id}" has ${part.to - part.from + 1} lines. In the text, keep listings at 12 or fewer; the bibliography can hold more.`)
@@ -741,6 +746,8 @@ const namesInCode = (block) =>
 const figures = doc.figures ?? {}
 const MARKER = /^<!--\s*(check|listing|figure|step|decision|sketch|roadmap|files|risks)\s*(?::\s*([\w-]+))?\s*-->$/
 let sketchNumber = 0
+const placedFigures = new Set()
+const placedSketches = new Set()
 const headings = []
 const blocks = essay.trim().split(/\n\s*\n/)
 const body = blocks
@@ -764,7 +771,11 @@ const body = blocks
         return `<div class="row"><div class="col">${html}</div></div>`
       }
       // Kod szkicu nie przechodzi przez przypisy, bo {{ }} bywa w nim zwykłym kodem.
-      if (kind === 'sketch') return `<div class="row"><div class="col">${plan.sketch(id, ++sketchNumber)}</div></div>`
+      if (kind === 'sketch') {
+        placedSketches.add(id)
+        return `<div class="row"><div class="col">${plan.sketch(id, ++sketchNumber)}</div></div>`
+      }
+      if (kind === 'figure') placedFigures.add(id)
       const html = kind === 'figure' ? figureKit.render(id, figures[id]) : kind === 'step' || kind === 'decision' ? plan[kind](id) : plan[kind]()
       const used = []
       return rowHtml(citeAll(marks(html), used), used, kind === 'figure' || kind === 'roadmap')
@@ -793,6 +804,12 @@ if (headings.length > chapterLimit) warn(`${headings.length} chapters; more than
 plan.finish()
 for (const id of Object.keys(sources)) if (!numbers.has(id) && sources[id].body) problem(`source "${id}" is never cited`)
 for (const id of Object.keys(checks)) if (!checks[id].used) warn(`check "${id}" is defined but not placed in essay.html`)
+for (const id of Object.keys(listings)) if (!listings[id].used) warn(`listing "${id}" is defined but not placed; add <!--listing:${id}-->`)
+for (const id of Object.keys(figures)) if (!placedFigures.has(id)) warn(`figure "${id}" is defined but not placed; add <!--figure:${id}-->`)
+for (const id of Object.keys(doc.sketches ?? {})) if (!placedSketches.has(id)) warn(`sketch "${id}" is defined but not placed; add <!--sketch:${id}-->`)
+// Litera eksperymentu wpisana ręcznie rozjeżdża się z kolejnością przypisów.
+const typedLetters = [essay, ...(doc.annex ?? []).flatMap((item) => [item.title ?? '', item.note ?? ''])].join('\n').match(/\b(?:[Ee]ksperymen\w*|[Ee]xperiment)\s+[A-H]\b/g)
+if (typedLetters) warn(`experiment letters typed by hand (${[...new Set(typedLetters)].join(', ')}); write {{exp:id}}, because letters follow the order of citations`)
 if (Object.keys(checks).length > 3) warn('more than three questions turns an essay into a quiz')
 if (answerPositions.length >= 2 && answerPositions.every((at) => at === answerPositions[0])) warn('every question has its answer at the same position')
 
@@ -836,7 +853,7 @@ const annex = (doc.annex ?? [])
     }
     const lines = readWork(item.file).trimEnd().split('\n')
     const letter = String.fromCharCode(65 + index)
-    return `<h3 id="aneks-${letter.toLowerCase()}">${T.annex} ${letter}. ${escape(item.title ?? item.file)}</h3>${item.note ? `<p>${expFill(expMark(item.note))}</p>` : ''}<details><summary>${T.showFile.replace('{n}', lines.length)}</summary>${codeBlock(lines, 1, item.file)}</details>`
+    return `<h3 id="aneks-${letter.toLowerCase()}">${T.annex} ${letter}. ${expFill(expMark(escape(item.title ?? item.file)))}</h3>${item.note ? `<p>${expFill(expMark(item.note))}</p>` : ''}<details><summary>${T.showFile.replace('{n}', lines.length)}</summary>${codeBlock(lines, 1, item.file)}</details>`
   })
   .join('')
 
@@ -969,6 +986,7 @@ if (errors.length > 0) {
 }
 if (flag('--check')) {
   console.log(`ok: ${numbers.size} sources, ${headings.length} chapters, about ${minutes} min; would write ${out}`)
+  if (planMd?.copy) console.log(`would copy the plan to ${planMd.target}`)
   process.exit(0)
 }
 

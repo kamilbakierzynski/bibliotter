@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { analyzeHtml, classify } from '../src/main/classify'
-import { extractLinks, linkTarget } from '../src/main/docLinks'
+import { extractLinks, linkTarget, planHrefOf } from '../src/main/docLinks'
 import { renderMarkdown } from '../src/main/markdown'
 import { isIgnoredDirectory } from '../src/main/scanner'
 
@@ -56,7 +56,7 @@ function workFolder(name: string, essay: string, sources: Record<string, unknown
 const build = (folder: string, out: string) =>
   spawnSync(process.execPath, [BUILD, folder, '--out', out, '--no-exclude'], { encoding: 'utf8' })
 
-const planMarkdown = '---\ntitle: Plan stempla\n---\n# Plan stempla\n\n## Krok 1: stempel w cache\n\nTekst kroku.\n\n## Ryzyka\n\nPierwsze.\n\n## Ryzyka\n\nDrugie o tej samej nazwie.\n'
+const planMarkdown = '---\ntitle: Plan stempla\n---\n# Plan stempla\n\n## Krok 1: stempel w `cache`\n\nTekst kroku.\n\n## Ryzyka\n\nPierwsze.\n\n## Ryzyka\n\nDrugie o tej samej nazwie.\n'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function planDoc(): any {
@@ -90,7 +90,7 @@ function planDoc(): any {
       }
     },
     steps: [
-      { id: 'cache', title: 'Dodaj pamięć stempli', goal: 'Drugi odczyt nie liczy stempla.', size: 'S', plan: 'Krok 1: stempel w cache', files: [{ path: 'src/cache.ts', change: 'new' }, 'src/stamp.ts'], verify: 'Test pamięci przechodzi.' },
+      { id: 'cache', title: 'Dodaj pamięć stempli', goal: 'Drugi odczyt nie liczy stempla.', size: 'S', plan: '## Krok 1: stempel w `cache`', files: [{ path: 'src/cache.ts', change: 'new' }, 'src/stamp.ts'], verify: 'Test pamięci przechodzi.' },
       { id: 'use', title: 'Użyj pamięci w widoku', goal: 'Widok pyta pamięć.', size: 'M', files: ['src/stamp.ts'], verify: 'Ręczne otwarcie dwa razy.' }
     ],
     decisions: {
@@ -117,7 +117,8 @@ function planFolder(name: string, doc: any): string {
     join(folder, 'essay.html'),
     `<h2>Jak jest dziś</h2>\n\n<p>${prose}Funkcja liczy stempel przy każdym wywołaniu.{{stamp}}</p>\n\n<!--figure:droga-->\n\n<h2>Kroki</h2>\n\n<!--roadmap-->\n\n<!--step:cache-->\n\n<p>${prose}</p>\n\n<!--step:use-->\n\n<!--files-->\n\n<h2>Decyzje i ryzyka</h2>\n\n<!--decision:gdzie-->\n\n<!--risks-->\n\n<p>Ryzyko opisuje plik planu.{{risk}}</p>\n\n<p class="nocite">Nie mierzyłem czasu stempla.</p>`
   )
-  writeFileSync(join(folder, 'doc.json'), JSON.stringify({ ...doc, plan: join(folder, 'plan.md'), slug: name }))
+  // Względna ścieżka planu wskazuje folder roboczy, bo tam skill każe go napisać.
+  writeFileSync(join(folder, 'doc.json'), JSON.stringify({ ...doc, plan: 'plan.md', slug: name }))
   return folder
 }
 
@@ -228,6 +229,8 @@ describe('kit dokumentów explain', () => {
     expect(toPlan.map((target) => target?.fragment)).toContain('krok-1-stempel-w-cache')
     const back = extractLinks('markdown', copy).map((link) => linkTarget(link.href, copyPath)?.path)
     expect(back).toContain(out)
+    // Przełącznik w apce czyta plan z meta, a nie z linków w treści.
+    expect(linkTarget(planHrefOf(html) ?? '', out)?.path).toBe(copyPath)
   })
 
   it('odrzuca plan z błędnymi plikami, zależnościami i rysunkiem', () => {

@@ -41,7 +41,7 @@ Build with `node <kit>/build.cjs <folder>`. Flags: `--check` validates without w
 ```
 
 - `base`: the state the plan starts from. `{ "rev": "HEAD" }` (default) or any commit, or `{ "worktree": true }` when the plan builds on uncommitted work. Every excerpt defaults to it, and the file checks of steps and figures run against it. With a commit as the base, the build warns when a quoted file has uncommitted changes, because the starting point may then be different from what the user has.
-- `plan`: the Markdown plan, absolute or relative to the repository. Give `{ "file": "...", "copy": true }` to force a copy. When the file lies outside the folders Bibliotter scans, or in a folder the scanner skips such as `~/.claude`, the build copies it to `plan-<slug>.md` next to the document and puts a line at the top of the copy that links back. The document's header links to the plan, and its `<meta name="bibliotter-plan">` names it. Rebuild after the plan changes, because the copy and the section links are made at build time.
+- `plan`: the Markdown plan. A relative path is looked up first in the work folder, then in the repository, so `"plan": "plan.md"` finds the plan you wrote next to `doc.json`. Give `{ "file": "...", "copy": true }` to force a copy. When the file lies outside the folders Bibliotter scans, or in a folder the scanner skips such as `~/.claude`, the build copies it to `plan-<slug>.md` next to the document and puts a line at the top of the copy that links back. The document's header links to the plan, and its `<meta name="bibliotter-plan">` names it. Rebuild after the plan changes, because the copy and the section links are made at build time.
 - `slug`: stable file name. The output is `<main checkout>/explain/<branch>/plan-<slug>.html`; the `plan-` prefix is added when missing.
 - `branch`: optional. By default the branch checked out now.
 - `abstract`, question texts, step and decision texts may contain inline HTML such as `<code>` or `<kbd>`. Source notes are plain text.
@@ -58,12 +58,13 @@ Every source needs `kind` and `note`, one sentence saying what this source shows
 | `git` | `args`, `maxLines`, `width` | output of `git grep`, `log`, `show`, `diff`, `blame` or `ls-files`; `{base}` is replaced by the starting revision and dropped for `worktree` |
 | `run` | `file` (one path or a list), `command` | a saved experiment output, lettered A, B... in citation order |
 | `plan` | `heading`, `count` | a section of the Markdown plan; the citation links to that heading in the plan file |
-| `said` | `quote`, `who`, `when` | the user's exact words, for intent and decisions |
+| `said` | `quote`, `who`, `when`, `label` | the user's exact words, for intent and decisions; `label` replaces "rozmowa" in the margin, e.g. for a note from project memory |
 | `web` | `url`, `title`, `accessed`, `quote` | documentation of a library or platform; quote one sentence at most |
 | `doc` | `href`, `title` | another document, usually from the library |
 
-- `anchor` is text that the first line contains; prefer it over `lines`, because the build then fails when the code is gone. `before` moves the start, `count` is the number of lines, `nth` picks a later match. `rev` defaults to the base.
-- `heading` in a `plan` source is the heading text as written in the Markdown, without `#`, or its anchor id. The excerpt shows the start of that section, `count` lines (default 14).
+- `anchor` is text that the first line contains; prefer it over `lines` (`[from, to]`), because the build then fails when the code is gone. `count` is the number of lines and defaults to 1. `before` shifts the start: `-2` starts two lines above the anchor, `3` three lines below it. `nth` picks the nth match, counted from 1; the build warns when an anchor matches several lines, which happens when it is a substring of another line. `expect` is a fragment the excerpt must contain. `rev` defaults to the base.
+- `heading` in a `plan` source names a heading of the Markdown plan: copied as written (with `#`, `` `code` `` or `**bold**`), as its plain text, or as its anchor id. The excerpt shows the start of that section, `count` lines (default 14).
+- When a proposal relies on something that exists today, such as calling an existing function, cite that code too. The build asks for it when a paragraph names an existing identifier in `<code>` and cites nothing.
 
 ## essay.html
 
@@ -85,10 +86,13 @@ Blocks are separated by a blank line. Each block becomes a row with its sources 
 | `<!--listing:id-->` | a short listing of today's code from `listings` |
 | `<!--check:id-->` | a comprehension question from `checks`, as in explain-diff; use one at most |
 
-- Figures with a `<figcaption>` are numbered by the build. Give a hand-made figure an `id` to refer to it with `{{fig:id}}`.
+- Figures with a `<figcaption>` are numbered by the build, in the order they appear. `{{fig:id}}` works for every figure: a figure from `figures` is known by its key, a hand-made one by its `id` attribute. The roadmap is `kroki` and the file map `pliki`.
+- The build warns about figures, listings, sketches, steps and decisions that are defined but never placed.
 - A block whose first element has the class `wide` spans the margin too. A block whose first element has the class `nocite` makes no claim about the code, such as the list of what you did not verify.
 - No `<script>`, `<style>`, `<link>`, `<iframe>`, Shadow DOM or remote resources. Images must be `data:` URIs. Fold long content with `<details>`, never `display: none`.
-- Kit classes from explain-diff work here too: `.note` with a `.label`, `table.compare`, `figure.fig` with `.plate` for a grid of states.
+- `<div class="note"><span class="label">Łatwo przeoczyć</span><p>...</p></div>` corrects a likely misreading.
+- `<table class="compare">` with a header row shows the same case today and after the plan.
+- `<figure class="fig plate wide" style="--cols:2">` with a `.grid` lays out states: an empty `.head.blank`, one `.head` per column, then per row a `.side` and one `.cell` per column, each cell holding your drawing (styled in `style.css`) and a `.tag` with the state in words. The full example is in the explain-diff reference.
 - Colours: black and white with Geist. State is carried by mass: new is solid, changed has a thick outline, removed is dashed, unchanged is a thin grey line. Do not use orange, paper colours or amber.
 
 ## Figures
@@ -118,8 +122,9 @@ Boxes in lanes. Lanes are columns, ideally the boundaries that matter: Electron 
 ```
 
 - `label` is a word or three, `sub` a file or function in mono. Two nodes cannot share a lane and row.
-- Edges between boxes in one row run straight; two edges between the same pair are drawn apart with their labels above and below. An edge between rows goes down first, then sideways into the target; `"route": "hv"` goes sideways first. `"both": true` puts an arrowhead on each end, and `"dashed": true` marks something that is not a call, such as an event or a file read.
-- The build warns when an edge crosses another box; move a node to another row or change `route`.
+- An unchanged connection is a thin grey line, a changed one a thin black line and a new one a thick black line; the legend lists the states the figure uses, for boxes and for lines.
+- Edges between boxes in one row run straight; two edges between the same pair are drawn apart, with their labels above and below (or left and right in one lane). An edge between rows goes down first, then sideways into the target; `"route": "hv"` goes sideways first. `"both": true` puts an arrowhead on each end, and `"dashed": true` marks something that is not a call, such as an event or a file read.
+- The build warns when an edge crosses another box or runs along another edge; move a node to another row or change `route`.
 - Leave out what the argument does not turn on. Four lanes and six to eight nodes is plenty.
 
 ### Sequence
@@ -216,6 +221,22 @@ Actors in columns and messages from top to bottom, numbered, for the order of ca
 ```
 
 The file lives in the work folder; `target` is where the code will go. The sketch is drawn in a dashed frame and labelled as code that does not exist yet. Keep it under 16 lines.
+
+## Listings, questions and the appendix
+
+Listings show today's code in the text. Same fields as a `code` source, plus `caption`; keep them at 12 lines or fewer, the bibliography can hold longer excerpts:
+
+```json
+"listings": { "jump": { "file": "src/preload/outline.ts", "anchor": "export function jumpToHeading", "count": 9, "caption": "Spis treści przewija tak samo." } }
+```
+
+A question stops the reader to check a behaviour, with 2-4 options of similar length, exactly one `correct`, and a `why` for each. A plan uses one at most:
+
+```json
+"checks": { "q1": { "title": "co przewija", "question": "...", "options": [{ "text": "...", "why": "..." }, { "text": "...", "why": "...", "correct": true }] } }
+```
+
+The appendix holds files from the work folder in full, usually the experiment harness: `"annex": [{ "title": "Skrypt eksperymentu {{exp:size}}", "file": "harness/size.cjs", "note": "How to run it and what it stubs." }]`. Titles and notes may use `{{exp:id}}`; the build warns about experiment letters typed by hand, because letters follow the order of first citation.
 
 ## The end of the document
 
