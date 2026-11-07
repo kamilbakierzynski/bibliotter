@@ -159,7 +159,8 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true, maxRetries: 5 })
 })
 
-describe('kit dokumentów explain', () => {
+// Każdy test uruchamia kit i Gita jako osobne procesy, a przy pełnym zestawie to trwa dłużej niż 5 s.
+describe('kit dokumentów explain', { timeout: 30_000 }, () => {
   it('składa dokument, który biblioteka uznaje za dokument', () => {
     const out = join(root, 'explain', 'main', 'dobry.html')
     const result = build(workFolder('dobry', goodEssay, goodSources), out)

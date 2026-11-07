@@ -926,6 +926,7 @@ const tocItems = [
   ...(annex ? [`<li><a href="#aneks"><span class="n"></span><span>${T.annex}</span></a></li>`] : [])
 ].join('')
 
+// Apka szuka `bibliotter-plan` w pierwszych 16 KB strony (`planHrefOf` w src/main/docLinks.ts), więc meta stoją przed stylem.
 const html = `<!doctype html>
 <html lang="${lang}">
 <head>

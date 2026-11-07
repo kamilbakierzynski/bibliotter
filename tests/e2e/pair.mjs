@@ -59,6 +59,17 @@ const until = (view, test, argument, what = 'warunek') =>
     throw new Error(`${what}: ${error.message.split('\n')[0]}`)
   })
 
+/** Dok, paleta i wskazówka żyją na osobnej stronie nad dokumentami. */
+async function dockLayer(app, shell) {
+  const deadline = Date.now() + 10000
+  while (Date.now() < deadline) {
+    const layer = app.windows().find((page) => page !== shell && page.url() === 'about:blank')
+    if (layer) return layer
+    await delay(50)
+  }
+  throw new Error('Nie znaleziono warstwy doku')
+}
+
 export async function pairFlow(workspace, { check, entry = projectRoot }) {
   const home = join(workspace, 'pair-home')
   const repo = join(workspace, 'pair-repo')
@@ -133,20 +144,9 @@ export async function pairFlow(workspace, { check, entry = projectRoot }) {
       assert.equal(await shell.locator('.pane.focused .pl-pair').count(), 0)
       await shell.locator('.pane.focused .pl-title').click()
       await shell.keyboard.press('Shift+O')
-      if (process.env.PAIR_DEBUG) {
-        const id = await shell.locator('.row[data-doc]', { hasText: PLAIN }).getAttribute('data-doc')
-        for (const wait of [50, 300, 1000]) {
-          await delay(wait)
-          console.log(wait, JSON.stringify(await shell.evaluate(async (docId) => ({
-            pair: await window.api.docPair(docId),
-            tip: document.getElementById('tip')?.className,
-            text: document.getElementById('tip')?.textContent,
-            active: document.activeElement?.className
-          }), id)))
-        }
-      }
-      await until(shell, () => document.getElementById('tip')?.classList.contains('say'), undefined, 'komunikat na miejscu wskazówki')
-      assert.match(await shell.locator('#tip').textContent(), /nie ma planu ani objaśnienia/)
+      const layer = await dockLayer(app, shell)
+      await until(layer, () => document.getElementById('tip')?.classList.contains('say'), undefined, 'komunikat na miejscu wskazówki')
+      assert.match(await layer.locator('#tip').textContent(), /nie ma planu ani objaśnienia/)
       await title(PLAIN)
     })
   } finally {
