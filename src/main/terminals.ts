@@ -71,14 +71,22 @@ export class Terminals {
     const { file, args } = shellCommand()
     const env: Record<string, string | undefined> = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Bibliotter' }
     for (const name of DROPPED_ENV) delete env[name]
-    const pty = spawn(file, args, {
+    const options = {
       name: 'xterm-256color',
       cols: clampSize(cols, 80),
       rows: clampSize(rows, 24),
       cwd,
       env: env as Record<string, string>,
       useConpty: true
-    })
+    }
+    let pty: IPty
+    try {
+      // ConPTY dołączony do node-pty jest nowszy niż ten z Windows: szybciej przepuszcza wyjście
+      // i lepiej przelicza ekran po zmianie rozmiaru, co widać przy Claude Code.
+      pty = spawn(file, args, { ...options, useConptyDll: process.platform === 'win32' })
+    } catch {
+      pty = spawn(file, args, options)
+    }
     const id = this.next++
     const session: Session = { pty, cwd, backlog: '', pending: '', timer: null }
     this.sessions.set(id, session)

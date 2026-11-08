@@ -19,9 +19,9 @@ const SVG = 'http://www.w3.org/2000/svg'
 /** Tak blisko linii musi trafić prawy przycisk, żeby usunąć kształt. */
 const ERASE_REACH = 10
 /** Pióro w prezentacji jedzie z tą prędkością w pikselach strony na milisekundę. */
-const PEN_SPEED = 1.4
-const PEN_MIN_MS = 320
-const PEN_MAX_MS = 900
+const PEN_SPEED = 2
+const PEN_MIN_MS = 240
+const PEN_MAX_MS = 600
 
 export const SHAPE_STYLE = `
   .shapes { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }

@@ -230,6 +230,12 @@ export function RoutePanel({ docId }: { docId: string | null }): React.JSX.Eleme
 
   useEffect(() => () => leaveRoute(), [])
 
+  // Krok dodany z menu zaznaczenia staje na końcu długiej trasy, więc lista podjeżdża do wybranego.
+  const selectedId = steps[index]?.id
+  useEffect(() => {
+    if (selectedId) document.querySelector(`#routeForm [data-step="${selectedId}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [selectedId])
+
   const onListKey = (event: KeyboardEvent<HTMLElement>): void => {
     if (!docId || index < 0 || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
     event.preventDefault()

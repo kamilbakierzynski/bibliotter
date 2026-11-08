@@ -36,6 +36,8 @@ const NOTE_W = 148
 const NOTE_H = 40
 /** Tytuł kroku z zaznaczenia to początek cytatu. */
 const STEP_TITLE = 60
+/** Obszar kroku z zaznaczenia ma tyle pikseli zapasu wokół tekstu. */
+const STEP_AREA_PAD = 8
 
 /*
  * Pinezki i karteczki należą do języka apki, a nie dokumentu. Dokument ma własne fonty,
@@ -767,7 +769,13 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     return true
   }
 
-  /** Krok z zaznaczenia kadruje blok, w którym leży tekst, jak Miejsce wskazane kliknięciem. */
+  /**
+   * Krok z zaznaczenia kadruje Obszar z wierszami zaznaczonego tekstu, w ułamkach bloku, w którym
+   * tekst leży, jak Obszar przeciągnięty myszą. Obszar bierze całą szerokość bloku, bo otwarty
+   * formularz trasy albo inne okno zwęża arkusz i akapit łamie się inaczej. Pas wierszy trafia
+   * wtedy nadal w tekst, a prostokąt wokół kilku słów ląduje obok. Blok bez wymiarów zostaje
+   * przy Miejscu.
+   */
   const stepFromSelection = (range: Range): void => {
     const container = range.commonAncestorContainer
     const element = container instanceof Element ? container : container.parentElement
@@ -775,8 +783,20 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
     const rect = range.getBoundingClientRect()
     const quote = range.toString().replace(/\s+/g, ' ').trim()
     const title = quote.length > STEP_TITLE ? `${quote.slice(0, STEP_TITLE - 1).trimEnd()}…` : quote
-    const anchor = createAnchor(blockOf(element), rect.left, rect.top)
-    bridge.send({ type: 'add-step', camera: { kind: 'place', anchor }, title })
+    const block = blockOf(element)
+    const anchor = createAnchor(block, rect.left, rect.top)
+    const host = block.getBoundingClientRect()
+    if (host.width === 0 || host.height === 0 || rect.width === 0 || rect.height === 0) {
+      bridge.send({ type: 'add-step', camera: { kind: 'place', anchor }, title })
+      return
+    }
+    const box = {
+      x: -STEP_AREA_PAD / host.width,
+      y: (rect.top - STEP_AREA_PAD - host.top) / host.height,
+      width: 1 + (2 * STEP_AREA_PAD) / host.width,
+      height: (rect.height + 2 * STEP_AREA_PAD) / host.height
+    }
+    bridge.send({ type: 'add-step', camera: { kind: 'area', anchor, box }, title })
   }
 
   const selectionMenu = createSelectionMenu({

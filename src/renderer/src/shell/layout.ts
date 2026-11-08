@@ -105,9 +105,16 @@ export const G = {
   closed: 0,
   open: 0,
   cmdW: 0,
-  cmdH: 0,
-  overlay: false
+  cmdH: 0
 }
+
+/** Szerokość panelu z CSS. `G.insW` to szerokość, na którą starcza miejsca obok arkuszy. */
+let insCss = 0
+let insBotCss = 0
+/** Panel ustępuje arkuszom w wąskim oknie, ale nie węziej niż tyle. */
+const INSP_MIN = 240
+/** Tyle sceny zostaje arkuszom obok panelu, zanim panel zacznie się zwężać. */
+const DOC_BESIDE_INSP = 380
 
 /** Wysokość tabliczki nad arkuszem. */
 export const PLACARD = 36
@@ -252,10 +259,8 @@ export function measure(): void {
   G.open = G.closed + G.panel
   G.cmdW = Math.min(760, G.W - 32)
   G.cmdH = Math.min(558, G.H - 40)
-  G.overlay = G.W < 1180
-  // Panel nad arkuszem kończy się nad dokiem, który inaczej zasłoniłby jego stopkę.
-  if (G.overlay) G.insBot = G.stageBot + G.dockZone + G.stageGap
-  els.inspIn.style.bottom = `${G.insBot}px`
+  insCss = G.insW
+  insBotCss = G.insBot
   els.cmd.style.width = `${G.cmdW}px`
   els.cmd.style.height = `${G.cmdH}px`
 }
@@ -272,10 +277,18 @@ const stageEdges = (): { left: number; right: number; base: number; edge: number
   term.applied = termShown()
   if (ui.presenting) return { left: G.stageGap, right: base, base, edge: base, bottom: G.stageBot }
   const left = navEdge() + G.stageGap
-  const panel = ui.insp && !G.overlay ? G.insW + G.stageGap : 0
+  // Panel zawsze stoi obok arkuszy i zabiera im miejsce, jak terminal. W wąskim oknie sam się zwęża.
+  G.insW = Math.round(clamp(base - left - G.stageGap - DOC_BESIDE_INSP, INSP_MIN, insCss))
+  els.inspIn.style.width = `${G.insW}px`
+  const panel = ui.insp ? G.insW + G.stageGap : 0
   const room = termRoom(base - panel - left, G.H - G.stageTop - G.stageBot, G.stageGap)
   const edge = base - room.right
-  return { left, right: edge - panel, base, edge, bottom: G.stageBot + room.bottom }
+  const right = edge - panel
+  // Dok stoi nad środkiem arkuszy, więc szerszy od nich wchodzi pod panel. Panel kończy się wtedy nad nim.
+  const dockReach = (left + right) / 2 + els.bar.offsetWidth / 2 + DOCK_EDGE
+  G.insBot = ui.insp && dockReach > right + G.stageGap ? G.stageBot + G.dockZone + G.stageGap : insBotCss
+  els.inspIn.style.bottom = `${G.insBot}px`
+  return { left, right, base, edge, bottom: G.stageBot + room.bottom }
 }
 
 export function applyLayout(pullY?: number): void {
@@ -325,6 +338,25 @@ export function applyResize(): void {
   syncCam()
   if (camX.t !== camX.x) camX.set(camX.t)
   noteQuiet()
+}
+
+/**
+ * Krawędź terminala ciągnięta ręką. Brzegi stają od razu, bez sprężyn, więc żywe widoki dokumentów
+ * zostają i przelewają tekst co klatkę, jak przy uchwycie podziału. Okno nie zmienia rozmiaru,
+ * więc nie ma po co go mierzyć: `measure` czyta style i wymusza przeliczenie całej powłoki.
+ */
+export function placeTerminalEdges(): void {
+  const { right, edge, bottom } = stageEdges()
+  insB.set(edge)
+  insRope.place(ui.insp && !onWall() ? edge - G.insW : edge)
+  sR.set(right)
+  tR.set(edge)
+  sB.set(bottom)
+  dockC.set((sL.t + sR.t) / 2)
+  syncCam()
+  if (camX.t !== camX.x) camX.set(camX.t)
+  touch()
+  wake()
 }
 
 /** Pierwsze ustawienie sceny, zanim nawigacja wyjedzie na linie. */
@@ -501,7 +533,7 @@ export function syncChrome(): void {
   const root = document.documentElement
   const { stage, home } = els
   const atHome = ui.home && ui.peek === null
-  stage.classList.toggle('under-caption', !ui.insp || G.overlay)
+  stage.classList.toggle('under-caption', !ui.insp)
   home.classList.toggle('on', ui.home)
   home.classList.toggle('setup', ui.setup !== null)
   root.classList.toggle('at-home', atHome)
@@ -683,8 +715,10 @@ export function render(): void {
   cmd.style.visibility = c <= 0.01 && !ui.cmd ? 'hidden' : 'visible'
   els.scrim.style.opacity = String(m)
 
-  // Miejsce na panel liczy się od krawędzi sceny z terminalem, bo terminal z prawej też odsuwa arkusze.
-  const ip = Math.max(clamp((insB.x - tR.x - G.stageGap) / G.insW), clamp((insB.x - insRope.mean) / G.insW))
+  // Panel widać, gdy arkusze oddały mu miejsce. `insB` to lewy brzeg terminala albo brzeg okna, więc
+  // liczy się prawy brzeg sceny, a nie terminala, który stoi równo z panelem. Zawieszone wątki nie
+  // ciągną liny, więc bez tego ich panel nie pojawiał się wcale.
+  const ip = Math.max(clamp((insB.x - sR.x - G.stageGap) / G.insW), clamp((insB.x - insRope.mean) / G.insW))
   els.inspIn.style.opacity = String(clamp(ip * 1.7 - 0.6))
   els.inspIn.style.transform = `translateX(${(1 - ip) * 16}px)`
   // Panel stoi przy lewym brzegu terminala, a bez terminala przy brzegu okna.

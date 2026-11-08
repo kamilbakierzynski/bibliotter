@@ -15,7 +15,7 @@ import {
 } from '../../../shared/presentation'
 import { aimCamera } from './camera'
 import { drawings } from './drawings'
-import { setTool } from './notes'
+import { setTool, showPanel } from './notes'
 import { data, focusedId, notify, openPane, ui } from './state'
 
 /*
@@ -172,6 +172,8 @@ export function addStep(docId: string): void {
 /**
  * Krok z menu zaznaczonego tekstu. Przy otwartym formularzu staje za wybranym, jak przycisk
  * w formularzu, a bez formularza na końcu trasy, bo dokument czyta się wtedy od góry do dołu.
+ * Formularz otwiera się z nowym krokiem wybranym, więc dokument od razu obrysowuje jego kadr.
+ * Kamera stoi, bo układanie trasy nie przybliża dokumentu bez kliknięcia oka.
  */
 export async function addStepAt(docId: string, camera: StepCamera, title: string): Promise<void> {
   if (!route.docs.has(docId)) await loadRoute(docId)
@@ -186,6 +188,7 @@ export async function addStepAt(docId: string, camera: StepCamera, title: string
   next.splice(at + 1, 0, step)
   route.selected.set(docId, step.id)
   commit(docId, next)
+  if (!editing && focusedId() === docId) showPanel('route')
 }
 
 export function removeStep(docId: string, id: string): void {

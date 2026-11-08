@@ -7,18 +7,27 @@
 .term-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none; height: 36px; padding: 0 2px 0 4px; }
 .term-title { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; font: var(--pl-w) var(--pl-s)/1.25 var(--title); letter-spacing: var(--title-ls); }
 .term-title .ic { flex: none; width: 15px; height: 15px; color: var(--ink-2); }
-.term-cwd { min-width: 0; overflow: hidden; color: var(--ink-3); font: 400 var(--meta-s)/1.25 var(--meta); letter-spacing: var(--meta-ls); text-overflow: ellipsis; }
+.term-cwd, .term-task { min-width: 0; overflow: hidden; color: var(--ink-3); font: 400 var(--meta-s)/1.25 var(--meta); letter-spacing: var(--meta-ls); text-overflow: ellipsis; }
+/* Tytuł od programu w powłoce, na przykład zadanie Claude Code, mówi więcej niż ścieżka, która i tak jest w podpowiedzi. */
+.term-task { display: none; color: var(--ink-2); }
+.term.has-task .term-task { display: block; }
+.term.has-task .term-cwd { display: none; }
 .term-actions { display: flex; flex: none; align-items: center; gap: 1px; transition: margin-right .5s var(--spring); }
+/* Nagłówek z prawej leży pod paskiem tytułu okna, który przeciąga okno i zjadał kliknięcia przycisków. */
+.term-actions, .term-grip { -webkit-app-region: no-drag; }
 /* Z prawej terminal stoi pod przyciskami okna, więc to on robi im miejsce, a nie ostatni arkusz. */
 .term.under-caption .term-actions { margin-right: 124px; }
 .stage.term-right.under-caption .pane.last .pl-actions { margin-right: 0; }
 
-.term-body { position: relative; flex: 1; min-height: 0; overflow: clip; background: var(--term-bg); border-radius: var(--r-sheet); box-shadow: var(--sh-sheet); }
-.term-screen { position: absolute; inset: 10px 4px 8px 12px; }
+.term-body { position: relative; flex: 1; min-height: 0; overflow: clip; background: var(--term-bg); border-radius: var(--r-sheet); box-shadow: var(--sh-sheet); transition: box-shadow .2s; }
+/* Klawiatura w terminalu: cienka obwódka zamiast zgadywania po migającym kursorze. */
+.term:focus-within .term-body { box-shadow: var(--sh-sheet), inset 0 0 0 1px var(--hair-2); }
+.term-screen { position: absolute; inset: 12px 6px 10px 14px; }
 /* Pod spodem dok leży na dole terminala, więc ostatni wiersz stoi nad nim. */
 .term[data-side="bottom"] .term-screen { bottom: calc(var(--dock-zone) - var(--stage-bot) + 6px); }
 .term-screen .xterm { height: 100%; }
-.term-screen .xterm-viewport { background: transparent !important; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.term-screen .xterm-viewport { background: transparent !important; }
+.term-screen .xterm-link-layer a, .term-screen .xterm-cursor-pointer { cursor: pointer; }
 
 .term-grip { position: absolute; z-index: 2; display: grid; place-items: center; touch-action: none; }
 .term[data-side="right"] .term-grip { top: 44px; bottom: 8px; left: calc(-1 * var(--stage-gap)); width: var(--stage-gap); cursor: ew-resize; }

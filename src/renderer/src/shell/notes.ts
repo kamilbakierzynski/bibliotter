@@ -4,7 +4,7 @@ import { rectIn } from '../motion/pill'
 import { clamp, followFor, Spring, wake } from '../motion/spring'
 import { inLayer } from './layer'
 import { drawings, findShape, revealDrawings, setShapeType } from './drawings'
-import { applyLayout, els, G, sheets, toolPill, trayW, viewPill } from './layout'
+import { applyLayout, els, sheets, toolPill, trayW, viewPill } from './layout'
 import { refreshFrame, touch } from './native'
 import { isFileSheet } from './files'
 import { sayTip } from './keys'
@@ -27,8 +27,8 @@ const hangs = new Map<string, Hang>()
 const HANG_GAP = 8
 let tracked: string | null = null
 
-/** Wątki wiszą na wolnej ścianie. Szereg i wąskie okno jej nie mają, więc uwagi stają wtedy na panelu. */
-export const canWall = (): boolean => !G.overlay && pinned() < 3
+/** Wątki wiszą w pasie, który arkusze oddały panelowi. Szereg go nie ma, więc uwagi stają wtedy na panelu. */
+export const canWall = (): boolean => pinned() < 3
 export const onWall = (): boolean => ui.inspView === 'notes' && ui.notesView === 'wall' && canWall()
 
 export function syncPanelMode(): void {
@@ -274,9 +274,8 @@ export function setTool(tool: Tool): void {
   syncShaper()
   if (shaping) revealDrawings(docId)
   if (pointer || marker || shaping) {
-    // Oba żyją tylko na żywym dokumencie, a wątek i panel nad arkuszem trzymają go na zrzucie.
+    // Oba żyją tylko na żywym dokumencie, a wątek nad arkuszem trzyma go na zrzucie.
     closeThread()
-    if (ui.insp && G.overlay) setInsp(false)
   }
   if (tool !== 'move') {
     // Klik w narzędzie to klik obok szkicu, więc wpisana uwaga zapisuje się jak po Ctrl Enter.

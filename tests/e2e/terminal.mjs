@@ -41,7 +41,8 @@ const readStage = (shell) =>
       side: el.dataset.side,
       term: { left: box.left, top: box.top, width: box.width, height: box.height },
       sheet: sheet ? { right: sheet.right, bottom: sheet.bottom } : null,
-      text: (document.querySelector('.term .xterm-rows')?.textContent ?? '').replace(/\s+/g, ' '),
+      // xterm rysuje w WebGL, więc tekstu nie ma w DOM. Panel podaje go z bufora.
+      text: (document.querySelector('.term-screen')?.terminalText ?? '').replace(/\s+/g, ' '),
       keyboard: Boolean(document.activeElement?.closest('.term')),
       cwd: document.querySelector('.term-cwd')?.textContent ?? ''
     }
@@ -105,8 +106,54 @@ export async function terminalFlow(workspace, { check, entry = projectRoot }) {
       await shell.keyboard.type('echo bibliotter-42')
       await shell.keyboard.press('Enter')
       await waitFor(stage, (value) => /bibliotter-42.*bibliotter-42/.test(value.text))
+      // Powłoka startuje dopiero z ostatecznym rozmiarem, więc polecenie stoi po znaku zachęty, a nie na nim.
+      const text = (await stage()).text
+      assert.match(text, /terminal-repo> ?echo bibliotter-42/, `polecenie nadpisało znak zachęty: ${text.slice(0, 300)}`)
       // Litery z polecenia przełączyłyby motyw (T) i ekran startowy (H), gdyby trafiły do apki.
       assert.equal(await shell.locator('.home.on').count(), 0)
+    })
+
+    await check('terminal rysuje w WebGL', async () => {
+      const gpu = await shell.evaluate(() => [...document.querySelectorAll('.term-screen canvas')].some((c) => c.getContext('webgl2') !== null))
+      assert.ok(gpu, 'brak płótna WebGL w terminalu')
+      assert.equal(await shell.locator('.term .xterm-rows').count(), 0, 'terminal dalej rysuje w DOM')
+      // Atlas znaków WebGL podaje font ze spacją z przodu. Odrzucony zostawiłby `10px sans-serif` zamiast Geist Mono.
+      const font = await shell.evaluate(() => {
+        const ctx = document.createElement('canvas').getContext('2d')
+        ctx.font = " normal 13px 'Geist Mono Variable', monospace"
+        return ctx.font
+      })
+      assert.ok(font.includes('Geist Mono'), `płótno odrzuca font atlasu: ${font}`)
+    })
+
+    await check('krawędź terminala idzie za kursorem', async () => {
+      const before = await settled((value) => value.shown)
+      const grip = await shell.locator('.term-grip').boundingBox()
+      const x = grip.x + grip.width / 2
+      const y = grip.y + grip.height / 2
+      await shell.mouse.move(x, y)
+      await shell.mouse.down()
+      for (let step = 1; step <= 6; step++) await shell.mouse.move(x - step * 20, y)
+      // W trakcie ciągnięcia krawędź stoi pod kursorem, bez sprężyny, która by za nim nie nadążała.
+      const during = await stage()
+      assert.ok(Math.abs(during.term.left - (x - 120) - grip.width / 2) < 3, `krawędź nie stoi pod kursorem: ${during.term.left} przy ${x - 120}`)
+      await shell.mouse.up()
+      const after = await settled((value) => value.shown)
+      assert.ok(Math.abs(after.term.width - before.term.width - 120) < 3, `szerokość ${before.term.width} → ${after.term.width}`)
+      assert.ok(after.sheet.right <= after.term.left, 'arkusz zachodzi na terminal')
+      // Ciągnięcie dalej niż się da zatrzymuje się na granicy, zamiast uciekać.
+      const grip2 = await shell.locator('.term-grip').boundingBox()
+      await shell.mouse.move(grip2.x + grip2.width / 2, y)
+      await shell.mouse.down()
+      await shell.mouse.move(5, y, { steps: 8 })
+      await shell.mouse.up()
+      const wide = await settled((value) => value.shown)
+      assert.ok(wide.sheet.right <= wide.term.left && wide.term.left > 380, `dokument zniknął: ${JSON.stringify(wide)}`)
+      await shell.mouse.move(wide.term.left - 4, y)
+      await shell.mouse.down()
+      await shell.mouse.move(wide.term.left + 200, y, { steps: 6 })
+      await shell.mouse.up()
+      await settled((value) => value.shown)
     })
 
     await check('panel linków staje między dokumentem a terminalem', async () => {

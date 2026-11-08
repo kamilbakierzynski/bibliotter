@@ -1,7 +1,5 @@
 import type { OverlayEvent } from '../../../shared/annotations'
 import type { OutlineHeading } from '../../../shared/outline'
-import { G } from './layout'
-import { setInsp } from './notes'
 import { focusedId, notify, readStored, ui, writeStored } from './state'
 
 /*
@@ -52,9 +50,7 @@ export function jumpToHeading(index: number): void {
   const known = outline.docs.get(docId)
   if (known) outline.docs.set(docId, { ...known, current: index })
   window.api.outlineDoc(docId, { type: 'jump', index })
-  // W wąskim oknie panel stoi nad arkuszem, więc po wyborze ustępuje, jak szybkie menu.
-  if (G.overlay) setInsp(false)
-  else notify()
+  notify()
   window.api.focusDoc(docId)
 }
 

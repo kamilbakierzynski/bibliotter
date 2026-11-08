@@ -65,17 +65,20 @@ export function termShown(): boolean {
   return term.pinned || (term.owner !== null && ui.order.some((i) => ui.panes[i] === term.owner))
 }
 
-/** Szerokość terminala z prawej przy danej szerokości sceny. */
-export function termWidth(stage: number): number {
+/** Szerokość terminala z prawej przy danej szerokości sceny. `wanted` to rozmiar, o który ktoś prosi. */
+export function termWidth(stage: number, wanted = term.size.right ?? stage * 0.4): number {
   const max = Math.max(MIN_W, stage - DOC_MIN_W)
-  return Math.round(clamp(term.size.right ?? stage * 0.4, MIN_W, max))
+  return Math.round(clamp(wanted, MIN_W, max))
 }
 
 /** Wysokość terminala pod spodem przy danej wysokości sceny. */
-export function termHeight(stage: number): number {
+export function termHeight(stage: number, wanted = term.size.bottom ?? stage * 0.34): number {
   const max = Math.max(MIN_H, stage - DOC_MIN_H)
-  return Math.round(clamp(term.size.bottom ?? stage * 0.34, MIN_H, max))
+  return Math.round(clamp(wanted, MIN_H, max))
 }
+
+/** Krawędzie terminala już stoją, więc rozmiar w znakach nie zmieni się za chwilę. */
+export const termSettled = (): boolean => Math.abs(tR.x - tR.t) < 0.5 && Math.abs(sB.x - sB.t) < 0.5
 
 /** Ile miejsca terminal zabiera scenie z prawej i od dołu, razem z odstępem. */
 export function termRoom(stageW: number, stageH: number, gap: number): { right: number; bottom: number } {

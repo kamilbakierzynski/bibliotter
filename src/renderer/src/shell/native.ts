@@ -236,7 +236,7 @@ function computeQuiet(): boolean {
   if (Math.abs(ratio.x - ratio.t) > 0.002) return false
   if (mH.x > 0.004) return false
   if (rope.reach > sL.x - 0.5) return false
-  if (ui.insp && !onWall() && !G.overlay && insRope.least < sR.x + 0.5) return false
+  if (ui.insp && !onWall() && insRope.least < sR.x + 0.5) return false
   for (const s of sheets) {
     if (!isOpen(s.i)) {
       if (s.o.x > 0.02) return false
@@ -250,7 +250,7 @@ function computeQuiet(): boolean {
 /** Arkusze, w których może teraz stać żywy widok, jeśli jego dokument jest gotowy. */
 function liveSlots(): number[] {
   const slots: number[] = []
-  if (!computeQuiet() || covers.size > 0 || (ui.insp && G.overlay)) return slots
+  if (!computeQuiet() || covers.size > 0) return slots
   const w = sR.t - sL.t
   const rects = sheetRects(w, true)
   for (const s of sheets) {

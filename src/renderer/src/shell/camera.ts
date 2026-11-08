@@ -25,7 +25,7 @@ import { openPane, ui } from './state'
 
 const REASON = 'camera'
 /** Ta sama krzywa co przejścia w CSS, bez wyraźnego przestrzału. */
-const MOVE = { k: 120, z: 0.92 }
+const MOVE = { k: 260, z: 1 }
 /** Ostrzejszy zrzut wchodzi, gdy kadr jest już blisko, bo wcześniej zajmuje mały kawałek ekranu. */
 const FADE_FROM = 0.2
 const FADE_SPAN = 0.6
@@ -41,13 +41,17 @@ const STILL: CameraMove = { from: { left: 0, top: 0, scale: 1 }, to: { left: 0, 
 /** Dokument potrzebuje chwili, żeby narysować zmianę, zanim zrobimy mu zrzut. */
 const REPAINT_MS = 40
 /** Oddalenie i zbliżenie w podróży są szybsze, bo razem z przejazdem składają się na jeden ruch. */
-const LEG = { k: 210, z: 1 }
+const LEG = { k: 420, z: 1 }
 /** Przejazd po stronie przesuwa ekran najwyżej o tyle wysokości widoku. Dalej kamera się oddala. */
 const TRAVEL_SCREENS = 2.5
 /** Czas przejazdu rośnie z drogą na ekranie, w milisekundach na piksel. */
-const PAN_BASE_MS = 320
-const PAN_MS_PER_PX = 0.16
-const PAN_MIN_MS = 420
+const PAN_BASE_MS = 200
+const PAN_MS_PER_PX = 0.1
+const PAN_MIN_MS = 260
+/** Przejazd między krokami nie może trwać dłużej, nawet przez bardzo długi dokument. */
+const PAN_MAX_MS = 800
+/** Ostatni procent drogi sprężyny jest niewidoczny, więc przelot kończy się wcześniej. */
+const LANDED = 0.01
 const SAME_SCALE = 1e-3
 
 interface Pose {
@@ -136,11 +140,12 @@ connectLoop(
   () => {
     const current = flight
     if (!current) return
-    if (!progress.rest) {
+    if (!progress.rest && Math.abs(1 - progress.x) > LANDED) {
       draw(current, progress.x)
       return
     }
     flight = null
+    progress.set(1)
     draw(current, 1)
     current.done()
   },
@@ -245,7 +250,7 @@ async function voyage(i: number, docId: string, shot: CameraShot, plan: CameraPl
   const distance = Math.hypot(to.x - from.x, to.y - from.y)
   const lower = Math.min(plan.from.scale, plan.to.scale)
   const scale = Math.max(1, Math.min(lower, (TRAVEL_SCREENS * plan.viewport.height) / Math.max(distance, 1)))
-  const ms = Math.min(MAX_PAN_MS, Math.max(PAN_MIN_MS, PAN_BASE_MS + PAN_MS_PER_PX * distance * scale))
+  const ms = Math.min(MAX_PAN_MS, PAN_MAX_MS, Math.max(PAN_MIN_MS, PAN_BASE_MS + PAN_MS_PER_PX * distance * scale))
 
   await coverAndWait(REASON)
   let live = false

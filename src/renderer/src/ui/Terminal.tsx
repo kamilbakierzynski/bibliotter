@@ -3,7 +3,16 @@ import '@xterm/xterm/css/xterm.css'
 import './terminal.css'
 import { t } from '../../../shared/i18n'
 import { ui, useShell } from '../shell/state'
-import { closeTerminal, dragEdge, endDrag, flipSide, mountTerminal, syncTerminalTheme, togglePin } from '../shell/terminal'
+import {
+  bindTerminalTitle,
+  closeTerminal,
+  dragEdge,
+  endDrag,
+  flipSide,
+  mountTerminal,
+  syncTerminalTheme,
+  togglePin
+} from '../shell/terminal'
 import { bindTerminal, term, termShown } from '../shell/terminalLayout'
 import { Icon } from './icons'
 
@@ -24,6 +33,11 @@ function Grip(): React.JSX.Element {
       }}
       onPointerMove={move}
       onPointerUp={() => {
+        if (!dragging.current) return
+        dragging.current = false
+        endDrag()
+      }}
+      onLostPointerCapture={() => {
         if (!dragging.current) return
         dragging.current = false
         endDrag()
@@ -60,6 +74,7 @@ export function TerminalPanel(): React.JSX.Element {
           <Icon name="term" />
           <span>{term.cwd ? folderName(term.cwd) : t('Terminal')}</span>
           {term.cwd && <span className="term-cwd">{term.cwd}</span>}
+          <span className="term-task" ref={bindTerminalTitle} />
         </span>
         <span className="term-actions">
           <button

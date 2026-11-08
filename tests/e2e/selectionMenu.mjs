@@ -186,9 +186,16 @@ export async function selectionMenuFlow(workspace, { check, entry = projectRoot 
       await pick(at, 'step')
       const stored = await waitFor(route, (value) => value?.steps?.length === 1)
       const [step] = stored.steps
-      assert.equal(step.camera.kind, 'place')
+      assert.equal(step.camera.kind, 'area')
       assert.match(step.camera.anchor.selector, /#drugi|p:nth/)
+      // Obszar obejmuje zaznaczone wiersze, a nie cały akapit.
+      assert.ok(step.camera.box.height < 0.8 && step.camera.box.width > 0, `obszar: ${JSON.stringify(step.camera.box)}`)
       assert.ok(clean(selected.text).startsWith(step.title.replace(/…$/, '')), `tytuł: ${step.title}`)
+      // Formularz trasy otwiera się z nowym krokiem wybranym.
+      await shell.locator(`#routeForm [data-step="${step.id}"][aria-current="step"]`).waitFor({ state: 'visible', timeout: 4000 })
+      await live()
+      await delay(400)
+      await writeFile(join(artifacts, 'selection-menu-step.png'), await page.screenshot())
     })
 
     await check('Znajdź w dokumencie wpisuje zaznaczenie do paska szukania', async () => {

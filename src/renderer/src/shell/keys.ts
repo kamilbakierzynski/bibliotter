@@ -8,7 +8,7 @@ import { cover, uncover } from './native'
 import { menuKey } from './menu'
 import { toggleOptions } from './options'
 import { toggleMinimap } from './outline'
-import { cancelDraft, canWall, closeThread, dropCarry, setInsp, setTool, toggleNotesView, togglePanel } from './notes'
+import { cancelDraft, canWall, closeThread, dropCarry, setTool, toggleNotesView, togglePanel } from './notes'
 import { closeActs, closeCmd, openActs, openCmd, openMap, setMap } from './palette'
 import { openPair } from './pair'
 import { openPocket, togglePocket } from './pocket'
@@ -193,7 +193,7 @@ export function jumpToPair(docId: string): void {
 
 /**
  * Odkleja komentarz albo karteczkę, która potem idzie za kursorem po dokumencie, aż kliknięcie
- * wskaże nowe miejsce. Wątek i panel nad arkuszem trzymają dokument na zrzucie, więc ustępują.
+ * wskaże nowe miejsce. Wątek nad arkuszem trzyma dokument na zrzucie, więc ustępuje.
  */
 export function carryNote(id: string): void {
   const note = data.annotations.find((item) => item.id === id)
@@ -203,7 +203,6 @@ export function carryNote(id: string): void {
   if (slot !== ui.focus) focusPane(slot)
   setTool('move')
   closeThread()
-  if (ui.insp && G.overlay) setInsp(false)
   window.api.carryAnnotation(note.docId, id)
   sayTip(t('Kliknij nowe miejsce. Esc zostawia uwagę tam, gdzie była.'))
 }
