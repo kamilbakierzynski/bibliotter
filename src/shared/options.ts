@@ -32,7 +32,12 @@ export interface AgentSetup {
   /** Polecenie `bibliotter` jest dostępne na ścieżce systemowej. */
   cli: boolean
   contents: PluginContents
+  /** Zainstalowana apka nie ma repozytorium, więc CLI nie ma skąd zainstalować przez npm. */
+  packaged?: boolean
 }
+
+/** `no-folder` i `no-server` tłumaczy panel, a resztę stanowi komunikat Claude Code. */
+export type PluginInstallResult = { ok: true } | { ok: false; error: 'no-folder' | 'no-server' | (string & {}) }
 
 export interface AppInfo {
   version: string

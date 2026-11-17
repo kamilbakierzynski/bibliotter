@@ -1,6 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { followFor } from '../motion/spring'
-import { type LibraryRow, type ManualOrder, PROJECTS_KEY, ROW_H } from '../tree'
+import { type LibraryRow, type ManualOrder, PROJECTS_KEY } from '../tree'
+import { treeRowH } from './docNames'
 import { dismissCard } from './hoverCard'
 import { els, hoverPill, syncSel } from './layout'
 import { closeRowMenu, rename } from './menu'
@@ -83,7 +84,7 @@ function blocksOf(rows: LibraryRow[], siblings: LibraryRow[]): Block[] {
     let end = (at.get(row) as number) + 1
     while (end < rows.length && (rows[end] as LibraryRow).chain.includes(row.key)) end++
     const below = rows.slice((at.get(row) as number) + 1, end).filter((item) => !item.ghost).length
-    return { key: row.key, top: row.y, height: (below + 1) * ROW_H }
+    return { key: row.key, top: row.y, height: (below + 1) * treeRowH() }
   })
 }
 
@@ -101,7 +102,7 @@ function place(d: Drag): void {
   if (!list) return
   const y = Math.min(Math.max(d.clientY - list.getBoundingClientRect().top - d.grab, d.low), d.high)
   slotEl(d.key)?.style.setProperty('--dy', `${y}px`)
-  const center = y + ROW_H / 2
+  const center = y + treeRowH() / 2
   let index = 0
   for (const block of d.others) {
     if (center > block.top + block.height / 2) index++
@@ -154,11 +155,11 @@ function start(d: Drag): void {
   if (from < 0 || !list || !self) return
   d.from = from
   d.index = from
-  d.others = blocks.filter((_, i) => i !== from).map((block, i) => (i >= from ? { ...block, top: block.top - ROW_H } : block))
+  d.others = blocks.filter((_, i) => i !== from).map((block, i) => (i >= from ? { ...block, top: block.top - treeRowH() } : block))
   const first = blocks[0] as Block
   const last = blocks.at(-1) as Block
   d.low = first.top
-  d.high = last.top + last.height - ROW_H
+  d.high = last.top + last.height - treeRowH()
   d.grab = d.clientY - list.getBoundingClientRect().top - self.top
   d.started = true
   els.scroll.setPointerCapture(d.pointerId)

@@ -1,10 +1,12 @@
 import { connectLoop, Spring, wake } from '../renderer/src/motion/spring'
+import type { PointerArt } from '../shared/types'
+import { PAW_HAND, PAW_SHAPES } from './presenterPaw'
 import { createPen, PEN_STYLE } from './presenterPen'
 import { restingFoot, retreat, stickAngle } from './presenterRig'
 import { fitScreen, onZoom, screenSize, toScreen, zoom } from './zoom'
 
 /*
- * Wskaźnik prezentera: rękawiczka na kijku, wysunięta spod dolnej krawędzi arkusza. Żyje wewnątrz
+ * Wskaźnik prezentera: rękawiczka albo łapka wydry na kijku, wysunięta spod dolnej krawędzi arkusza. Żyje wewnątrz
  * dokumentu, więc widok sam ją przycina i nigdy nie wchodzi na resztę interfejsu.
  *
  * Czubek palca stoi dokładnie pod kursorem, a kijek za nim podąża. Wysokość nad kartką niesie
@@ -76,7 +78,14 @@ const HAND = `<svg aria-hidden="true">
   </g>
 </svg>`
 
-const CAST = `<svg aria-hidden="true"><g fill="#000" stroke="#000" stroke-width="${LINE}" stroke-linejoin="round">${SHAPES}</g></svg>`
+const castOf = (shapes: string): string =>
+  `<svg aria-hidden="true"><g fill="#000" stroke="#000" stroke-width="${LINE}" stroke-linejoin="round">${shapes}</g></svg>`
+
+/** Oba rysunki mają czubek w początku układu i ten sam kijek, więc ruch ich nie rozróżnia. */
+const ART: Record<PointerArt, { hand: string; cast: string }> = {
+  glove: { hand: HAND, cast: castOf(SHAPES) },
+  paw: { hand: PAW_HAND, cast: castOf(PAW_SHAPES) }
+}
 
 const BURST = [
   '<i class="dent"></i><i class="ring"></i><i class="ring late"></i>',
@@ -133,6 +142,7 @@ export interface Presenter {
   /** Linie leżą osobno, bo przewijają się z dokumentem i zostają, gdy ręka znika. */
   ink: SVGSVGElement
   setActive(on: boolean): void
+  setArt(art: PointerArt): void
   /** `held` mówi, czy lewy przycisk jest wciśnięty, bo puszczenie mogło umknąć dokumentowi. */
   move(x: number, y: number, held: boolean, time: number): void
   leave(): void
@@ -152,9 +162,10 @@ function layerWith(markup: string, className: string): HTMLElement {
 export function createPresenter(): Presenter {
   const element = layerWith('', 'presenter')
   const marks = document.createElement('div')
-  const far = layerWith(CAST, 'rig cast far')
-  const near = layerWith(CAST, 'rig cast near')
-  const rig = layerWith(HAND, 'rig')
+  let art: PointerArt = 'glove'
+  const far = layerWith(ART[art].cast, 'rig cast far')
+  const near = layerWith(ART[art].cast, 'rig cast near')
+  const rig = layerWith(ART[art].hand, 'rig')
   element.append(marks, far, near, rig)
   const pen = createPen()
 
@@ -267,6 +278,13 @@ export function createPresenter(): Presenter {
   return {
     element,
     ink: pen.element,
+    setArt(next) {
+      if (next === art) return
+      art = next
+      rig.innerHTML = ART[art].hand
+      far.innerHTML = ART[art].cast
+      near.innerHTML = ART[art].cast
+    },
     setActive(on) {
       active = on
       pen.show(on)

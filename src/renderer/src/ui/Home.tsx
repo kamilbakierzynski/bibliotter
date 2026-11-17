@@ -17,6 +17,7 @@ import { openAs } from '../shell/sheets'
 import { openModeOf } from '../../../shared/links'
 import { answered, countDocs, countWait, data, MOD, plural, STATUS, toneOf, ui, useShell, waiting } from '../shell/state'
 import { displayName, relativeTime } from '../tree'
+import { AgentHint } from './AgentHint'
 import { FormatSeg } from './FormatSeg'
 import { useSynced } from './hooks'
 import { Icon, Keys } from './icons'
@@ -178,6 +179,7 @@ function Hero(): React.JSX.Element {
           <Keys keys={[MOD, 'K']} />
         </i>
       </button>
+      <AgentHint />
     </div>
   )
 }

@@ -5,6 +5,9 @@ import { cancelRename, clearMenuItem, commitRename, menu, pickMenuItem, placeMen
 import { useShell, useShellValue } from '../shell/state'
 import { Icon } from './icons'
 
+/** Mniej więcej tyle znaków mieszczą dwa wiersze menu. Dłuższy napis dostaje jeszcze dymek. */
+const MAX_LINES_CHARS = 44
+
 export function RowMenu(): React.JSX.Element {
   useShell()
   const box = useRef<HTMLDivElement>(null)
@@ -31,9 +34,19 @@ export function RowMenu(): React.JSX.Element {
       {items.map((item, i) => (
         <Fragment key={item.title}>
           {item.gap && <hr />}
-          <button className="ar" role="menuitem" tabIndex={-1} data-i={i} onClick={() => pickMenuItem(item)}>
+          <button
+            className="ar"
+            role={item.on === undefined ? 'menuitem' : 'menuitemcheckbox'}
+            aria-checked={item.on}
+            tabIndex={-1}
+            data-i={i}
+            data-color={item.color}
+            title={item.title.length > MAX_LINES_CHARS ? item.title : undefined}
+            onClick={() => pickMenuItem(item)}
+          >
             <Icon name={done === item ? 'check' : item.icon} />
             <span>{done === item ? item.done : item.title}</span>
+            {item.on && <Icon name="check" className="ar-on" />}
           </button>
         </Fragment>
       ))}

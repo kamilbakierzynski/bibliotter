@@ -9,6 +9,7 @@ import type { FindCommand, TextQuery, TextSpan } from '../shared/textSearch'
 import { FIND_STYLE, startFind } from './find'
 import type { OutlineCommand } from '../shared/outline'
 import type { PickKind, PresentState, RouteFrame } from '../shared/presentation'
+import type { PointerArt } from '../shared/types'
 import { startMinimap } from './minimap'
 import { guardPointerEvents, startOverlay } from './overlay'
 
@@ -150,6 +151,7 @@ window.addEventListener(
       onFocus: (listener) => subscribe<string | null>('overlay:focus', listener),
       onTrack: (listener) => subscribe<boolean>('overlay:track', listener),
       onPointer: (listener) => subscribe<boolean>('overlay:pointer', listener),
+      onPointerArt: (listener) => subscribe<PointerArt>('overlay:pointer-art', listener),
       onMarker: (listener) => subscribe<StickyColor | null>('overlay:marker', listener),
       onPointerWithdraw: (listener) => subscribe<null>('overlay:pointer-withdraw', listener),
       onShaper: (listener) => subscribe<ShapeTool | null>('overlay:shaper', listener),

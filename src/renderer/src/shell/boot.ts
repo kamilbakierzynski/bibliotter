@@ -24,7 +24,7 @@ import {
 } from './layout'
 import { setLibrary, setScanProgress } from './library'
 import { closeRowMenu } from './menu'
-import { resumeLast } from './options'
+import { resumeLast, syncPointerArt } from './options'
 import { docReady, focusLive, touch, wheelUnderDock } from './native'
 import { closeThread, handleOverlayEvent, syncTools, syncViewSeg } from './notes'
 import { handleOutlineEvent, isOutlineEvent, syncMinimap } from './outline'
@@ -94,6 +94,7 @@ function connectApi(): void {
   window.api.onPresentationChanged(reloadRoutes)
   connectAutoLabel()
   syncMinimap()
+  syncPointerArt()
   window.api.onViewerState((state) => {
     const before = data.viewers.get(state.docId)?.status
     data.viewers.set(state.docId, state)

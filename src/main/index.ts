@@ -20,6 +20,7 @@ import {
   DOC_STATUSES,
   type DocEntry,
   type DocStatus,
+  parsePointerArt,
   type ThemeChoice,
   type ThemeMode,
   type ViewerBounds,
@@ -45,7 +46,7 @@ import { DEFAULT_LANGUAGE, isLanguage, setLanguage, t } from '../shared/i18n'
 import { type AppInfo, cleanHosts } from '../shared/options'
 import { parseFindCommand, parseTextQuery } from '../shared/textSearch'
 import { currentDocumentPath, writeCurrentDocument } from './agentApi'
-import { readAgentSetup } from './agentSetup'
+import { installPlugin, readAgentSetup } from './agentSetup'
 import { AnalysisPool } from './analysisPool'
 import { AnnotationHistory } from './annotationHistory'
 import {
@@ -76,6 +77,7 @@ import { fileFragment, lineSuffix, parseFileFragment } from '../shared/fileView'
 import { PresentationStore, readPresentation, watchPresentation } from './presentationStore'
 import { watchSignal } from './signals'
 import { Thumbnailer } from './thumbnails'
+import { adoptLoginShellPath } from './shellPath'
 import { terminalDir, Terminals } from './terminals'
 // Windows bierze z ICO ramkę narysowaną dla danego rozmiaru, a nie zmniejszony wzorzec.
 import iconIco from '../../resources/icon.ico?asset'
@@ -91,6 +93,8 @@ registerDocScheme()
 
 const git = commandRunner('git')
 const claude = commandRunner('claude')
+/** Instalacja pluginu kopiuje pliki do pamięci Claude Code, więc dostaje więcej czasu niż odczyt stanu. */
+const claudeInstall = commandRunner('claude', 60_000)
 const locate = commandRunner(process.platform === 'win32' ? 'where' : 'which')
 
 let mainWindow: BrowserWindow | null = null
@@ -621,7 +625,8 @@ function registerIpc(): void {
     if (typeof url === 'string' && isExternalUrl(url)) void shell.openExternal(url)
   })
   handle('options:info', () => appInfo())
-  handle('options:agent', () => readAgentSetup(__dirname, { claude, locate }))
+  handle('options:agent', () => readAgentSetup(__dirname, { claude, locate }, app.isPackaged))
+  handle('options:install-plugin', () => installPlugin(__dirname, claudeInstall))
   handle('options:set-login', (on: unknown) => {
     app.setLoginItemSettings({ ...loginItem(), openAtLogin: on === true })
     return readOpenAtLogin()
@@ -762,6 +767,10 @@ function registerIpc(): void {
     assertShell(event)
     const parsed = parseOutlineCommand(command)
     if (parsed) viewer?.outline(String(docId), parsed)
+  })
+  ipcMain.on('viewer:set-pointer-art', (event, art: unknown) => {
+    assertShell(event)
+    viewer?.setPointerArt(parsePointerArt(art))
   })
   ipcMain.on('viewer:set-marker', (event, color: unknown) => {
     assertShell(event)
@@ -951,6 +960,9 @@ function createWindow(): BrowserWindow {
 async function start(): Promise<void> {
   // Wątek biblioteki rusza dopiero teraz. Wcześniej zabierałby procesor oknu, a migawka i tak czeka w pamięci podręcznej.
   await app.whenReady()
+  adoptLoginShellPath()
+  // Na macOS ikonę w Docku daje paczka .app, a przy npm start jest nią Electron.app.
+  if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(iconPng)
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false))
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 

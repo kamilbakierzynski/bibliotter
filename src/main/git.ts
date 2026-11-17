@@ -6,13 +6,13 @@ export type GitRunner = (args: string[], cwd: string) => Promise<string>
 
 const COMMAND_TIMEOUT_MS = 8000
 
-export function commandRunner(command: string): GitRunner {
+export function commandRunner(command: string, timeoutMs = COMMAND_TIMEOUT_MS): GitRunner {
   return (args, cwd) =>
     new Promise((done, fail) => {
       execFile(
         command,
         args,
-        { cwd, windowsHide: true, timeout: COMMAND_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
+        { cwd, windowsHide: true, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 },
         (error, stdout) => (error ? fail(error) : done(stdout.trim()))
       )
     })

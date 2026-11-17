@@ -42,6 +42,8 @@ export interface TreeOptions {
   names?: Record<string, string>
   /** Kolejność ułożona ręcznie. Czego w niej nie ma, stoi przed ułożonymi, według `sort`. */
   order?: ManualOrder
+  /** Nazwa dokumentu, po której sortuje `name`. Domyślnie ta z wiersza. */
+  docName?: (doc: DocEntry) => string
 }
 
 const collator = new Intl.Collator('pl', { numeric: true })
@@ -90,8 +92,14 @@ export function arrange<T>(items: T[], keyOf: (item: T) => string, groupOf: (ite
   })
 }
 
-function sortNodes(nodes: TreeNode[], sort: SortMode, parent: string, order: ManualOrder | undefined): TreeNode[] {
-  const label = (node: TreeNode): string => (node.kind === 'folder' ? node.name : displayName(node.doc))
+function sortNodes(
+  nodes: TreeNode[],
+  sort: SortMode,
+  parent: string,
+  order: ManualOrder | undefined,
+  docName: (doc: DocEntry) => string = displayName
+): TreeNode[] {
+  const label = (node: TreeNode): string => (node.kind === 'folder' ? node.name : docName(node.doc))
   nodes.sort((a, b) => {
     const group = nodeGroup(a) - nodeGroup(b)
     if (group !== 0) return group
@@ -100,7 +108,7 @@ function sortNodes(nodes: TreeNode[], sort: SortMode, parent: string, order: Man
   })
   if (order) arrange(nodes, (node) => node.key, nodeGroup, order[parent])
   for (const node of nodes) {
-    if (node.kind === 'folder') sortNodes(node.children, sort, node.key, order)
+    if (node.kind === 'folder') sortNodes(node.children, sort, node.key, order, docName)
   }
   return nodes
 }
@@ -208,7 +216,7 @@ export function buildTree(project: ProjectGroup, options: TreeOptions = {}): Tre
 
   const nodes = compactNodes(root)
   summarize(nodes, options.toneOf ?? (() => 'none'))
-  return sortNodes(nodes, options.sort ?? 'name', project.id, options.order)
+  return sortNodes(nodes, options.sort ?? 'name', project.id, options.order, options.docName)
 }
 
 /** Większy folder startuje zwinięty i pokazuje tylko licznik. */
@@ -336,7 +344,8 @@ export function flattenLibrary(
   isClosed: (key: string, byDefault: boolean) => boolean,
   closing: ReadonlySet<string>,
   /** Wiersze ukryte przed chwilą. Skan dużej biblioteki chwilę trwa, a one mają zniknąć od razu. */
-  leaving: ReadonlySet<string> = new Set()
+  leaving: ReadonlySet<string> = new Set(),
+  rowH = ROW_H
 ): LibraryRows {
   const rows: LibraryRow[] = []
   let line = 0
@@ -344,7 +353,7 @@ export function flattenLibrary(
 
   /** Duch stoi na miejscu rodzica i nie zajmuje własnego. */
   const place = (ghostY: number | null): number => {
-    if (ghostY === null) return line++ * ROW_H
+    if (ghostY === null) return line++ * rowH
     ghosts += 1
     return ghostY
   }
@@ -391,7 +400,7 @@ export function flattenLibrary(
     ghosts = 0
     walk(model.nodes, { x: 0, top: true, guides: [], chain: [id], parentY: y, ghostY: closed ? y : null })
   }
-  return { rows, height: line * ROW_H }
+  return { rows, height: line * rowH }
 }
 
 export function inboxDocs(projects: ProjectGroup[]): DocEntry[] {

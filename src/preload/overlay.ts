@@ -12,6 +12,7 @@ import {
   type StickyColor
 } from '../shared/annotations'
 import type { PickKind, PresentState, RouteFrame } from '../shared/presentation'
+import type { PointerArt } from '../shared/types'
 import { blockOf, createAnchor, findRange, resolveAnchor } from './anchor'
 import { createMarker, MARKER_STYLE } from './marker'
 import { createInk } from './markerInk'
@@ -206,6 +207,7 @@ export interface OverlayBridge {
   onFocus(listener: (id: string | null) => void): void
   onTrack(listener: (on: boolean) => void): void
   onPointer(listener: (on: boolean) => void): void
+  onPointerArt(listener: (art: PointerArt) => void): void
   /** Kolor włącza zakreślacz, a `null` go wyłącza. */
   onMarker(listener: (color: StickyColor | null) => void): void
   onPointerWithdraw(listener: () => void): void
@@ -986,6 +988,7 @@ export function startOverlay(bridge: OverlayBridge, guard: PointerGuard): void {
   })
 
   bridge.onPointer(setPointing)
+  bridge.onPointerArt(presenter.setArt)
   bridge.onMarker(setMarking)
   bridge.onShaper(setShaping)
   bridge.onDrawings((on) => {

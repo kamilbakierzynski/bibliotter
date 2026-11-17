@@ -1,0 +1,51 @@
+# Pakowanie do zainstalowanej aplikacji: `npm run dist:win` albo `npm run dist:mac` (ten tylko na Macu).
+appId: app.bibliotter
+productName: Bibliotter
+copyright: Copyright © 2026 kamilbakierzynski
+
+directories:
+  output: dist
+  buildResources: resources
+
+# Kod jest już zbudowany przez electron-vite, więc do paczki trafia tylko `out/` i zależności produkcyjne.
+files:
+  - out/**
+  - package.json
+
+# Plugin dla Claude Code leży obok asara: panel Opcje szuka folderu `plugin/` w górę od `out/main`,
+# a Claude Code musi go czytać jako zwykłe pliki na dysku.
+extraResources:
+  - from: plugin
+    to: plugin
+    filter:
+      - "**/*"
+
+# node-pty ma gotowe binarki N-API dla Windowsa i macOS, więc nie trzeba go kompilować pod Electrona.
+npmRebuild: false
+asarUnpack:
+  - node_modules/node-pty/**
+
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: true
+  perMachine: false
+  shortcutName: Bibliotter
+  artifactName: Bibliotter-Setup-${version}.${ext}
+
+mac:
+  # electron-builder robi z PNG 1024 px plik .icns.
+  icon: design/logo/png/bibliotter-1024.png
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # Bez certyfikatu Apple Developer paczka dostaje podpis ad hoc, co wystarcza na własnym Macu.
+  hardenedRuntime: false
+
+dmg:
+  artifactName: Bibliotter-${version}-${arch}.${ext}

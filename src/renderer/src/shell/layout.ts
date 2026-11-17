@@ -6,6 +6,7 @@ import { hideFly, tipNeedsRoom } from './keys'
 import { inLayer, placeLayer } from './layer'
 import { alignShots, noteQuiet, releaseUnused, touch, trackQuiet } from './native'
 import { onWall, renderHangs, syncPanelMode } from './notes'
+import { fitPanel, stretchPanel } from './panelWidth'
 import { canAnnotate, focusedDoc, isOpen, MAX_SHEETS, notify, type PanelView, pinned, ui } from './state'
 import { renderTerminal, sB, syncTerminalChrome, term, termRoom, termShown, tR } from './terminalLayout'
 
@@ -255,6 +256,7 @@ export function measure(): void {
     dockBot: n('--dock-bot'),
     dockZone: n('--dock-zone')
   })
+  G.panel = fitPanel(G.W)
   G.closed = G.railLeft + G.rail
   G.open = G.closed + G.panel
   G.cmdW = Math.min(760, G.W - 32)
@@ -636,6 +638,7 @@ export function render(): void {
     for (const r of revealEls) r.el.style.setProperty('--e', `${(rope.edgeAt(r.y) - r.x).toFixed(1)}px`)
     els.navClip.style.clipPath = `path('${rope.path?.getAttribute('d') ?? ''}')`
   }
+  stretchPanel(rope.mean - G.closed, G.panel)
   const y = navT.x + 30
   const p = clamp((rope.mean - G.closed) / (G.open - G.closed))
   els.chev.style.transform = `translate(${rope.edgeAt(y) - 11}px,${y - 11}px) rotate(${180 * (1 - p)}deg)`

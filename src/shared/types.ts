@@ -19,7 +19,7 @@ import type { PickKind, Presentation, PresentState, RouteFrame } from './present
 import type { ContentSearch, FindCommand, TextQuery, TextSnippet } from './textSearch'
 import type { FileMode, FileSheetInfo } from './fileView'
 import type { Language } from './i18n'
-import type { AgentSetup, AppInfo } from './options'
+import type { AgentSetup, AppInfo, PluginInstallResult } from './options'
 
 export const DOC_STATUSES = ['to-read', 'read', 'to-decide', 'decided', 'archived'] as const
 export type DocStatus = (typeof DOC_STATUSES)[number]
@@ -177,6 +177,14 @@ export type ThemeMode = 'light' | 'dark'
 /** Co wybrał użytkownik. `ThemeMode` to wynik tego wyboru. */
 export type ThemeChoice = ThemeMode | 'system'
 
+/** Rysunek wskaźnika prezentera: rękawiczka albo łapka wydry. */
+export const POINTER_ARTS = ['glove', 'paw'] as const
+export type PointerArt = (typeof POINTER_ARTS)[number]
+
+export function parsePointerArt(value: unknown): PointerArt {
+  return value === 'paw' ? 'paw' : 'glove'
+}
+
 export interface ShellApi extends TerminalApi {
   /** Migawka biblioteki jako JSON. Zmiany i ich efekty przychodzą przez `onLibraryChanged`. */
   getLibrary(): Promise<string>
@@ -277,6 +285,8 @@ export interface ShellApi extends TerminalApi {
   setOverlayMode(docId: string, mode: OverlayMode): void
   /** Wskaźnik działa na wszystkich arkuszach, także tych otwartych później. */
   setPointer(on: boolean): void
+  /** Rysunek wskaźnika obowiązuje na wszystkich arkuszach, także tych otwartych później. */
+  setPointerArt(art: PointerArt): void
   /** Zakreślacz też. Kolor go włącza, a `null` wyłącza. */
   setMarker(color: StickyColor | null): void
   /** Kształt też działa na wszystkich arkuszach. `null` go wyłącza. */
@@ -304,6 +314,8 @@ export interface ShellApi extends TerminalApi {
   appInfo(): Promise<AppInfo>
   /** Sprawdza plugin i CLI, więc trwa około sekundy. */
   agentSetup(): Promise<AgentSetup>
+  /** Dodaje marketplace i instaluje plugin przez Claude Code, a wyłączony włącza. */
+  installPlugin(): Promise<PluginInstallResult>
   /** Zwraca stan odczytany z systemu, bo system może odmówić. */
   setOpenAtLogin(on: boolean): Promise<boolean>
   /** Zwraca listę po sprawdzeniu adresów. */

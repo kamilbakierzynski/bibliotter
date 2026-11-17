@@ -142,7 +142,7 @@ input:focus-visible, textarea:focus-visible { outline: 0; }
   stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round;
   transition: --ic-o .46s var(--spring-pop), --ic-p .2s ease, --ic-d .2s ease;
 }
-.ic-plate { fill: currentColor; fill-opacity: var(--ic-p); stroke: none; transform: translate(calc(var(--ic-o) * 1px), calc(var(--ic-o) * 1px)); }
+.ic-plate { fill: var(--ic-fill, currentColor); fill-opacity: var(--ic-p); stroke: none; transform: translate(calc(var(--ic-o) * 1px), calc(var(--ic-o) * 1px)); }
 .ic-d { stroke: var(--ic-d); }
 .rb, .mini { --ic-cut: var(--surface); }
 .tb { --ic-cut: var(--raised); }
@@ -291,6 +291,9 @@ kbd {
 .dot.done { background: var(--st-done); }
 .two { min-height: 46px; padding-top: 5px; padding-bottom: 6px; flex-direction: column; align-items: stretch; gap: 1px; }
 .two .line { display: flex; align-items: center; gap: 7px; min-width: 0; }
+/* Tytuł z nazwą pliku pod spodem. Drzewo ma wtedy wszystkie wiersze tej samej, wyższej miary. */
+.row-at.tall > .row { min-height: 40px; }
+.row-at.tall > .two { padding-top: 3px; padding-bottom: 3px; gap: 0; }
 .two .sub { overflow: hidden; color: var(--ink-3); font-family: var(--meta); font-size: var(--meta-s); font-weight: 400; letter-spacing: var(--meta-ls); animation: edge-fade linear both; animation-timeline: scroll(self inline); white-space: nowrap; }
 .seg { position: relative; display: flex; gap: 2px; margin: 0 2px 6px; padding: 2px; background: var(--hover); border-radius: 10px; }
 .seg button { position: relative; z-index: 1; flex: 1; height: 26px; padding: 0 8px; color: var(--ink-2); font-size: 12px; white-space: nowrap; border-radius: 8px; }
@@ -767,6 +770,9 @@ button.present-n:hover, button.present-n.on { color: var(--ink); background: var
 .row-menu { position: absolute; z-index: 42; width: 222px; padding: 5px; color: var(--ink); background: var(--raised); border-radius: 14px; box-shadow: var(--sh-pop); opacity: 0; transform: scale(.96); pointer-events: none; transition: opacity .14s, transform .38s var(--spring-pop); }
 .row-menu.on { opacity: 1; transform: none; pointer-events: auto; }
 .row-menu hr { height: 1px; margin: 4px 8px; background: var(--hair); border: 0; }
+/* Menu ma stałą szerokość, więc długi napis zawija się do dwóch wierszy, a dalej urywa wielokropkiem. */
+.row-menu .ar { height: auto; min-height: 32px; padding-block: 6px; }
+.row-menu .ar > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; animation: none; }
 
 /* Etykiety: czarno-białe jak reszta metadanych, bo kolor znaczy tylko „to czeka na Ciebie” */
 /* Etykiety to ten sam papier co karteczki. Nocą papier gaśnie, a kolor przechodzi na tekst. */
@@ -794,7 +800,25 @@ button.present-n:hover, button.present-n.on { color: var(--ink); background: var
 .label-pop .label-foot .ask { flex: none; width: auto; height: 26px; padding: 0 8px; color: var(--ink-2); font-size: 12px; }
 .label-pop .label-foot .ask:disabled { color: var(--ink-3); }
 .label-pop input::placeholder { color: var(--ink-3); }
-.row[data-color] > .ic:first-child, .row[data-color] > .line > .ic:first-child, .label-pop button[data-color] > .ic:first-child { color: var(--paper-ink); }
+.row[data-color] > .ic:first-child, .row[data-color] > .line > .ic:first-child, .label-pop button[data-color] > .ic:first-child, .ar[data-color] > .ic:first-child { color: var(--paper-ink); }
+.ar .ar-on { flex: none; color: var(--ink-2); }
+/* Ikona etykiety niesie jej kolor: pastelowa bryła pod obrysem, jak papier na tabliczce. */
+:is(.label-pop button[data-color], .ar[data-color], .row[data-color], .row[data-color] > .line) > .ic:first-child { --ic-p: 1; --ic-o: 0; --ic-fill: var(--paper); }
+[data-mode="dark"] :is(.label-pop button[data-color], .ar[data-color], .row[data-color], .row[data-color] > .line) > .ic:first-child { --ic-p: .35; }
+.list-tools { flex-wrap: wrap; }
+.label-filter { display: flex; flex: 1 0 100%; flex-wrap: wrap; gap: 4px; max-height: 112px; padding: 2px 0 0; overflow: hidden auto; scrollbar-width: none; }
+.lf-chip { flex: none; max-width: 100%; height: 22px; padding: 0 8px; overflow: hidden; color: var(--ink-2); font: 500 11.5px/22px var(--font); text-overflow: ellipsis; white-space: nowrap; border-radius: 7px; box-shadow: inset 0 0 0 .5px var(--hair-2); transition: color .16s, background-color .16s, box-shadow .16s; }
+.lf-chip:hover { color: var(--ink); background: var(--hover); }
+.lf-chip[aria-pressed="true"] { color: var(--ink); background: var(--on); box-shadow: none; }
+.lf-chip[data-color][aria-pressed="true"] { color: var(--paper-ink); background: var(--paper); box-shadow: inset 0 0 0 .5px rgb(0 0 0 / .08); }
+[data-mode="dark"] .lf-chip[data-color][aria-pressed="true"] { background: color-mix(in srgb, var(--paper) 18%, transparent); box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--paper) 30%, transparent); }
+.lf-chip[data-color]:not([aria-pressed="true"])::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; vertical-align: middle; background: var(--paper); border-radius: 50%; }
+.lf-clear { display: grid; flex: none; place-items: center; width: 22px; height: 22px; color: var(--ink-3); border-radius: 7px; }
+.lf-clear:hover { color: var(--ink); background: var(--hover); }
+.lf-clear .ic { width: 13px; height: 13px; }
+.o-starter { display: flex; align-items: center; gap: 8px; }
+.o-starter .o-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--paper); box-shadow: inset 0 0 0 .5px rgb(0 0 0 / .12); cursor: pointer; }
+.o-starter .o-dot:not([data-color]) { background: transparent; box-shadow: inset 0 0 0 1px var(--hair-2); }
 .tag.label.link:hover { text-decoration: underline; text-underline-offset: 2px; }
 .ticket { display: flex; align-items: center; }
 .ticket .row { flex: 1; min-width: 0; }
@@ -889,6 +913,18 @@ button.present-n:hover, button.present-n.on { color: var(--ink); background: var
 .h-ask span { flex: 1; min-width: 0; overflow: hidden; font: var(--pl-w) var(--input-s)/1.3 var(--title); letter-spacing: var(--title-ls); animation: edge-fade linear both; animation-timeline: scroll(self inline); white-space: nowrap; }
 .h-ask .keys { display: flex; gap: 3px; }
 .h-ask.away { opacity: 0; transition: opacity .06s; }
+.h-agent { display: flex; align-items: center; gap: 8px; width: min(760px, 100%); margin-top: 12px; padding: 0 4px 0 14px; color: var(--ink-3); font-size: 12.5px; line-height: 1.4; animation: list-in .4s ease both; }
+.h-agent > .ic { flex: none; }
+.h-agent-text { flex: 1; min-width: 0; }
+.h-agent-go, .h-agent-more { flex: none; height: 28px; padding: 0 10px; border-radius: 9px; font-weight: 500; transition: color .16s, background-color .16s; }
+.h-agent-go { color: var(--tool-on-ink); background: var(--tool-on); }
+.h-agent-go:disabled { opacity: .6; }
+.h-agent-more { color: var(--ink-2); }
+.h-agent-more:hover { background: var(--hover); }
+.o-install { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 2px 2px 10px; }
+.o-install .setup-add:disabled { opacity: .6; }
+.o-install-error, .o-installed { color: var(--ink-2); font-size: 12.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.o-installed { margin: 2px 2px 10px; }
 .h-body { position: relative; flex: 1; min-height: 0; margin: -6px -12px 0; overflow: hidden auto; scrollbar-width: none; scroll-timeline: --home-scroll block; mask-image: linear-gradient(transparent 6px, #000 var(--h-fade)); animation: h-fade linear both; animation-timeline: --home-scroll; animation-range: 0 40px; }
 
 /* Miniatura to ten sam dokument w szerokości arkusza, tylko pomniejszony */

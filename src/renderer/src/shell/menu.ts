@@ -4,12 +4,14 @@ import { t } from '../../../shared/i18n'
 import { displayName, type FolderNode, lastSegment, projectFolders } from '../tree'
 import { hideFly, hideTip, type KeyLike } from './keys'
 import { els, menuPill } from './layout'
+import { setLabelFilter } from './labelFilter'
+import { autoLabelDoc } from './labels'
 import { load } from './library'
 import { cover, focusLive, uncover } from './native'
 import { hideFolders } from './panel'
 import { inPocket, togglePocket } from './pocket'
 import { openDoc, peekDoc } from './sheets'
-import { data, notify, ticketHref } from './state'
+import { colorAttr, countDocs, data, notify, ticketHref, ui } from './state'
 
 /*
  * Menu wiersza w panelu. Stoi pod kursorem, więc zwykle nachodzi na arkusz i jak status czy podgląd
@@ -30,6 +32,12 @@ export interface MenuItem {
   done?: string
   /** Kreska nad wierszem. */
   gap?: boolean
+  /** Menu zostaje otwarte, bo wybór tylko zmienia jego treść. */
+  keep?: boolean
+  /** Pole wyboru: zaznaczone dostaje znacznik na końcu wiersza. */
+  on?: boolean
+  /** Kolor etykiety dla ikony. */
+  color?: string
 }
 
 interface RenameTarget {
@@ -117,6 +125,63 @@ function hideItems(key: string, title: string, paths: string[]): MenuItem[] {
   return [{ icon: 'hide', title, run: () => hideFolders(key, paths) }]
 }
 
+/** Do przeczytania to też dokumenty, które dopiero czekają w skrzynce. Do decyzji zostają, bo przeczytanie decyzji nie podejmuje. */
+function readItems(docs: DocEntry[], single: boolean): MenuItem[] {
+  const unread = docs.filter((doc) => doc.classification === 'document' && doc.status === 'to-read').map((doc) => doc.id)
+  if (unread.length > 0) {
+    const title = single ? t('Oznacz jako przeczytane') : t('Oznacz {docs} jako przeczytane', { docs: countDocs(unread.length) })
+    return [{ icon: 'check', title, run: () => load(() => window.api.setStatuses(unread, 'read')) }]
+  }
+  const [doc] = docs
+  if (!single || !doc || doc.classification !== 'document' || doc.status !== 'read') return []
+  return [{ icon: 'undo', title: t('Oznacz jako nieprzeczytane'), run: () => load(() => window.api.setStatuses([doc.id], 'to-read')) }]
+}
+
+/** Haiku czyta tylko dokumenty z dysku. W folderze bierze te bez etykiet, jak przycisk w Opcjach. */
+function autoLabelItems(docs: DocEntry[], single: boolean): MenuItem[] {
+  const ready = docs.filter((doc) => doc.classification === 'document' && !doc.missing && !doc.file)
+  const [doc] = ready
+  if (single) {
+    if (!doc) return []
+    const busy = ui.autoLabel.pending.includes(doc.id)
+    return [{ icon: 'tag', title: busy ? t('Czytam') : t('Etykietuj automatycznie (AI)'), run: () => void (busy || autoLabelDoc(doc)) }]
+  }
+  const todo = ready.filter((item) => item.status !== 'archived' && item.labels.length === 0).map((item) => item.id)
+  if (todo.length === 0) return []
+  return [{ icon: 'tag', title: t('Etykietuj {docs} automatycznie (AI)', { docs: countDocs(todo.length) }), run: () => void window.api.autoLabel(todo) }]
+}
+
+/** Druga strona menu: etykiety dokumentu do zaznaczenia i Zastosuj. */
+function filterPicker(names: string[], chosen: string[]): MenuItem[] {
+  const show = (next: string[]): void => {
+    menu.items = filterPicker(names, next)
+    notify()
+  }
+  const rows = names.map((name): MenuItem => {
+    const on = chosen.includes(name)
+    return { icon: 'tag', title: name, color: colorAttr(name), on, keep: true, run: () => show(on ? chosen.filter((item) => item !== name) : [...chosen, name]) }
+  })
+  const apply: MenuItem = chosen.length > 0
+    ? { icon: 'check', title: t('Zastosuj'), gap: true, run: () => setLabelFilter(chosen) }
+    : { icon: 'x', title: t('Wybierz etykiety'), gap: true, keep: true, run: () => undefined }
+  return [...rows, apply]
+}
+
+function filterItems(doc: DocEntry): MenuItem[] {
+  const names = doc.labels
+  const [only] = names
+  if (!only) return []
+  if (names.length === 1) {
+    return [{ icon: 'tag', title: t('Filtruj „{name}”', { name: only }), color: colorAttr(only), run: () => setLabelFilter([only]) }]
+  }
+  const open = (): void => {
+    menu.items = filterPicker(names, [...names])
+    clearMenuItem()
+    notify()
+  }
+  return [{ icon: 'tag', title: t('Filtruj po etykietach…'), keep: true, run: open }]
+}
+
 function docItems(doc: DocEntry): MenuItem[] {
   const reveal = { icon: 'reveal', title: t('Pokaż w Eksploratorze'), run: () => void window.api.revealDoc(doc.id) }
   const tickets = doc.labels.flatMap((name) => {
@@ -138,7 +203,8 @@ function docItems(doc: DocEntry): MenuItem[] {
           save: (name) => window.api.renameDoc(doc.id, name)
         })
       : [],
-    tickets,
+    [...readItems([doc], true), ...autoLabelItems([doc], true)],
+    [...filterItems(doc), ...tickets],
     [...(doc.missing ? [] : [reveal]), copyItem(t('Kopiuj ścieżkę'), doc.path)],
     archiveItems([doc])
   )
@@ -161,6 +227,7 @@ function folderItems(node: FolderNode): MenuItem[] {
       original: node.renamed ? lastSegment(path) : node.name,
       save: (name) => window.api.renameFolder(node.paths, name)
     }),
+    [...readItems(docsUnder(node), false), ...autoLabelItems(docsUnder(node), false)],
     [revealItem(path), copyItem(t('Kopiuj ścieżkę'), path)],
     [...archiveItems(docsUnder(node)), ...hideItems(node.key, t('Ukryj folder'), node.paths)]
   )
@@ -175,6 +242,7 @@ function projectItems(project: ProjectGroup): MenuItem[] {
       original: renamed ? lastSegment(project.path) : project.name,
       save: (name) => window.api.renameFolder([project.path], name)
     }),
+    [...readItems(project.docs, false), ...autoLabelItems(project.docs, false)],
     [revealItem(project.path), copyItem(t('Kopiuj ścieżkę'), project.path)],
     hideItems(project.id, t('Ukryj projekt'), projectFolders(project))
   )
@@ -241,6 +309,7 @@ export function clearMenuItem(): void {
 
 export function pickMenuItem(item: MenuItem): void {
   item.run()
+  if (item.keep) return
   if (!item.done) {
     closeRowMenu()
     return

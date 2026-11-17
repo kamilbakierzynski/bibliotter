@@ -6,6 +6,7 @@ import { t } from '../../../shared/i18n'
 import { isOtterDay } from '../../../shared/otter'
 import { laneIn, rectIn } from '../motion/pill'
 import { isArranging, liftedKey, pressRow } from '../shell/arrange'
+import { fileName, rowName, treeRowH, twoLine } from '../shell/docNames'
 import { gripDown, gripLeave, gripMove, gripUp } from '../shell/edge'
 import { dismissCard, hideCard, hoverRow } from '../shell/hoverCard'
 import { hideFly, holdFly, leaveFly, fly, showFly } from '../shell/keys'
@@ -18,6 +19,7 @@ import { aimAt } from '../shell/native'
 import { openCmd } from '../shell/palette'
 import { openOptions, optionsHeading } from '../shell/options'
 import { clearPocket, pocket, pocketDocs } from '../shell/pocket'
+import { activeFilter, clearLabelFilter, filteredProjects } from '../shell/labelFilter'
 import { libraryRows, revealInTree, toggleFold, toggleSort } from '../shell/panel'
 import { hitPill, searchModel } from '../shell/search'
 import { openAs, openDoc, openNote } from '../shell/sheets'
@@ -53,6 +55,7 @@ import { FoldAll, SearchField, searchHeading, SearchList } from './Find'
 import { FormatSeg } from './FormatSeg'
 import { useSynced } from './hooks'
 import { Icon } from './icons'
+import { LabelFilterBar, LabelFilterButton } from './LabelFilter'
 import { LabelSwatches, LabelTags } from './Labels'
 import { LogoMark } from './LogoMark'
 import { Otter } from './Otter'
@@ -189,10 +192,12 @@ function DocRow({ doc, sub }: { doc: DocEntry; sub?: string }): React.JSX.Elemen
       {doc.missing && <span className="tag">{t('kopia')}</span>}
     </>
   )
-  const label = <span className="lbl">{displayName(doc)}</span>
+  const label = <span className="lbl">{rowName(doc)}</span>
   const archived = doc.status === 'archived' ? ' archived' : ''
   const menu = (e: MouseEvent<HTMLElement>): void => openRowMenu(e, { kind: 'doc', doc })
-  if (sub) {
+  const file = twoLine() ? fileName(doc) : null
+  const below = file && sub ? `${file} · ${sub}` : (file ?? sub)
+  if (below) {
     return (
       <button
         className={`row two rv${archived}`}
@@ -205,7 +210,7 @@ function DocRow({ doc, sub }: { doc: DocEntry; sub?: string }): React.JSX.Elemen
           {copy}
           {dot}
         </span>
-        <span className="sub">{sub}</span>
+        <span className="sub">{below}</span>
       </button>
     )
   }
@@ -304,8 +309,8 @@ const TreeRow = memoComponent(function TreeRow({ row, lifted }: { row: LibraryRo
       {row.guides.map((x) => (
         <i className="tg" key={x} style={{ left: x }} />
       ))}
-      {row.elbow !== null && <i className="te" style={{ left: row.elbow }} />}
-      <span className="row-at" style={{ marginLeft: row.indent, '--indent': `${row.indent}px` } as React.CSSProperties}>
+      {row.elbow !== null && <i className="te" style={{ left: row.elbow, height: treeRowH() / 2 + 3 }} />}
+      <span className={`row-at${twoLine() ? ' tall' : ''}`} style={{ marginLeft: row.indent, '--indent': `${row.indent}px` } as React.CSSProperties}>
         {row.type === 'project' ? (
           <ProjectRow row={row} />
         ) : row.type === 'folder' ? (
@@ -333,9 +338,11 @@ function ListTools(): React.JSX.Element {
   return (
     <div className="list-tools rv">
       <FormatSeg />
+      <LabelFilterButton />
       <button className="mini" aria-label={label} title={label} onClick={toggleSort}>
         <Icon name={SORT_ICON[ui.sort]} />
       </button>
+      <LabelFilterBar />
     </div>
   )
 }
@@ -343,6 +350,18 @@ function ListTools(): React.JSX.Element {
 function LibraryList(): React.JSX.Element {
   const { rows, height } = libraryRows()
   const lifted = liftedKey()
+  if (rows.length === 0 && activeFilter().length > 0) {
+    return (
+      <div className="empty-otter rv">
+        <Otter pose="swimming" />
+        <p className="label-hint">{t('Żaden dokument nie ma tych etykiet.')}</p>
+        <button className="ask" id="labelFilterClear" onClick={clearLabelFilter}>
+          <Icon name="x" />
+          <span>{t('Wyczyść filtr')}</span>
+        </button>
+      </div>
+    )
+  }
   return (
     <Windowed rows={rows} height={height} render={(row) => <TreeRow key={row.key} row={row} lifted={row.key === lifted} />} />
   )
@@ -767,8 +786,10 @@ function FoldersView(): React.JSX.Element {
 }
 
 function panelHeading(): { title: string; sub: string } {
-  const projects = visibleProjects().length
-  const docs = visibleDocs().length
+  // Licznik biblioteki mówi, ile widać w drzewie, więc liczy po filtrze etykiet.
+  const shown = filteredProjects()
+  const projects = shown.length
+  const docs = shown.reduce((sum, project) => sum + project.docs.length, 0)
   const roots = data.library?.roots.length ?? 0
   switch (ui.view) {
     case 'library':

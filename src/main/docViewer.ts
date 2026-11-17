@@ -27,7 +27,7 @@ import { type Language, language, t } from '../shared/i18n'
 import { type LinkOutcome, type OpenMode, parseOpenMode } from '../shared/links'
 import { type OutlineCommand, parseOutline } from '../shared/outline'
 import { type FindCommand, parseTextQuery, type TextQuery, type TextSpan } from '../shared/textSearch'
-import type { ViewerBounds, ViewerFrame, ViewerKey, ViewerPlacement, ViewerState, ViewerWheel } from '../shared/types'
+import type { PointerArt, ViewerBounds, ViewerFrame, ViewerKey, ViewerPlacement, ViewerState, ViewerWheel } from '../shared/types'
 import { MAX_HIGHLIGHT_QUOTE, parseAnchor, parseShape, parseStickyColor, parseStrokes } from './annotationStore'
 import { DocCamera } from './docCamera'
 import {
@@ -247,6 +247,7 @@ export class DocViewer {
   /** Widoki na ekranie, od spodu. Pozwala nie przekładać ich bez potrzeby. */
   private stack: string[] = []
   private pointer = false
+  private pointerArt: PointerArt = 'glove'
   private marker: StickyColor | null = null
   private shaper: ShapeTool | null = null
   /** Dokumenty, w których użytkownik schował rysunki. */
@@ -327,6 +328,7 @@ export class DocViewer {
       this.options.onOverlayReady(open.docId)
       this.send(open.docId, 'overlay:language', language())
       // Dokument otwarty albo przeładowany w trakcie prezentacji też ma pokazać rękę.
+      if (this.pointerArt !== 'glove') this.send(open.docId, 'overlay:pointer-art', this.pointerArt)
       if (this.pointer) this.send(open.docId, 'overlay:pointer', true)
       if (this.marker && this.takesNotes(open.docId)) this.send(open.docId, 'overlay:marker', this.marker)
       if (this.shaper && this.takesNotes(open.docId)) this.send(open.docId, 'overlay:shaper', this.shaper)
@@ -426,6 +428,11 @@ export class DocViewer {
   setPointer(on: boolean): void {
     this.pointer = on
     for (const docId of this.views.keys()) this.send(docId, 'overlay:pointer', on)
+  }
+
+  setPointerArt(art: PointerArt): void {
+    this.pointerArt = art
+    for (const docId of this.views.keys()) this.send(docId, 'overlay:pointer-art', art)
   }
 
   /** Kształt też działa na wszystkich arkuszach. `null` wyłącza narzędzie. */

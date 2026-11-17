@@ -1,9 +1,11 @@
 import { language } from '../../../shared/i18n'
 import { followFor } from '../motion/spring'
-import { buildLibrary, flattenLibrary, type LibraryModel, type LibraryRows, type ManualOrder, ROW_H, type SortMode } from '../tree'
+import { buildLibrary, flattenLibrary, type LibraryModel, type LibraryRows, type ManualOrder, type SortMode } from '../tree'
+import { naming, rowName, treeRowH } from './docNames'
 import { els, hoverPill, syncSel } from './layout'
 import { load } from './library'
-import { data, isClosed, memo, notify, saveCollapsed, saveSort, type ShellSort, toneOf, ui, visibleProjects } from './state'
+import { filteredProjects } from './labelFilter'
+import { data, isClosed, memo, notify, saveCollapsed, saveSort, type ShellSort, toneOf, ui } from './state'
 
 /*
  * Biblioteka to płaska lista wierszy, a na ekranie jest tylko jej wycinek. Wiersze stoją na
@@ -25,15 +27,15 @@ const baseSort = (): SortMode => (ui.sort === 'manual' ? ui.sortBase : ui.sort)
 const manualOrder = (): ManualOrder | undefined => arranging.order ?? (ui.sort === 'manual' ? ui.manual : undefined)
 
 const model = memo(
-  () => [visibleProjects(), data.annotations, baseSort(), manualOrder(), data.library?.folderNames, language()] as const,
-  (projects, _notes, sort, order, names): LibraryModel => buildLibrary(projects, { sort, toneOf, names, order })
+  () => [filteredProjects(), data.annotations, baseSort(), manualOrder(), data.library?.folderNames, language(), naming.mode] as const,
+  (projects, _notes, sort, order, names): LibraryModel => buildLibrary(projects, { sort, toneOf, names, order, docName: rowName })
 )
 
 const closedNow = (key: string, byDefault: boolean): boolean => key === arranging.closed || isClosed(key, byDefault)
 
 const flatRows = memo(
-  () => [model(), ui.folds] as const,
-  (library): LibraryRows => flattenLibrary(library, closedNow, ui.closing, ui.leaving)
+  () => [model(), ui.folds, treeRowH()] as const,
+  (library, _folds, rowH): LibraryRows => flattenLibrary(library, closedNow, ui.closing, ui.leaving, rowH)
 )
 
 export const libraryRows = (): LibraryRows => flatRows()
@@ -117,7 +119,7 @@ export function revealInTree(docId: string | null): void {
     if (!row || !list) return
     const { scroll } = els
     const y = list.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop + row.y
-    if (y >= scroll.scrollTop && y + ROW_H <= scroll.scrollTop + scroll.clientHeight) return
+    if (y >= scroll.scrollTop && y + treeRowH() <= scroll.scrollTop + scroll.clientHeight) return
     scroll.scrollTo({ top: y - scroll.clientHeight / 2, behavior: 'smooth' })
   })
 }

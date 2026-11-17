@@ -2,7 +2,15 @@ import { type Dirent, existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, parse } from 'node:path'
-import { type AgentSetup, PLUGIN_ID, PLUGIN_NAME, type PluginContents, type PluginSkill, type PluginState } from '../shared/options'
+import {
+  type AgentSetup,
+  PLUGIN_ID,
+  PLUGIN_NAME,
+  type PluginContents,
+  type PluginInstallResult,
+  type PluginSkill,
+  type PluginState
+} from '../shared/options'
 import type { GitRunner } from './git'
 import { toolNames } from './mcpServer'
 
@@ -80,7 +88,7 @@ export interface SetupTools {
   locate: GitRunner
 }
 
-export async function readAgentSetup(from: string, { claude, locate }: SetupTools): Promise<AgentSetup> {
+export async function readAgentSetup(from: string, { claude, locate }: SetupTools, packaged = false): Promise<AgentSetup> {
   const home = homedir()
   const project = findProject(from)
   const marketplace = project && join(project, MARKETPLACE_FOLDER)
@@ -94,5 +102,41 @@ export async function readAgentSetup(from: string, { claude, locate }: SetupTool
       () => false
     )
   ])
-  return { project, marketplace, server, serverBuilt: server !== null && existsSync(server), ...status, cli, contents }
+  return { project, marketplace, server, serverBuilt: server !== null && existsSync(server), ...status, cli, contents, packaged }
+}
+
+/** Z błędu `execFile` zostaje ostatni niepusty wiersz, bo tam Claude Code pisze powód. */
+function lastLine(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error)
+  return (
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? text
+  )
+}
+
+/**
+ * Robi to samo co kroki z panelu: dodaje folder pluginu jako marketplace i instaluje z niego plugin,
+ * a wyłączony tylko włącza. Oba polecenia Claude Code są powtarzalne. Dodanie marketplace o tej samej
+ * nazwie z innego folderu przepina jednak źródło, więc działający plugin zostaje nietknięty.
+ */
+export async function installPlugin(from: string, claude: GitRunner): Promise<PluginInstallResult> {
+  const project = findProject(from)
+  if (!project) return { ok: false, error: 'no-folder' }
+  const marketplace = join(project, MARKETPLACE_FOLDER)
+  if (!existsSync(join(marketplace, PLUGIN_NAME, 'server', 'mcp.cjs'))) return { ok: false, error: 'no-server' }
+  const home = homedir()
+  try {
+    const { plugin } = pluginStatus(await claude(['plugin', 'list', '--json'], home))
+    if (plugin === 'disabled') await claude(['plugin', 'enable', PLUGIN_ID], home)
+    if (plugin === 'absent') {
+      await claude(['plugin', 'marketplace', 'add', marketplace], home)
+      await claude(['plugin', 'install', PLUGIN_ID], home)
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: lastLine(error) }
+  }
 }

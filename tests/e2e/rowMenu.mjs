@@ -83,7 +83,15 @@ export async function rowMenuFlow(workspace, { check, entry = projectRoot }) {
 
     await check('menu folderu ma nazwę, ścieżkę i ukrywanie', async () => {
       await openMenu(row('raporty'))
-      assert.deepEqual(await items(), ['Zmień nazwę', 'Pokaż w Eksploratorze', 'Kopiuj ścieżkę', 'Przenieś do archiwum', 'Ukryj folder'])
+      assert.deepEqual(await items(), [
+        'Zmień nazwę',
+        'Oznacz 2 dokumenty jako przeczytane',
+        'Etykietuj 2 dokumenty automatycznie (AI)',
+        'Pokaż w Eksploratorze',
+        'Kopiuj ścieżkę',
+        'Przenieś do archiwum',
+        'Ukryj folder'
+      ])
       await closeMenu()
     })
 
@@ -94,11 +102,42 @@ export async function rowMenuFlow(workspace, { check, entry = projectRoot }) {
         'Zerknij',
         'Włóż do kieszeni',
         'Zmień nazwę',
+        'Oznacz jako przeczytane',
+        'Etykietuj automatycznie (AI)',
         'Pokaż w Eksploratorze',
         'Kopiuj ścieżkę',
         'Przenieś do archiwum'
       ])
       await closeMenu()
+    })
+
+    await check('menu filtruje bibliotekę po etykietach dokumentu', async () => {
+      const ids = await shell.evaluate(() => Object.fromEntries([...document.querySelectorAll('.row[data-doc]')].map((r) => [r.textContent, r.dataset.doc])))
+      const id = (name) => Object.entries(ids).find(([text]) => text.includes(name))[1]
+      await shell.evaluate(([a, b]) => Promise.all([window.api.setDocLabels(a, ['Plan']), window.api.setDocLabels(b, ['Plan', 'Idea'])]), [id('Luźny'), id('Notatka pierwsza')])
+      await shell.locator('#labelFilterBtn').waitFor()
+      await openMenu(docRow('Luźny'))
+      await menu.locator('.ar', { hasText: 'Filtruj „Plan”' }).click()
+      await waitFor(() => shell.locator('.row[data-doc] .lbl').allTextContents(), (names) => names.length === 2)
+      await openMenu(docRow('Notatka pierwsza'))
+      await menu.locator('.ar', { hasText: 'Filtruj po etykietach' }).click()
+      await menu.getByRole('menuitemcheckbox', { name: 'Plan' }).click()
+      await menu.locator('.ar', { hasText: 'Zastosuj' }).click()
+      assert.deepEqual(await waitFor(() => shell.locator('.row[data-doc] .lbl').allTextContents(), (names) => names.length === 1), ['Notatka pierwsza'])
+      await shell.locator('.lf-clear').click()
+      await waitFor(() => shell.locator('.row[data-doc] .lbl').count(), (n) => n >= 5)
+      await shell.evaluate(([a, b]) => Promise.all([window.api.setDocLabels(a, []), window.api.setDocLabels(b, [])]), [id('Luźny'), id('Notatka pierwsza')])
+      await waitFor(() => shell.locator('#labelFilterBtn').count(), (n) => n === 0)
+    })
+
+    await check('menu oznacza dokument jako przeczytany i z powrotem', async () => {
+      const status = () => shell.locator('.row[data-doc]', { hasText: 'Luźny' }).locator('.dot').count()
+      await openMenu(docRow('Luźny'))
+      await menu.locator('.ar', { hasText: 'Oznacz jako przeczytane' }).click()
+      await waitFor(status, (n) => n === 0)
+      await openMenu(docRow('Luźny'))
+      await menu.locator('.ar', { hasText: 'Oznacz jako nieprzeczytane' }).click()
+      await waitFor(status, (n) => n === 1)
     })
 
     await check('wybranego folderu nie da się ukryć z menu projektu', async () => {

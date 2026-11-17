@@ -25,13 +25,18 @@ export const picker = { query: '', idx: 0, left: 0, bottom: 0, note: '' }
 
 const inputEl = (): HTMLInputElement | null => document.getElementById('labelInput') as HTMLInputElement | null
 
-/** Pasujące etykiety, a na końcu nowa nazwa, jeśli jeszcze jej nie ma. Cudze kody czekają na wpisanie. */
+/**
+ * Pasujące etykiety, a na końcu nowa nazwa, jeśli jeszcze jej nie ma. Cudze kody czekają na wpisanie.
+ * Etykiety do wyboru z Opcji stoją tu od razu, choć żaden dokument ich jeszcze nie ma.
+ */
 export function labelRows(doc: DocEntry): LabelRow[] {
   const query = cleanLabel(picker.query)
   const needle = norm(query)
-  const rows = labelCatalog()
-    .filter(({ name }) => (needle ? norm(name).includes(needle) : !isTicket(name) || hasLabel(doc.labels, name)))
-    .map(({ name }): LabelRow => ({ name, on: hasLabel(doc.labels, name), create: false }))
+  const used = labelCatalog().map(({ name }) => name)
+  const starters = ui.autoLabel.starters.filter((name) => !used.some((item) => sameLabel(item, name)))
+  const rows = [...used, ...starters]
+    .filter((name) => (needle ? norm(name).includes(needle) : !isTicket(name) || hasLabel(doc.labels, name)))
+    .map((name): LabelRow => ({ name, on: hasLabel(doc.labels, name), create: false }))
   if (query && !rows.some(({ name }) => sameLabel(name, query))) rows.push({ name: query, on: false, create: true })
   return rows
 }

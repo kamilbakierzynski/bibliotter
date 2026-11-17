@@ -6,7 +6,19 @@ import { t } from '../../../shared/i18n'
 import { versionName } from '../../../shared/otter'
 import { toggleHome } from './home'
 import { hoverPill, setView } from './layout'
-import { data, notify, plural, saveAudience, saveStartView, type StartView, ui } from './state'
+import type { PointerArt } from '../../../shared/types'
+import {
+  data,
+  notify,
+  plural,
+  readStored,
+  saveAudience,
+  savePointerArt,
+  saveStartView,
+  type StartView,
+  ui,
+  writeStored
+} from './state'
 
 /*
  * Motyw i start zapisuje powłoka, tak jak inne ustawienia widoku. Autostart należy do systemu,
@@ -20,7 +32,56 @@ export const options = {
   info: null as AppInfo | null,
   agent: null as AgentSetup | null,
   /** Status pluginu sprawdza osobny proces, więc nie ma sensu pytać dwa razy naraz. */
-  checking: false
+  checking: false,
+  installing: false,
+  installError: null as string | null,
+  /** Po udanej instalacji podpowiedź zostaje jeszcze chwilę, żeby powiedzieć o nowej sesji. */
+  installed: false
+}
+
+const AGENT_HINT_KEY = 'agentHintDismissed'
+let hintDismissed = readStored(AGENT_HINT_KEY) === '1'
+
+function installErrorText(error: string): string {
+  if (error === 'no-folder') return t('Ta kopia apki nie ma folderu pluginu, więc nie ma skąd go zainstalować.')
+  if (error === 'no-server') return t('Serwer MCP nie jest zbudowany.')
+  return error
+}
+
+/** Robi to samo co kroki z panelu, a stan po instalacji odczytuje od nowa z Claude Code. */
+export async function installPlugin(): Promise<void> {
+  if (options.installing) return
+  options.installing = true
+  options.installError = null
+  notify()
+  try {
+    const result = await window.api.installPlugin()
+    if (result.ok) options.installed = true
+    else options.installError = installErrorText(result.error)
+  } finally {
+    options.installing = false
+  }
+  options.checking = false
+  await loadAgent()
+}
+
+/** Plugin da się zainstalować jednym kliknięciem, gdy Claude Code odpowiada, a serwer MCP jest zbudowany. */
+export const canInstallPlugin = (agent: AgentSetup | null): boolean =>
+  !!agent && agent.serverBuilt && (agent.plugin === 'absent' || agent.plugin === 'disabled')
+
+export const agentHintShown = (): boolean => !hintDismissed && (options.installed || canInstallPlugin(options.agent))
+
+export function dismissAgentHint(): void {
+  hintDismissed = true
+  writeStored(AGENT_HINT_KEY, '1')
+  notify()
+}
+
+/** Sprawdzenie pluginu uruchamia Claude Code, więc ekran startowy pyta o nie dopiero po starcie apki. */
+export function checkAgentLater(delayMs: number): () => void {
+  if (hintDismissed || options.agent) return () => {}
+  const timer = window.setTimeout(() => void loadAgent(), delayMs)
+  return () => clearTimeout(timer)
 }
 
 const pluginState = (state: PluginState): string =>
@@ -106,6 +167,16 @@ export const toggleOptions = (): void => setView('options')
 export function setStartView(start: StartView): void {
   ui.start = start
   saveStartView(start)
+  notify()
+}
+
+export const syncPointerArt = (): void => window.api.setPointerArt(ui.pointerArt)
+
+/** Zmiana działa od razu, także na wskaźniku, który akurat jest na ekranie. */
+export function setPointerArt(art: PointerArt): void {
+  ui.pointerArt = art
+  savePointerArt(art)
+  syncPointerArt()
   notify()
 }
 

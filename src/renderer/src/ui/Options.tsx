@@ -10,13 +10,15 @@ import {
   type PluginState
 } from '../../../shared/options'
 import { language, LANGUAGES, t } from '../../../shared/i18n'
-import type { ThemeChoice } from '../../../shared/types'
+import type { PointerArt, ThemeChoice } from '../../../shared/types'
 import type { Audience } from '../../../shared/annotations'
 import {
   addHost,
   addStarter,
   aiLabel,
+  canInstallPlugin,
   countHosts,
+  installPlugin,
   jiraLabel,
   loadAgent,
   loadInfo,
@@ -29,16 +31,19 @@ import {
   setAutoLabel,
   setDefaultAudience,
   setOpenAtLogin,
+  setPointerArt,
   setStartView,
   showPage,
   ticketSample
 } from '../shell/options'
+import { type DocNaming, naming, setDocNaming } from '../shell/docNames'
 import { changeLanguage } from '../shell/language'
 import { autoLabelVisible } from '../shell/labels'
 import { openMap } from '../shell/palette'
-import { data, type StartView, ui, unlabeledDocs } from '../shell/state'
+import { colorAttr, data, type StartView, ui, unlabeledDocs } from '../shell/state'
 import { setTheme } from '../shell/theme'
 import { Icon, Keys } from './icons'
+import { LabelSwatches } from './Labels'
 import { SkeletonList } from './Skeleton'
 
 const COPIED_MS = 1400
@@ -51,6 +56,15 @@ const themes = (): { value: ThemeChoice; label: string }[] => [
 const starts = (): { value: StartView; label: string }[] => [
   { value: 'home', label: t('Ekran startowy') },
   { value: 'last', label: t('Ostatni układ') }
+]
+const pointerArts = (): { value: PointerArt; label: string }[] => [
+  { value: 'glove', label: t('Rękawiczka') },
+  { value: 'paw', label: t('Łapka wydry') }
+]
+const namings = (): { value: DocNaming; label: string }[] => [
+  { value: 'title', label: t('Tytuł') },
+  { value: 'file', label: t('Plik') },
+  { value: 'both', label: t('Oba') }
 ]
 const audiences = (): { value: Audience; label: string }[] => [
   { value: 'agent', label: t('Dla agenta') },
@@ -135,6 +149,8 @@ function MainPage(): React.JSX.Element {
       <h2 className="f-head rv">{t('Wygląd')}</h2>
       <Choice label={t('Motyw')} value={ui.theme} items={themes()} pick={setTheme} />
       <Choice label={t('Język')} value={language()} items={LANGUAGES} pick={changeLanguage} />
+      <Choice label={t('Wskaźnik prezentera')} value={ui.pointerArt} items={pointerArts()} pick={setPointerArt} />
+      <Choice label={t('Nazwy w bibliotece')} value={naming.mode} items={namings()} pick={setDocNaming} />
       <h2 className="f-head rv">{t('Praca')}</h2>
       <Choice label={t('Po uruchomieniu')} value={ui.start} items={starts()} pick={setStartView} />
       <Choice label={t('Nowy komentarz')} value={ui.aud} items={audiences()} pick={setDefaultAudience} />
@@ -204,6 +220,24 @@ function Step({ title, text, label }: { title: string; text?: string; label?: st
       <span className="o-step-text rv">{title}</span>
       {text && <Code text={text} label={label ?? title} />}
     </li>
+  )
+}
+
+/** Przycisk robi za użytkownika to samo co kroki poniżej, a kroki zostają dla ciekawych i na wypadek błędu. */
+export function InstallButton({ agent }: { agent: AgentSetup }): React.JSX.Element | null {
+  if (options.installed && agent.plugin === 'enabled') {
+    return <p className="o-installed rv">{t('Plugin działa. Zacznij nową sesję Claude Code, żeby agent go zobaczył.')}</p>
+  }
+  if (!canInstallPlugin(agent)) return null
+  const enable = agent.plugin === 'disabled'
+  return (
+    <div className="o-install rv">
+      <button className="setup-add" disabled={options.installing} onClick={() => void installPlugin()}>
+        <Icon name={options.installing ? 'clock' : 'term'} />
+        <span>{options.installing ? t('Instaluję…') : enable ? t('Włącz plugin') : t('Zainstaluj plugin')}</span>
+      </button>
+      {options.installError && <p className="o-install-error">{options.installError}</p>}
+    </div>
   )
 }
 
@@ -307,6 +341,8 @@ function AgentPage(): React.JSX.Element {
           {agent.plugin === 'unknown' && (
             <p className="f-lead rv">{t('Polecenie claude nie odpowiada. Zainstaluj Claude Code albo dodaj je do ścieżki systemowej.')}</p>
           )}
+          <InstallButton agent={agent} />
+          {canInstallPlugin(agent) && <p className="f-lead rv">{t('Albo zrób to samo w terminalu:')}</p>}
           <InstallSteps agent={agent} />
           <h2 className="f-head rv">{t('Co dostaje agent')}</h2>
           <Contents contents={agent.contents} />
@@ -316,7 +352,7 @@ function AgentPage(): React.JSX.Element {
             <kbd>R</kbd>
             {result}
           </p>
-          {agent.project && (
+          {agent.project && !agent.packaged && (
             <>
               <h2 className="f-head o-head rv">
                 {t('CLI bibliotter')}
@@ -358,6 +394,26 @@ function StarterField(): React.JSX.Element {
   )
 }
 
+/** Kropka pokazuje kolor etykiety, a klik rozwija próbnik, ten sam co w widoku Etykiety. */
+function StarterRow({ name }: { name: string }): React.JSX.Element {
+  const [picking, setPicking] = useState(false)
+  const color = t('Kolor etykiety')
+  return (
+    <>
+      <div className="f-row rv">
+        <span className="lbl o-ltr o-starter" title={name}>
+          <button className="o-dot" data-color={colorAttr(name)} aria-label={color} aria-expanded={picking} title={color} onClick={() => setPicking(!picking)} />
+          {name}
+        </span>
+        <button className="mini" aria-label={t('Usuń {name}', { name })} onClick={() => removeStarter(name)}>
+          <Icon name="x" />
+        </button>
+      </div>
+      {picking && <LabelSwatches name={name} />}
+    </>
+  )
+}
+
 /** Same idą tylko nowe pliki i tylko po włączeniu, bo treść dokumentu trafia wtedy do modelu. */
 function AiPage(): React.JSX.Element {
   const { newFiles, tickets, starters, done, total, error } = ui.autoLabel
@@ -376,14 +432,7 @@ function AiPage(): React.JSX.Element {
       <p className="f-lead rv">{t('Haiku wybiera z tej listy i z etykiet już używanych w bibliotece. Własnych nazw nie tworzy.')}</p>
       <StarterField />
       {starters.map((name) => (
-        <div className="f-row rv" key={name}>
-          <span className="lbl o-ltr" title={name}>
-            {name}
-          </span>
-          <button className="mini" aria-label={t('Usuń {name}', { name })} onClick={() => removeStarter(name)}>
-            <Icon name="x" />
-          </button>
-        </div>
+        <StarterRow key={name} name={name} />
       ))}
       <h2 className="f-head rv">{t('Na żądanie')}</h2>
       <p className="f-lead rv">{t('Widoczne dokumenty bez etykiet. Archiwum zostaje nietknięte.')}</p>

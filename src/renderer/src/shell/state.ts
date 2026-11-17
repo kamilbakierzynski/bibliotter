@@ -24,6 +24,7 @@ import type {
   ThemeMode,
   ViewerState
 } from '../../../shared/types'
+import { parsePointerArt, type PointerArt } from '../../../shared/types'
 
 /*
  * Stan powłoki. Trzymamy go poza Reactem, bo ruch czyta go w każdej klatce, a większość zmian
@@ -66,6 +67,7 @@ const MANUAL_KEY = 'manualOrder'
 const OPENED_KEY = 'openedNodes'
 const START_KEY = 'startView'
 const AUDIENCE_KEY = 'noteAudience'
+const POINTER_ART_KEY = 'pointerArt'
 
 export function readStored(key: string): string | null {
   try {
@@ -153,6 +155,10 @@ export function saveStartView(start: StartView): void {
   writeStored(START_KEY, start)
 }
 
+export function savePointerArt(art: PointerArt): void {
+  writeStored(POINTER_ART_KEY, art)
+}
+
 export function saveAudience(audience: Audience): void {
   writeStored(AUDIENCE_KEY, audience)
 }
@@ -225,6 +231,8 @@ export const ui = {
   last: null as SavedLayout | null,
 
   tool: 'move' as Tool,
+  /** Rysunek wskaźnika prezentera. Proces główny dostaje go przy starcie i po każdej zmianie. */
+  pointerArt: parsePointerArt(readStored(POINTER_ART_KEY)),
   color: 'yellow' as StickyColor,
   aud: (readStored(AUDIENCE_KEY) === 'me' ? 'me' : 'agent') as Audience,
   insp: false,
